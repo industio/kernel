@@ -2626,7 +2626,7 @@ static void mgmt_class_complete(struct hci_dev *hdev, void *data, int err)
 {
 	struct mgmt_pending_cmd *cmd = data;
 
-	bt_dev_dbg(hdev, "err %d", err);
+	bt_dev_err(hdev, "err %d", err);
 
 	mgmt_cmd_complete(cmd->sk, cmd->index, cmd->opcode,
 			  mgmt_status(err), hdev->dev_class, 3);
@@ -2732,6 +2732,8 @@ static int remove_uuid(struct sock *sk, struct hci_dev *hdev, void *data,
 	int err, found;
 
 	bt_dev_dbg(hdev, "sock %p", sk);
+	
+	bt_dev_err(hdev, "remove_uuid cache: %d", enable_service_cache(hdev));
 
 	hci_dev_lock(hdev);
 
@@ -2743,6 +2745,8 @@ static int remove_uuid(struct sock *sk, struct hci_dev *hdev, void *data,
 
 	if (memcmp(cp->uuid, bt_uuid_any, 16) == 0) {
 		hci_uuids_clear(hdev);
+		
+		bt_dev_dbg(hdev, "hci_uuids_clear %p", &hdev->uuids);
 
 		if (enable_service_cache(hdev)) {
 			err = mgmt_cmd_complete(sk, hdev->id,
@@ -2963,7 +2967,7 @@ static int device_unpaired(struct hci_dev *hdev, bdaddr_t *bdaddr,
 	ev.addr.type = addr_type;
 
 	return mgmt_event(MGMT_EV_DEVICE_UNPAIRED, hdev, &ev, sizeof(ev),
-			  skip_sk);
+			  NULL);
 }
 
 static void unpair_device_complete(struct hci_dev *hdev, void *data, int err)

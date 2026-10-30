@@ -1681,6 +1681,28 @@ static int phylink_bringup_phy(struct phylink *pl, struct phy_device *phy,
 	linkmode_copy(phy->advertising, config.advertising);
 	mutex_unlock(&pl->state_mutex);
 	mutex_unlock(&phy->lock);
+	
+	//mhk
+	#define YT8512C_PHY_ID  0x00000128
+	
+	printk("FU %s-%d, phy_id:%x\n", __func__,__LINE__, pl->phydev->phy_id);
+	if(pl->phydev->phy_id == YT8512C_PHY_ID){
+		phy_write(pl->phydev, 0x1e, 0x40c0);
+		ret = phy_read(pl->phydev, 0x1f);
+		printk("FU %s-%d, 0x40c0:%x\n", __func__,__LINE__, ret);
+
+		phy_write(pl->phydev, 0x1e, 0x40c0);
+		ret = phy_write(pl->phydev, 0x1f, 0x130);
+		printk("FU %s-%d, 0x40c0:%x\n", __func__,__LINE__, ret);
+
+		phy_write(pl->phydev, 0x1e, 0x40c3);
+		ret = phy_read(pl->phydev, 0x1f);
+		printk("FU %s-%d, 0x40c3:%x\n", __func__,__LINE__, ret);
+
+		phy_write(pl->phydev, 0x1e, 0x40c3);
+		ret = phy_write(pl->phydev, 0x1f, 0x30);
+		printk("FU %s-%d, 0x40c3:%x\n", __func__,__LINE__, ret);
+	}
 
 	phylink_dbg(pl,
 		    "phy: %s setting supported %*pb advertising %*pb\n",

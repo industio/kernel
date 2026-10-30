@@ -760,15 +760,12 @@ int hci_update_eir_sync(struct hci_dev *hdev)
 {
 	struct hci_cp_write_eir cp;
 
-	bt_dev_dbg(hdev, "");
+	bt_dev_err(hdev, "hci_update_eir_sync power: %d|%p", hdev_is_powered(hdev), &hdev->uuids);
 
 	if (!hdev_is_powered(hdev))
 		return 0;
 
 	if (!lmp_ext_inq_capable(hdev))
-		return 0;
-
-	if (!hci_dev_test_flag(hdev, HCI_SSP_ENABLED))
 		return 0;
 
 	if (hci_dev_test_flag(hdev, HCI_SERVICE_CACHE))
@@ -802,7 +799,7 @@ int hci_update_class_sync(struct hci_dev *hdev)
 {
 	u8 cod[3];
 
-	bt_dev_dbg(hdev, "");
+	bt_dev_err(hdev, "hci_update_class_sync power: %d", hdev_is_powered(hdev));
 
 	if (!hdev_is_powered(hdev))
 		return 0;
@@ -819,6 +816,8 @@ int hci_update_class_sync(struct hci_dev *hdev)
 
 	if (hci_dev_test_flag(hdev, HCI_LIMITED_DISCOVERABLE))
 		cod[1] |= 0x20;
+	
+	bt_dev_err(hdev, "hci_update_class_sync dev_class: %d", memcmp(cod, hdev->dev_class, 3));
 
 	if (memcmp(cod, hdev->dev_class, 3) == 0)
 		return 0;
@@ -916,6 +915,8 @@ int hci_update_random_address_sync(struct hci_dev *hdev, bool require_privacy,
 				   bool rpa, u8 *own_addr_type)
 {
 	int err;
+	
+	bdaddr_t static_addr;
 
 	/* If privacy is enabled use a resolvable private address. If
 	 * current RPA has expired or there is something else than
@@ -6323,6 +6324,8 @@ int hci_get_random_address(struct hci_dev *hdev, bool require_privacy,
 			   u8 *own_addr_type, bdaddr_t *rand_addr)
 {
 	int err;
+	
+	bdaddr_t static_addr;
 
 	bacpy(rand_addr, BDADDR_ANY);
 
@@ -6386,7 +6389,12 @@ int hci_get_random_address(struct hci_dev *hdev, bool require_privacy,
 	}
 
 	/* No privacy so use a public address. */
-	*own_addr_type = ADDR_LE_DEV_PUBLIC;
+	
+	bacpy(&static_addr, &hdev->bdaddr);
+	err = hci_set_random_addr_sync(hdev, &hdev->bdaddr);
+	if (err)
+		return err;
+	*own_addr_type = ADDR_LE_DEV_RANDOM;
 
 	return 0;
 }

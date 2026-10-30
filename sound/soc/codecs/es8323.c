@@ -2,7 +2,7 @@
 //
 // es8323.c -- es8323 ALSA SoC audio driver
 //
-// Copyright (c) 2016 Rockchip Electronics Co., Ltd.
+// Copyright (c) 2016 Rockchip Electronics Co. Ltd.
 //
 // Author: Mark Brown <will@everset-semi.com>
 // Author: Jianqun Xu <jay.xu@rock-chips.com>
@@ -26,6 +26,21 @@
 #include <sound/initval.h>
 #include <linux/proc_fs.h>
 #include "es8323.h"
+
+enum INPUT_DEV{
+	LINPUT1,       //line in
+	LINPUT2,       //mic:line
+	RESERVED,
+	LINPUT_DIFF,   //mic:local
+};
+
+struct es8323_priv *es8323_param = NULL;
+
+static struct class *es8388_mic_class;
+static int channel = 1;
+
+
+void es8323_mic_channel_switch(int value);
 
 #define NR_SUPPORTED_MCLK_LRCK_RATIOS 5
 static const unsigned int supported_mclk_lrck_ratios[NR_SUPPORTED_MCLK_LRCK_RATIOS] = {
@@ -144,10 +159,6 @@ static const char * const es8323_diff_sel[] = {
 	"Line 1", "Line 2"
 };
 
-static const char * const es8323_adc_data_sel[] = {
-	"Left Right", "Left Left", "Right Right", "Right Left"
-};
-
 SOC_VALUE_ENUM_SINGLE_DECL(es8323_left_dac_enum, ES8323_ADCCONTROL2, 6, 3, es8323_pga_sell, es8323_line_values);
 SOC_VALUE_ENUM_SINGLE_DECL(es8323_right_dac_enum, ES8323_ADCCONTROL2, 4, 3, es8323_pga_selr, es8323_line_values);
 static SOC_ENUM_SINGLE_DECL(es8323_diff_enum, ES8323_ADCCONTROL3, 7, es8323_diff_sel);
@@ -167,7 +178,6 @@ static const struct soc_enum es8323_enum[] = {
 	SOC_ENUM_SINGLE(ES8323_ADCCONTROL6, 6, 4, adcpol_txt),
 	SOC_ENUM_SINGLE(ES8323_ADCCONTROL3, 3, 3, es8323_mono_mux),
 	SOC_ENUM_SINGLE(ES8323_ADCCONTROL3, 7, 2, es8323_diff_sel),
-	SOC_ENUM_SINGLE(ES8323_ADCCONTROL4, 6, 4, es8323_adc_data_sel),
 };
 
 static const DECLARE_TLV_DB_SCALE(adc_tlv, -9600, 50, 1);
@@ -213,7 +223,6 @@ static const struct snd_kcontrol_new es8323_snd_controls[] = {
 			 ES8323_DACCONTROL25, 0, 33, 0, out_tlv),
 	SOC_DOUBLE_R_TLV("Output 2 Playback Volume", ES8323_DACCONTROL26,
 			 ES8323_DACCONTROL27, 0, 33, 0, out_tlv),
-	SOC_ENUM("ADC Data Select", es8323_enum[11]),
 };
 
 static const struct snd_kcontrol_new es8323_left_line_controls =
@@ -236,12 +245,6 @@ static const struct snd_kcontrol_new es8323_right_mixer_controls[] = {
 	SOC_DAPM_SINGLE("Right Playback Switch", ES8323_DACCONTROL20, 7, 1, 0),
 	SOC_DAPM_SINGLE("Right Bypass Switch", ES8323_DACCONTROL20, 6, 1, 0),
 };
-
-static const struct snd_kcontrol_new es8323_out1_switch =
-	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
-
-static const struct snd_kcontrol_new es8323_out2_switch =
-	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
 
 static const struct snd_soc_dapm_widget es8323_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("LINPUT1"),
@@ -292,8 +295,6 @@ static const struct snd_soc_dapm_widget es8323_dapm_widgets[] = {
 	SND_SOC_DAPM_PGA("LAMP", ES8323_ADCCONTROL1, 4, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("RAMP", ES8323_ADCCONTROL1, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_SWITCH("OUT1", SND_SOC_NOPM, 0, 0, &es8323_out1_switch),
-	SND_SOC_DAPM_SWITCH("OUT2", SND_SOC_NOPM, 0, 0, &es8323_out2_switch),
 	SND_SOC_DAPM_OUTPUT("LOUT1"),
 	SND_SOC_DAPM_OUTPUT("ROUT1"),
 	SND_SOC_DAPM_OUTPUT("LOUT2"),
@@ -349,20 +350,14 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"Right Mixer", "Right Bypass Switch", "Right Line Mux"},
 
 	{"Left Out 1", NULL, "Left Mixer"},
-	{"OUT1", "Switch", "Left Out 1"},
-	{"LOUT1", NULL, "OUT1"},
-
+	{"LOUT1", NULL, "Left Out 1"},
 	{"Right Out 1", NULL, "Right Mixer"},
-	{"OUT1", "Switch", "Right Out 1"},
-	{"ROUT1", NULL, "OUT1"},
+	{"ROUT1", NULL, "Right Out 1"},
 
 	{"Left Out 2", NULL, "Left Mixer"},
-	{"OUT2", "Switch", "Left Out 2"},
-	{"LOUT2", NULL, "OUT2"},
-
+	{"LOUT2", NULL, "Left Out 2"},
 	{"Right Out 2", NULL, "Right Mixer"},
-	{"OUT2", "Switch", "Right Out 2"},
-	{"ROUT2", NULL, "OUT2"},
+	{"ROUT2", NULL, "Right Out 2"},
 };
 
 struct _coeff_div {
@@ -402,8 +397,8 @@ static const struct _coeff_div coeff_div[] = {
 	{12000000, 22050, 544, 0x6, 0x1},
 
 	/* 32k */
-	{8192000, 32000, 256, 0x2, 0x0},
-	{16384000, 32000, 512, 0x4, 0x0},
+	{8192000, 16000, 256, 0x2, 0x0},
+	{16384000, 16000, 512, 0x4, 0x0},
 	{12288000, 32000, 384, 0x3, 0x0},
 	{18432000, 32000, 576, 0x5, 0x0},
 	{12000000, 32000, 375, 0x4, 0x1},
@@ -755,11 +750,44 @@ static int es8323_resume(struct snd_soc_component *component)
 	snd_soc_component_write(component, 0x31, es8323_DEF_VOL);
 	snd_soc_component_write(component, 0x30, es8323_DEF_VOL);
 	snd_soc_component_write(component, 0x19, 0x02);
-
-	es8323_set_bias_level(component, SND_SOC_BIAS_OFF);
-
 	return 0;
 }
+
+static ssize_t mic_channel_show(struct class *class, struct class_attribute *attr, char *buf)
+{
+	if (channel == 1){
+		strcpy(buf, "mic1");
+	}else if (channel == 2){
+		strcpy(buf, "mic2");
+	}else{
+		strcpy(buf, "Error");
+		return -1;
+	}
+
+	return 3;
+}
+
+static ssize_t mic_channel_store(struct class *class, struct class_attribute *attr, const char *buf, size_t count)
+{
+	if (!strncmp(buf, "mic1", 4)){
+		printk("=== select mic1\n");
+		es8323_mic_channel_switch(LINPUT1);
+		return 4;
+	}else if (!strncmp(buf, "mic2", 4)){
+		printk("=== select mic2\n");
+		es8323_mic_channel_switch(LINPUT2);
+		return 4;
+	}else if (!strncmp(buf, "diff", 4)){
+		printk("=== select diff\n");
+		es8323_mic_channel_switch(LINPUT_DIFF);
+		return 4;
+	}else {
+		printk("=== select mic error:%s\n", buf);
+	}
+
+	return -1;
+}
+static CLASS_ATTR_RW(mic_channel);
 
 static int es8323_probe(struct snd_soc_component *component)
 {
@@ -793,17 +821,17 @@ static int es8323_probe(struct snd_soc_component *component)
 	snd_soc_component_write(component, 0x06, 0xC3);
 	snd_soc_component_write(component, 0x19, 0x02);
 	snd_soc_component_write(component, 0x09, 0x00);
-	snd_soc_component_write(component, 0x0A, 0xf8);
+	snd_soc_component_write(component, 0x0A, 0xf0);
 	snd_soc_component_write(component, 0x0B, 0x82);
-	snd_soc_component_write(component, 0x0C, 0x0C);
+	snd_soc_component_write(component, 0x0C, 0x4C);
 	snd_soc_component_write(component, 0x0D, 0x02);
 	snd_soc_component_write(component, 0x10, 0x00);
 	snd_soc_component_write(component, 0x11, 0x00);
-	snd_soc_component_write(component, 0x12, 0x00);
+	snd_soc_component_write(component, 0x12, 0xea);
 	snd_soc_component_write(component, 0x13, 0xc0);
 	snd_soc_component_write(component, 0x14, 0x05);
 	snd_soc_component_write(component, 0x15, 0x06);
-	snd_soc_component_write(component, 0x16, 0x52);
+	snd_soc_component_write(component, 0x16, 0x53);
 
 	snd_soc_component_write(component, 0x17, 0x18);
 	snd_soc_component_write(component, 0x18, 0x02);
@@ -811,6 +839,7 @@ static int es8323_probe(struct snd_soc_component *component)
 	snd_soc_component_write(component, 0x1B, 0x00);
 	snd_soc_component_write(component, 0x27, 0xB8);
 	snd_soc_component_write(component, 0x2A, 0xB8);
+	snd_soc_component_write(component, 0x35, 0xA0);
 	usleep_range(18000, 20000);
 	snd_soc_component_write(component, 0x2E, 0x1E);
 	snd_soc_component_write(component, 0x2F, 0x1E);
@@ -821,13 +850,29 @@ static int es8323_probe(struct snd_soc_component *component)
 	usleep_range(18000, 20000);
 	snd_soc_component_write(component, 0x04, 0x3C);
 
-	es8323_set_bias_level(component, SND_SOC_BIAS_OFF);
+	es8323_set_bias_level(component, SND_SOC_BIAS_STANDBY);
+
+	es8388_mic_class = class_create(THIS_MODULE,"es8388_mic");
+	ret = PTR_ERR(es8388_mic_class);
+	if (IS_ERR(es8388_mic_class)){
+		 printk("could not create sysfs files\n");
+		 return ret;
+	}
+
+	ret = class_create_file(es8388_mic_class, &class_attr_mic_channel);
+	if (ret) {
+		printk("could not create sysfs files\n"); 
+		return ret;
+	}
+
 	return 0;
 }
 
 static void es8323_remove(struct snd_soc_component *component)
 {
 	es8323_set_bias_level(component, SND_SOC_BIAS_OFF);
+	class_remove_file(es8388_mic_class, &class_attr_mic_channel);
+	class_destroy(es8388_mic_class);
 }
 
 static const struct snd_soc_component_driver soc_codec_dev_es8323 = {
@@ -889,9 +934,32 @@ static int es8323_i2c_probe(struct i2c_client *i2c,
 	ret = devm_snd_soc_register_component(&i2c->dev,
 					      &soc_codec_dev_es8323,
 					      &es8323_dai, 1);
+						  
+	es8323_param = es8323;//by Lyle
+	
 	return ret;
 }
 
+//value 0:line in  1:mic  2:mic diff
+void es8323_mic_channel_switch(int value)//by Lyle
+{
+	if(!es8323_param)
+		return;
+	
+	if(value == LINPUT1) {
+		//printk(KERN_ERR"===============> value == LINPUT1\n");
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL2, 0x00);
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL3, 0x02);
+	} else if (value == LINPUT2) {
+		//printk(KERN_ERR"===============> value == LINPUT2\n");
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL2, 0x50);
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL3, 0x82);
+	} else if (value == LINPUT_DIFF) {
+		//printk(KERN_ERR"===============> value == LINPUT_DIFF\n");
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL2, 0xf0);
+		regmap_write(es8323_param->regmap, ES8323_ADCCONTROL3, 0x82);
+	}
+}
 static void es8323_i2c_remove(struct i2c_client *client)
 {
 	snd_soc_unregister_component(&client->dev);

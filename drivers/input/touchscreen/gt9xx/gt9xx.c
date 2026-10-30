@@ -433,6 +433,20 @@ static void gtp_touch_down(struct goodix_ts_data* ts,s32 id,s32 x,s32 y,s32 w)
 			y = ts->abs_y_max - y;
 	}
 
+#if GTP_ADD_BY_FUYINGZHE
+    if(ts->invert_x){
+        x = ts->abs_x_max - x;    
+    }
+
+    if(ts->invert_y){
+        y = ts->abs_y_max - y;  
+    }
+
+    if(ts->swap_x_y){
+        GTP_SWAP(x, y);
+    }
+#endif
+
 #if GTP_ICS_SLOT_REPORT
     input_mt_slot(ts->input_dev, id);
     input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, id);
@@ -528,6 +542,19 @@ static void gtp_pen_down(s32 x, s32 y, s32 w, s32 id)
 	if (gtp_change_x2y)
 		GTP_SWAP(x, y);
 
+#if GTP_ADD_BY_FUYINGZHE
+    if(ts->invert_x){
+        x = ts->abs_x_max - x;    
+    }
+
+    if(ts->invert_y){
+        y = ts->abs_y_max - y;  
+    }
+
+    if(ts->swap_x_y){
+        GTP_SWAP(x, y);
+    }
+#endif
     
     input_report_key(ts->pen_dev, BTN_TOOL_PEN, 1);
 #if GTP_ICS_SLOT_REPORT
@@ -2102,8 +2129,20 @@ static s8 gtp_request_input_dev(struct i2c_client *client,
     input_set_abs_params(ts->input_dev, ABS_X, 0, ts->abs_x_max, 0, 0);
     input_set_abs_params(ts->input_dev, ABS_Y, 0, ts->abs_y_max, 0, 0);
 #endif
+    
+#if GTP_ADD_BY_FUYINGZHE
+    printk(KERN_ERR"======= abs_y_max=%d, abs_x_max=%d\n", ts->abs_y_max, ts->abs_x_max);
+    if(ts->swap_x_y){
+        input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_y_max, 0, 0);
+        input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_x_max, 0, 0);
+    }else{
     input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max, 0, 0);
     input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max, 0, 0);
+    }
+#endif
+
+//  input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max, 0, 0);
+//  input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max, 0, 0);
     input_set_abs_params(ts->input_dev, ABS_MT_WIDTH_MAJOR, 0, 255, 0, 0);
     input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
     input_set_abs_params(ts->input_dev, ABS_MT_TRACKING_ID, 0, 255, 0, 0);
@@ -2803,6 +2842,13 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
     }
     
     ts->irq_flags = ts->int_trigger_type ? IRQF_TRIGGER_FALLING : IRQF_TRIGGER_RISING;
+#if GTP_ADD_BY_FUYINGZHE
+    ts->invert_x = device_property_read_bool(&client->dev, "touchscreen-inverted-x");
+    ts->invert_y = device_property_read_bool(&client->dev, "touchscreen-inverted-y");
+    ts->swap_x_y = device_property_read_bool(&client->dev, "touchscreen-swapped-x-y");
+    printk("==>Gt9XX invert_x:%d, invert_y:%d, swap_x_y:%d\n", ts->invert_x, ts->invert_y, ts->swap_x_y);
+#endif
+
     // Create proc file system
 #if 0
 	gt91xx_config_proc = proc_create(GT91XX_CONFIG_PROC_FILE, 0664, NULL, &config_proc_ops);

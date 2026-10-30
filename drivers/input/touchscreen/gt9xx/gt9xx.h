@@ -53,7 +53,7 @@
 #define GTP_X_REVERSE_ENABLE	1
 #define GTP_Y_REVERSE_ENABLE	0
 #endif
-#define GTP_DRIVER_SEND_CFG   1
+#define GTP_DRIVER_SEND_CFG   0
 #define GTP_HAVE_TOUCH_KEY    0
 #define GTP_POWER_CTRL_SLEEP  0
 
@@ -88,7 +88,7 @@
 #define PEN_DOWN 1
 #define PEN_RELEASE 0
 #define PEN_DOWN_UP 2 //fjp
-
+#define GTP_ADD_BY_FUYINGZHE    1
 #if GTP_COMPATIBLE_MODE
 typedef enum
 {
@@ -152,6 +152,11 @@ struct goodix_ts_data {
     u8 is_950;
 #endif
     struct regulator *tp_regulator;
+#if GTP_ADD_BY_FUYINGZHE
+    bool invert_x;
+	bool invert_y;
+	bool swap_x_y;
+#endif
 };
 
 //extern u16 show_len;

@@ -671,12 +671,12 @@ static void build_pairing_cmd(struct l2cap_conn *conn,
 	    (authreq & SMP_AUTH_SC)) {
 		struct oob_data *oob_data;
 		u8 bdaddr_type;
-
+#if 0
 		if (hci_dev_test_flag(hdev, HCI_SSP_ENABLED)) {
 			local_dist |= SMP_DIST_LINK_KEY;
 			remote_dist |= SMP_DIST_LINK_KEY;
 		}
-
+#endif
 		if (hcon->dst_type == ADDR_LE_DEV_PUBLIC)
 			bdaddr_type = BDADDR_LE_PUBLIC;
 		else
@@ -2420,8 +2420,8 @@ int smp_conn_security(struct hci_conn *hcon, __u8 sec_level)
 
 	if (hci_dev_test_flag(hcon->hdev, HCI_SC_ENABLED)) {
 		authreq |= SMP_AUTH_SC;
-		if (hci_dev_test_flag(hcon->hdev, HCI_SSP_ENABLED))
-			authreq |= SMP_AUTH_CT2;
+		//if (hci_dev_test_flag(hcon->hdev, HCI_SSP_ENABLED))
+		//	authreq |= SMP_AUTH_CT2;
 	}
 
 	/* Don't attempt to set MITM if setting is overridden by debugfs
