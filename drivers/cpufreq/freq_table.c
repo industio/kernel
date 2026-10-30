@@ -9,6 +9,7 @@
 
 #include <linux/cpufreq.h>
 #include <linux/module.h>
+#include <trace/hooks/cpufreq.h>
 
 /*********************************************************************
  *                     FREQUENCY TABLE HELPERS                       *
@@ -51,6 +52,7 @@ int cpufreq_frequency_table_cpuinfo(struct cpufreq_policy *policy,
 			max_freq = freq;
 	}
 
+	trace_android_vh_freq_table_limits(policy, min_freq, max_freq);
 	policy->min = policy->cpuinfo.min_freq = min_freq;
 	policy->max = max_freq;
 	/*
@@ -267,7 +269,7 @@ struct freq_attr cpufreq_freq_attr_##_name##_freqs =     \
 __ATTR_RO(_name##_frequencies)
 
 /*
- * scaling_available_frequencies_show - show available normal frequencies for
+ * show_scaling_available_frequencies - show available normal frequencies for
  * the specified CPU
  */
 static ssize_t scaling_available_frequencies_show(struct cpufreq_policy *policy,
@@ -279,7 +281,7 @@ cpufreq_attr_available_freq(scaling_available);
 EXPORT_SYMBOL_GPL(cpufreq_freq_attr_scaling_available_freqs);
 
 /*
- * scaling_boost_frequencies_show - show available boost frequencies for
+ * show_available_boost_freqs - show available boost frequencies for
  * the specified CPU
  */
 static ssize_t scaling_boost_frequencies_show(struct cpufreq_policy *policy,

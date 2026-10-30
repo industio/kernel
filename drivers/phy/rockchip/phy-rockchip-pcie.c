@@ -3,7 +3,7 @@
  * Rockchip PCIe PHY driver
  *
  * Copyright (C) 2016 Shawn Lin <shawn.lin@rock-chips.com>
- * Copyright (C) 2016 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2016 ROCKCHIP, Inc.
  */
 
 #include <linux/clk.h>

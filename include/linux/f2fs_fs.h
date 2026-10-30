@@ -40,8 +40,9 @@
 
 #define F2FS_ENC_UTF8_12_1	1
 
-#define F2FS_IO_SIZE(sbi)	BIT(F2FS_OPTION(sbi).write_io_size_bits) /* Blocks */
-#define F2FS_IO_SIZE_KB(sbi)	BIT(F2FS_OPTION(sbi).write_io_size_bits + 2) /* KB */
+#define F2FS_IO_SIZE(sbi)	(1 << F2FS_OPTION(sbi).write_io_size_bits) /* Blocks */
+#define F2FS_IO_SIZE_KB(sbi)	(1 << (F2FS_OPTION(sbi).write_io_size_bits + 2)) /* KB */
+#define F2FS_IO_SIZE_BYTES(sbi)	(1 << (F2FS_OPTION(sbi).write_io_size_bits + 12)) /* B */
 #define F2FS_IO_SIZE_BITS(sbi)	(F2FS_OPTION(sbi).write_io_size_bits) /* power of 2 */
 #define F2FS_IO_SIZE_MASK(sbi)	(F2FS_IO_SIZE(sbi) - 1)
 #define F2FS_IO_ALIGNED(sbi)	(F2FS_IO_SIZE(sbi) > 1)
@@ -85,28 +86,6 @@ enum stop_cp_reason {
 };
 
 #define	MAX_STOP_REASON			32
-
-/* detail reason for EFSCORRUPTED */
-enum f2fs_error {
-	ERROR_CORRUPTED_CLUSTER,
-	ERROR_FAIL_DECOMPRESSION,
-	ERROR_INVALID_BLKADDR,
-	ERROR_CORRUPTED_DIRENT,
-	ERROR_CORRUPTED_INODE,
-	ERROR_INCONSISTENT_SUMMARY,
-	ERROR_INCONSISTENT_FOOTER,
-	ERROR_INCONSISTENT_SUM_TYPE,
-	ERROR_CORRUPTED_JOURNAL,
-	ERROR_INCONSISTENT_NODE_COUNT,
-	ERROR_INCONSISTENT_BLOCK_COUNT,
-	ERROR_INVALID_CURSEG,
-	ERROR_INCONSISTENT_SIT,
-	ERROR_CORRUPTED_VERITY_XATTR,
-	ERROR_CORRUPTED_XATTR,
-	ERROR_MAX,
-};
-
-#define MAX_F2FS_ERRORS			16
 
 struct f2fs_super_block {
 	__le32 magic;			/* Magic Number */
@@ -152,8 +131,7 @@ struct f2fs_super_block {
 	__le16  s_encoding;		/* Filename charset encoding */
 	__le16  s_encoding_flags;	/* Filename charset encoding flags */
 	__u8 s_stop_reason[MAX_STOP_REASON];	/* stop checkpoint reason */
-	__u8 s_errors[MAX_F2FS_ERRORS];		/* reason of image corrupts */
-	__u8 reserved[258];		/* valid reserved region */
+	__u8 reserved[274];		/* valid reserved region */
 	__le32 crc;			/* checksum of superblock */
 } __packed;
 
@@ -264,7 +242,7 @@ struct f2fs_extent {
 #define F2FS_INLINE_DATA	0x02	/* file inline data flag */
 #define F2FS_INLINE_DENTRY	0x04	/* file inline dentry flag */
 #define F2FS_DATA_EXIST		0x08	/* file inline data exist flag */
-#define F2FS_INLINE_DOTS	0x10	/* file having implicit dot dentries (obsolete) */
+#define F2FS_INLINE_DOTS	0x10	/* file having implicit dot dentries */
 #define F2FS_EXTRA_ATTR		0x20	/* file having extra attribute */
 #define F2FS_PIN_FILE		0x40	/* file should not be gced */
 #define F2FS_COMPRESS_RELEASED	0x80	/* file released compressed blocks */
@@ -339,7 +317,7 @@ enum {
 	OFFSET_BIT_SHIFT
 };
 
-#define OFFSET_BIT_MASK		GENMASK(OFFSET_BIT_SHIFT - 1, 0)
+#define OFFSET_BIT_MASK		(0x07)	/* (0x01 << OFFSET_BIT_SHIFT) - 1 */
 
 struct node_footer {
 	__le32 nid;		/* node id */
@@ -544,7 +522,7 @@ typedef __le32	f2fs_hash_t;
 #define MAX_DIR_HASH_DEPTH	63
 
 /* MAX buckets in one level of dir */
-#define MAX_DIR_BUCKETS		BIT((MAX_DIR_HASH_DEPTH / 2) - 1)
+#define MAX_DIR_BUCKETS		(1 << ((MAX_DIR_HASH_DEPTH / 2) - 1))
 
 /*
  * space utilization of regular dentry and inline dentry (w/o extra reservation)

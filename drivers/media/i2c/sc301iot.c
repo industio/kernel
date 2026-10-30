@@ -2,7 +2,7 @@
 /*
  * sc301iot driver
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Fuzhou Rockchip Electronics Co., Ltd.
  *
  */
 
@@ -838,7 +838,7 @@ static const struct sc301iot_mode supported_modes[] = {
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc301iot_linear_10_2048x1536_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}, {
 		.width = 2048,
 		.height = 1536,
@@ -852,10 +852,10 @@ static const struct sc301iot_mode supported_modes[] = {
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc301iot_hdr_10_2048x1536_regs,
 		.hdr_mode = HDR_X2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 	}, {
 		.width = 1536,
 		.height = 1536,
@@ -869,7 +869,7 @@ static const struct sc301iot_mode supported_modes[] = {
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc301iot_linear_10_1536x1536_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}, {
 		.width = 1536,
 		.height = 1536,
@@ -883,11 +883,15 @@ static const struct sc301iot_mode supported_modes[] = {
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc301iot_hdr_10_1536x1536_regs,
 		.hdr_mode = HDR_X2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -1145,6 +1149,10 @@ sc301iot_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -1152,7 +1160,7 @@ sc301iot_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int sc301iot_set_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc301iot *sc301iot = to_sc301iot(sd);
@@ -1168,7 +1176,7 @@ static int sc301iot_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc301iot->mutex);
 		return -ENOTTY;
@@ -1192,7 +1200,7 @@ static int sc301iot_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc301iot_get_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc301iot *sc301iot = to_sc301iot(sd);
@@ -1201,7 +1209,7 @@ static int sc301iot_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc301iot->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc301iot->mutex);
 		return -ENOTTY;
@@ -1222,20 +1230,18 @@ static int sc301iot_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc301iot_enum_mbus_code(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct sc301iot *sc301iot = to_sc301iot(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = sc301iot->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc301iot_enum_frame_sizes(struct v4l2_subdev *sd,
-				    struct v4l2_subdev_state *sd_state,
+				    struct v4l2_subdev_pad_config *cfg,
 				    struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -1286,8 +1292,19 @@ static int sc301iot_g_frame_interval(struct v4l2_subdev *sd,
 static int sc301iot_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				 struct v4l2_mbus_config *config)
 {
+	struct sc301iot *sc301iot = to_sc301iot(sd);
+	const struct sc301iot_mode *mode = sc301iot->cur_mode;
+	u32 val = 1 << (SC301IOT_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	if (mode->hdr_mode != NO_HDR)
+		val |= V4L2_MBUS_CSI2_CHANNEL_1;
+	if (mode->hdr_mode == HDR_X3)
+		val |= V4L2_MBUS_CSI2_CHANNEL_2;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = SC301IOT_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -1323,6 +1340,9 @@ static long sc301iot_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 	long ret = 0;
 	u32 stream = 0;
 	u32 sync_mode = 4;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case RKMODULE_GET_MODULE_INFO:
@@ -1335,22 +1355,36 @@ static long sc301iot_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		break;
 	case RKMODULE_SET_HDR_CFG:
 		hdr = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr->hdr_mode == sc301iot->cur_mode->hdr_mode)
+			return 0;
 		w = sc301iot->cur_mode->width;
 		h = sc301iot->cur_mode->height;
+		dst_fps = DIV_ROUND_CLOSEST(sc301iot->cur_mode->max_fps.denominator,
+			sc301iot->cur_mode->max_fps.numerator);
 		for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
 			if (w == supported_modes[i].width &&
 			    h == supported_modes[i].height &&
-			    supported_modes[i].hdr_mode == hdr->hdr_mode) {
-				sc301iot->cur_mode = &supported_modes[i];
-				break;
+			    supported_modes[i].hdr_mode == hdr->hdr_mode &&
+			    supported_modes[i].bus_fmt == sc301iot->cur_mode->bus_fmt) {
+				cur_fps = DIV_ROUND_CLOSEST(supported_modes[i].max_fps.denominator,
+					supported_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == ARRAY_SIZE(supported_modes)) {
+		if (cur_best_fit == -1) {
 			dev_err(&sc301iot->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			sc301iot->cur_mode = &supported_modes[cur_best_fit];
 			w = sc301iot->cur_mode->hts_def - sc301iot->cur_mode->width;
 			h = sc301iot->cur_mode->vts_def - sc301iot->cur_mode->height;
 			__v4l2_ctrl_modify_range(sc301iot->hblank, w, w, 1, w);
@@ -1802,7 +1836,7 @@ static int sc301iot_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc301iot *sc301iot = to_sc301iot(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc301iot_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc301iot->mutex);
@@ -1820,7 +1854,7 @@ static int sc301iot_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int sc301iot_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -2240,7 +2274,7 @@ static int sc301iot_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc301iot->module_index, facing,
 		 SC301IOT_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -2269,7 +2303,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc301iot_remove(struct i2c_client *client)
+static int sc301iot_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc301iot *sc301iot = to_sc301iot(sd);
@@ -2285,6 +2319,8 @@ static void sc301iot_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc301iot_power_off(sc301iot);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

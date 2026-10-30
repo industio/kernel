@@ -129,7 +129,7 @@ struct sk_buff *validate_xmit_xfrm(struct sk_buff *skb, netdev_features_t featur
 
 	sp = skb_sec_path(skb);
 	x = sp->xvec[sp->len - 1];
-	if (xo->flags & XFRM_GRO || x->xso.dir == XFRM_DEV_OFFLOAD_IN)
+	if (xo->flags & XFRM_GRO || x->xso.flags & XFRM_OFFLOAD_INBOUND)
 		return skb;
 
 	/* This skb was already validated on the upper/virtual dev */
@@ -156,7 +156,7 @@ struct sk_buff *validate_xmit_xfrm(struct sk_buff *skb, netdev_features_t featur
 		segs = skb_gso_segment(skb, esp_features);
 		if (IS_ERR(segs)) {
 			kfree_skb(skb);
-			dev_core_stats_tx_dropped_inc(dev);
+			atomic_long_inc(&dev->tx_dropped);
 			return NULL;
 		} else {
 			consume_skb(skb);
@@ -220,36 +220,27 @@ struct sk_buff *validate_xmit_xfrm(struct sk_buff *skb, netdev_features_t featur
 EXPORT_SYMBOL_GPL(validate_xmit_xfrm);
 
 int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
-		       struct xfrm_user_offload *xuo,
-		       struct netlink_ext_ack *extack)
+		       struct xfrm_user_offload *xuo)
 {
 	int err;
 	struct dst_entry *dst;
 	struct net_device *dev;
-	struct xfrm_dev_offload *xso = &x->xso;
+	struct xfrm_state_offload *xso = &x->xso;
 	xfrm_address_t *saddr;
 	xfrm_address_t *daddr;
 
-	if (!x->type_offload) {
-		NL_SET_ERR_MSG(extack, "Type doesn't support offload");
+	if (!x->type_offload)
 		return -EINVAL;
-	}
 
 	/* We don't yet support UDP encapsulation and TFC padding. */
-	if (x->encap || x->tfcpad) {
-		NL_SET_ERR_MSG(extack, "Encapsulation and TFC padding can't be offloaded");
+	if (x->encap || x->tfcpad)
 		return -EINVAL;
-	}
 
-	if (xuo->flags & ~(XFRM_OFFLOAD_IPV6 | XFRM_OFFLOAD_INBOUND)) {
-		NL_SET_ERR_MSG(extack, "Unrecognized flags in offload request");
+	if (xuo->flags & ~(XFRM_OFFLOAD_IPV6 | XFRM_OFFLOAD_INBOUND))
 		return -EINVAL;
-	}
 
 	dev = dev_get_by_index(net, xuo->ifindex);
 	if (!dev) {
-		struct xfrm_dst_lookup_params params;
-
 		if (!(xuo->flags & XFRM_OFFLOAD_INBOUND)) {
 			saddr = &x->props.saddr;
 			daddr = &x->id.daddr;
@@ -258,12 +249,9 @@ int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
 			daddr = &x->props.saddr;
 		}
 
-		memset(&params, 0, sizeof(params));
-		params.net = net;
-		params.saddr = saddr;
-		params.daddr = daddr;
-		params.mark = xfrm_smark_get(0, x);
-		dst = __xfrm_dst_lookup(x->props.family, &params);
+		dst = __xfrm_dst_lookup(net, 0, 0, saddr, daddr,
+					x->props.family,
+					xfrm_smark_get(0, x));
 		if (IS_ERR(dst))
 			return 0;
 
@@ -281,32 +269,27 @@ int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
 
 	if (x->props.flags & XFRM_STATE_ESN &&
 	    !dev->xfrmdev_ops->xdo_dev_state_advance_esn) {
-		NL_SET_ERR_MSG(extack, "Device doesn't support offload with ESN");
 		xso->dev = NULL;
 		dev_put(dev);
 		return -EINVAL;
 	}
 
 	xso->dev = dev;
-	netdev_tracker_alloc(dev, &xso->dev_tracker, GFP_ATOMIC);
 	xso->real_dev = dev;
-
-	if (xuo->flags & XFRM_OFFLOAD_INBOUND)
-		xso->dir = XFRM_DEV_OFFLOAD_IN;
-	else
-		xso->dir = XFRM_DEV_OFFLOAD_OUT;
+	xso->num_exthdrs = 1;
+	/* Don't forward bit that is not implemented */
+	xso->flags = xuo->flags & ~XFRM_OFFLOAD_IPV6;
 
 	err = dev->xfrmdev_ops->xdo_dev_state_add(x);
 	if (err) {
+		xso->num_exthdrs = 0;
+		xso->flags = 0;
 		xso->dev = NULL;
-		xso->dir = 0;
 		xso->real_dev = NULL;
-		netdev_put(dev, &xso->dev_tracker);
+		dev_put(dev);
 
-		if (err != -EOPNOTSUPP) {
-			NL_SET_ERR_MSG(extack, "Device failed to offload this state");
+		if (err != -EOPNOTSUPP)
 			return err;
-		}
 	}
 
 	return 0;
@@ -413,6 +396,16 @@ static int xfrm_api_check(struct net_device *dev)
 	return NOTIFY_DONE;
 }
 
+static int xfrm_dev_register(struct net_device *dev)
+{
+	return xfrm_api_check(dev);
+}
+
+static int xfrm_dev_feat_change(struct net_device *dev)
+{
+	return xfrm_api_check(dev);
+}
+
 static int xfrm_dev_down(struct net_device *dev)
 {
 	if (dev->features & NETIF_F_HW_ESP)
@@ -427,10 +420,10 @@ static int xfrm_dev_event(struct notifier_block *this, unsigned long event, void
 
 	switch (event) {
 	case NETDEV_REGISTER:
-		return xfrm_api_check(dev);
+		return xfrm_dev_register(dev);
 
 	case NETDEV_FEAT_CHANGE:
-		return xfrm_api_check(dev);
+		return xfrm_dev_feat_change(dev);
 
 	case NETDEV_DOWN:
 	case NETDEV_UNREGISTER:

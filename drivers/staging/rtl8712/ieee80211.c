@@ -162,22 +162,22 @@ int r8712_generate_ie(struct registry_priv *registrypriv)
 	uint sz = 0;
 	struct wlan_bssid_ex *dev_network = &registrypriv->dev_network;
 	u8 *ie = dev_network->IEs;
-	u16 beacon_period = (u16)dev_network->Configuration.BeaconPeriod;
+	u16 beaconPeriod = (u16)dev_network->Configuration.BeaconPeriod;
 
 	/*timestamp will be inserted by hardware*/
 	sz += 8;
 	ie += sz;
 	/*beacon interval : 2bytes*/
-	*(__le16 *)ie = cpu_to_le16(beacon_period);
+	*(__le16 *)ie = cpu_to_le16(beaconPeriod);
 	sz += 2;
 	ie += 2;
 	/*capability info*/
 	*(u16 *)ie = 0;
-	*(__le16 *)ie |= cpu_to_le16(WLAN_CAPABILITY_IBSS);
+	*(__le16 *)ie |= cpu_to_le16(cap_IBSS);
 	if (registrypriv->preamble == PREAMBLE_SHORT)
-		*(__le16 *)ie |= cpu_to_le16(WLAN_CAPABILITY_SHORT_PREAMBLE);
+		*(__le16 *)ie |= cpu_to_le16(cap_ShortPremble);
 	if (dev_network->Privacy)
-		*(__le16 *)ie |= cpu_to_le16(WLAN_CAPABILITY_PRIVACY);
+		*(__le16 *)ie |= cpu_to_le16(cap_Privacy);
 	sz += 2;
 	ie += 2;
 	/*SSID*/

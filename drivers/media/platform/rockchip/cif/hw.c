@@ -998,7 +998,6 @@ static const struct cif_reg rk3576_cif_regs[] = {
 	[CIF_REG_DVP_INTEN] = CIF_REG(DVP_INTEN),
 	[CIF_REG_DVP_INTSTAT] = CIF_REG(DVP_INTSTAT),
 	[CIF_REG_DVP_FOR] = CIF_REG(DVP_FOR),
-	[CIF_REG_DVP_MULTI_ID] = CIF_REG(DVP_MULTI_ID),
 	[CIF_REG_DVP_SAV_EAV] = CIF_REG(DVP_SAV_EAV),
 	[CIF_REG_DVP_FRM0_ADDR_Y] = CIF_REG(DVP_FRM0_ADDR_Y_ID0),
 	[CIF_REG_DVP_FRM0_ADDR_UV] = CIF_REG(DVP_FRM0_ADDR_UV_ID0),
@@ -1077,7 +1076,6 @@ static const struct cif_reg rk3576_cif_regs[] = {
 	[CIF_REG_TOISP0_CTRL] = CIF_REG(TOISP0_CH_CTRL),
 	[CIF_REG_TOISP0_SIZE] = CIF_REG(TOISP0_CROP_SIZE),
 	[CIF_REG_TOISP0_CROP] = CIF_REG(TOISP0_CROP),
-	[CIF_REG_GRF_CIFIO_CON] = CIF_REG(CIF_GRF_IOC_MISC_CON1_RK3576),
 };
 
 static const char * const rv1103b_cif_clks[] = {
@@ -1890,4 +1888,3 @@ module_exit(rk_cif_plat_drv_exit);
 MODULE_AUTHOR("Rockchip Camera/ISP team");
 MODULE_DESCRIPTION("Rockchip CIF platform driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(DMA_BUF);

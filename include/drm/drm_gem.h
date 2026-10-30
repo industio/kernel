@@ -39,7 +39,6 @@
 
 #include <drm/drm_vma_manager.h>
 
-struct iosys_map;
 struct drm_gem_object;
 
 /**
@@ -139,7 +138,7 @@ struct drm_gem_object_funcs {
 	 *
 	 * This callback is optional.
 	 */
-	int (*vmap)(struct drm_gem_object *obj, struct iosys_map *map);
+	void *(*vmap)(struct drm_gem_object *obj);
 
 	/**
 	 * @vunmap:
@@ -149,7 +148,7 @@ struct drm_gem_object_funcs {
 	 *
 	 * This callback is optional.
 	 */
-	void (*vunmap)(struct drm_gem_object *obj, struct iosys_map *map);
+	void (*vunmap)(struct drm_gem_object *obj, void *vaddr);
 
 	/**
 	 * @mmap:
@@ -172,41 +171,6 @@ struct drm_gem_object_funcs {
 	 * This is optional but necessary for mmap support.
 	 */
 	const struct vm_operations_struct *vm_ops;
-};
-
-/**
- * struct drm_gem_lru - A simple LRU helper
- *
- * A helper for tracking GEM objects in a given state, to aid in
- * driver's shrinker implementation.  Tracks the count of pages
- * for lockless &shrinker.count_objects, and provides
- * &drm_gem_lru_scan for driver's &shrinker.scan_objects
- * implementation.
- */
-struct drm_gem_lru {
-	/**
-	 * @lock:
-	 *
-	 * Lock protecting movement of GEM objects between LRUs.  All
-	 * LRUs that the object can move between should be protected
-	 * by the same lock.
-	 */
-	struct mutex *lock;
-
-	/**
-	 * @count:
-	 *
-	 * The total number of backing pages of the GEM objects in
-	 * this LRU.
-	 */
-	long count;
-
-	/**
-	 * @list:
-	 *
-	 * The LRU list.
-	 */
-	struct list_head list;
 };
 
 /**
@@ -252,7 +216,7 @@ struct drm_gem_object {
 	 *
 	 * SHMEM file node used as backing storage for swappable buffer objects.
 	 * GEM also supports driver private objects with driver-specific backing
-	 * storage (contiguous DMA memory, special reserved blocks). In this
+	 * storage (contiguous CMA memory, special reserved blocks). In this
 	 * case @filp is NULL.
 	 */
 	struct file *filp;
@@ -308,7 +272,7 @@ struct drm_gem_object {
 	 * attachment point for the device. This is invariant over the lifetime
 	 * of a gem object.
 	 *
-	 * The &drm_gem_object_funcs.free callback is responsible for
+	 * The &drm_driver.gem_free_object_unlocked callback is responsible for
 	 * cleaning up the dma_buf attachment and references acquired at import
 	 * time.
 	 *
@@ -347,38 +311,7 @@ struct drm_gem_object {
 	 *
 	 */
 	const struct drm_gem_object_funcs *funcs;
-
-	/**
-	 * @lru_node:
-	 *
-	 * List node in a &drm_gem_lru.
-	 */
-	struct list_head lru_node;
-
-	/**
-	 * @lru:
-	 *
-	 * The current LRU list that the GEM object is on.
-	 */
-	struct drm_gem_lru *lru;
 };
-
-/**
- * DRM_GEM_FOPS - Default drm GEM file operations
- *
- * This macro provides a shorthand for setting the GEM file ops in the
- * &file_operations structure.  If all you need are the default ops, use
- * DEFINE_DRM_GEM_FOPS instead.
- */
-#define DRM_GEM_FOPS \
-	.open		= drm_open,\
-	.release	= drm_release,\
-	.unlocked_ioctl	= drm_ioctl,\
-	.compat_ioctl	= drm_compat_ioctl,\
-	.poll		= drm_poll,\
-	.read		= drm_read,\
-	.llseek		= noop_llseek,\
-	.mmap		= drm_gem_mmap
 
 /**
  * DEFINE_DRM_GEM_FOPS() - macro to generate file operations for GEM drivers
@@ -396,7 +329,14 @@ struct drm_gem_object {
 #define DEFINE_DRM_GEM_FOPS(name) \
 	static const struct file_operations name = {\
 		.owner		= THIS_MODULE,\
-		DRM_GEM_FOPS,\
+		.open		= drm_open,\
+		.release	= drm_release,\
+		.unlocked_ioctl	= drm_ioctl,\
+		.compat_ioctl	= drm_compat_ioctl,\
+		.poll		= drm_poll,\
+		.read		= drm_read,\
+		.llseek		= noop_llseek,\
+		.mmap		= drm_gem_mmap,\
 	}
 
 void drm_gem_object_release(struct drm_gem_object *obj);
@@ -443,6 +383,8 @@ drm_gem_object_put(struct drm_gem_object *obj)
 		__drm_gem_object_put(obj);
 }
 
+void drm_gem_object_put_locked(struct drm_gem_object *obj);
+
 int drm_gem_handle_create(struct drm_file *file_priv,
 			  struct drm_gem_object *obj,
 			  u32 *handlep);
@@ -466,15 +408,15 @@ int drm_gem_lock_reservations(struct drm_gem_object **objs, int count,
 			      struct ww_acquire_ctx *acquire_ctx);
 void drm_gem_unlock_reservations(struct drm_gem_object **objs, int count,
 				 struct ww_acquire_ctx *acquire_ctx);
+int drm_gem_fence_array_add(struct xarray *fence_array,
+			    struct dma_fence *fence);
+int drm_gem_fence_array_add_implicit(struct xarray *fence_array,
+				     struct drm_gem_object *obj,
+				     bool write);
 int drm_gem_dumb_map_offset(struct drm_file *file, struct drm_device *dev,
 			    u32 handle, u64 *offset);
-
-void drm_gem_lru_init(struct drm_gem_lru *lru, struct mutex *lock);
-void drm_gem_lru_remove(struct drm_gem_object *obj);
-void drm_gem_lru_move_tail(struct drm_gem_lru *lru, struct drm_gem_object *obj);
-unsigned long drm_gem_lru_scan(struct drm_gem_lru *lru,
-			       unsigned int nr_to_scan,
-			       unsigned long *remaining,
-			       bool (*shrink)(struct drm_gem_object *obj));
+int drm_gem_dumb_destroy(struct drm_file *file,
+			 struct drm_device *dev,
+			 uint32_t handle);
 
 #endif /* __DRM_GEM_H__ */

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author:
  *      Chris Zhong <zyw@rock-chips.com>
  *      Nickey Yang <nickey.yang@rock-chips.com>
  */
 
 #include <linux/clk.h>
+#include <linux/gpio.h>
 #include <linux/iopoll.h>
 #include <linux/math64.h>
 #include <linux/mfd/syscon.h>
@@ -16,6 +17,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 
+#include <drm/drm_dsc.h>
 #include <video/mipi_display.h>
 #include <uapi/linux/videodev2.h>
 #include <drm/bridge/dw_mipi_dsi.h>
@@ -125,9 +127,7 @@
 #define BANDGAP_AND_BIAS_CONTROL			0x20
 #define TERMINATION_RESISTER_CONTROL			0x21
 #define AFE_BIAS_BANDGAP_ANALOG_PROGRAMMABILITY		0x22
-#define HS_RX_CONTROL_OF_LANE_CLK			0x34
 #define HS_RX_CONTROL_OF_LANE_0				0x44
-#define HS_RX_CONTROL_OF_LANE_1				0x54
 #define HS_TX_CLOCK_LANE_REQUEST_STATE_TIME_CONTROL	0x60
 #define HS_TX_CLOCK_LANE_PREPARE_STATE_TIME_CONTROL	0x61
 #define HS_TX_CLOCK_LANE_HS_ZERO_STATE_TIME_CONTROL	0x62
@@ -139,9 +139,6 @@
 #define HS_TX_DATA_LANE_HS_ZERO_STATE_TIME_CONTROL	0x72
 #define HS_TX_DATA_LANE_TRAIL_STATE_TIME_CONTROL	0x73
 #define HS_TX_DATA_LANE_EXIT_STATE_TIME_CONTROL		0x74
-#define HS_RX_DATA_LANE_THS_SETTLE_CONTROL		0x75
-#define HS_RX_CONTROL_OF_LANE_2				0x84
-#define HS_RX_CONTROL_OF_LANE_3				0x94
 
 #define DW_MIPI_NEEDS_PHY_CFG_CLK	BIT(0)
 #define DW_MIPI_NEEDS_GRF_CLK		BIT(1)
@@ -182,15 +179,6 @@
 #define RK3399_TXRX_MASTERSLAVEZ	BIT(7)
 #define RK3399_TXRX_ENABLECLK		BIT(6)
 #define RK3399_TXRX_BASEDIR		BIT(5)
-#define RK3399_TXRX_SRC_SEL_ISP0	BIT(4)
-#define RK3399_TXRX_TURNREQUEST		GENMASK(3, 0)
-
-#define RK3506_SYS_GRF_SOC_CON6		0x0018
-#define RK3506_DSI_FORCETXSTOPMODE	(0xf << 4)
-#define RK3506_DSI_PHY_ENABLE_LANE1     BIT(9)
-#define RK3506_DSI_PHY_ENABLE_LANE0     BIT(8)
-#define RK3506_DSI_TURNDISABLE		BIT(2)
-#define RK3506_DSI_FORCERXMODE		BIT(0)
 
 #define RK3562_SYS_GRF_VO_CON1		0x05d4
 #define RK3562_DSI_FORCETXSTOPMODE	(0xf << 4)
@@ -198,21 +186,10 @@
 #define RK3562_DSI_FORCERXMODE		(0x1 << 0)
 
 #define RK3568_GRF_VO_CON2		0x0368
-#define RK3568_DSI0_SKEWCALHS		(0x1f << 11)
-#define RK3568_DSI0_FORCETXSTOPMODE	(0xf << 4)
-#define RK3568_DSI0_TURNDISABLE		BIT(2)
-#define RK3568_DSI0_FORCERXMODE		BIT(0)
-
-/*
- * Note these registers do not appear in the datasheet, they are
- * however present in the BSP driver which is where these values
- * come from. Name GRF_VO_CON3 is assumed.
- */
-#define RK3568_GRF_VO_CON3		0x36c
-#define RK3568_DSI1_SKEWCALHS		(0x1f << 11)
-#define RK3568_DSI1_FORCETXSTOPMODE	(0xf << 4)
-#define RK3568_DSI1_TURNDISABLE		BIT(2)
-#define RK3568_DSI1_FORCERXMODE		BIT(0)
+#define RK3568_GRF_VO_CON3		0x036c
+#define RK3568_DSI_FORCETXSTOPMODE	(0xf << 4)
+#define RK3568_DSI_TURNDISABLE		(0x1 << 2)
+#define RK3568_DSI_FORCERXMODE		(0x1 << 0)
 
 #define RV1126_GRF_DSIPHY_CON		0x10220
 #define RV1126_DSI_FORCETXSTOPMODE	(0xf << 4)
@@ -221,11 +198,7 @@
 
 #define HIWORD_UPDATE(val, mask)	(val | (mask) << 16)
 
-enum {
-	DW_DSI_USAGE_IDLE,
-	DW_DSI_USAGE_DSI,
-	DW_DSI_USAGE_PHY,
-};
+#define to_dsi(nm)	container_of(nm, struct dw_mipi_dsi_rockchip, nm)
 
 enum {
 	BANDGAP_97_07,
@@ -254,7 +227,6 @@ enum soc_type {
 	RK3128,
 	RK3288,
 	RK3399,
-	RK3506,
 	RK3562,
 	RK3568,
 	RV1126,
@@ -281,10 +253,6 @@ struct rockchip_dw_dsi_chip_data {
 	u32 lanecfg2_grf_reg;
 	u32 lanecfg2;
 
-	int (*dphy_rx_init)(struct phy *phy);
-	int (*dphy_rx_power_on)(struct phy *phy);
-	int (*dphy_rx_power_off)(struct phy *phy);
-
 	enum soc_type soc_type;
 	unsigned int flags;
 	unsigned int max_data_lanes;
@@ -309,8 +277,8 @@ struct dw_mipi_dsi_rockchip {
 
 	struct drm_dsc_picture_parameter_set *pps;
 	struct regmap *grf_regmap;
-	struct clk *pclk;
 	struct clk *pllref_clk;
+	struct clk *pclk;
 	struct clk *grf_clk;
 	struct clk *phy_cfg_clk;
 	struct clk *hclk;
@@ -318,23 +286,17 @@ struct dw_mipi_dsi_rockchip {
 	/* dual-channel */
 	bool is_slave;
 	struct dw_mipi_dsi_rockchip *slave;
-	bool data_swap;
 
 	/* optional external dphy */
 	bool phy_enabled;
 	struct phy *phy;
 	union phy_configure_opts phy_opts;
 
-	/* being a phy for other mipi hosts */
-	unsigned int usage_mode;
-	struct mutex usage_mutex;
-	struct phy *dphy;
-	struct phy_configure_opts_mipi_dphy dphy_config;
-
 	unsigned int lane_mbps; /* per lane */
 	u16 input_div;
 	u16 feedback_div;
 	u32 format;
+	u32 mode_flags;
 
 	struct dw_mipi_dsi *dmd;
 	const struct rockchip_dw_dsi_chip_data *cdata;
@@ -343,12 +305,10 @@ struct dw_mipi_dsi_rockchip {
 	struct rockchip_drm_sub_dev sub_dev;
 	struct drm_panel *panel;
 	struct drm_bridge *bridge;
-};
 
-static struct dw_mipi_dsi_rockchip *to_dsi(struct drm_encoder *encoder)
-{
-	return container_of(encoder, struct dw_mipi_dsi_rockchip, encoder);
-}
+	struct gpio_desc *te_gpio;
+	bool disable_hold_mode;
+};
 
 struct dphy_pll_parameter_map {
 	unsigned int max_mbps;
@@ -421,6 +381,11 @@ static inline u32 dsi_read(struct dw_mipi_dsi_rockchip *dsi, u32 reg)
 	return readl(dsi->base + reg);
 }
 
+static inline void dsi_set(struct dw_mipi_dsi_rockchip *dsi, u32 reg, u32 mask)
+{
+	dsi_write(dsi, reg, dsi_read(dsi, reg) | mask);
+}
+
 static inline void dsi_update_bits(struct dw_mipi_dsi_rockchip *dsi, u32 reg,
 				   u32 mask, u32 val)
 {
@@ -449,7 +414,7 @@ static void dw_mipi_dsi_phy_write(struct dw_mipi_dsi_rockchip *dsi,
 	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_TESTCLK | PHY_UNTESTCLR);
 }
 
-/*
+/**
  * ns2bc - Nanoseconds to byte clock cycles
  */
 static inline unsigned int ns2bc(struct dw_mipi_dsi_rockchip *dsi, int ns)
@@ -457,7 +422,7 @@ static inline unsigned int ns2bc(struct dw_mipi_dsi_rockchip *dsi, int ns)
 	return DIV_ROUND_UP(ns * dsi->lane_mbps / 8, 1000);
 }
 
-/*
+/**
  * ns2ui - Nanoseconds to UI time periods
  */
 static inline unsigned int ns2ui(struct dw_mipi_dsi_rockchip *dsi, int ns)
@@ -754,7 +719,12 @@ dw_mipi_dsi_get_lane_mbps(void *priv_data, const struct drm_display_mode *mode,
 	return 0;
 }
 
-static const struct dw_mipi_dsi_dphy_timing dphy_hstt = {
+struct hstt {
+	unsigned int maxfreq;
+	struct dw_mipi_dsi_dphy_timing timing;
+};
+
+struct dw_mipi_dsi_dphy_timing dphy_hstt = {
 	.clk_lp2hs = 0x40,
 	.clk_hs2lp = 0x40,
 	.data_lp2hs = 0x10,
@@ -838,20 +808,22 @@ dw_mipi_dsi_encoder_atomic_check(struct drm_encoder *encoder,
 
 	s->output_type = DRM_MODE_CONNECTOR_DSI;
 	s->tv_state = &conn_state->tv;
-	s->color_encoding = DRM_COLOR_YCBCR_BT709;
-	s->color_range = DRM_COLOR_YCBCR_FULL_RANGE;
+	s->color_space = V4L2_COLORSPACE_DEFAULT;
 	s->output_if = dsi->id ? VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0;
 	if (dsi->slave) {
 		s->output_flags |= ROCKCHIP_OUTPUT_DUAL_CHANNEL_LEFT_RIGHT_MODE;
 		s->output_if |= VOP_OUTPUT_IF_MIPI1;
-
-		if (dsi->data_swap)
-			s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
 	}
 
 	/* dual link dsi for rk3399 */
 	if (dsi->id && dsi->cdata->soc_type == RK3399)
 		s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
+
+	if (!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO)) {
+		s->output_flags |= ROCKCHIP_OUTPUT_MIPI_DS_MODE;
+		s->soft_te = dsi->te_gpio ? true : false;
+		s->hold_mode = dsi->disable_hold_mode ? false : true;
+	}
 
 	if (dsi->dsc_enable) {
 		s->dsc_enable = 1;
@@ -941,49 +913,40 @@ static int rockchip_dsi_drm_create_encoder(struct dw_mipi_dsi_rockchip *dsi,
 	return 0;
 }
 
-static int dw_mipi_dsi_rockchip_match_by_id(struct device *dev,
-					    const void *data)
-{
-	unsigned int *id = (unsigned int *)data;
-	struct dw_mipi_dsi_rockchip *dsi;
-
-	dsi = dev_get_drvdata(dev);
-	if (!dsi)
-		return 0;
-
-	return dsi->id == *id;
-}
-
-static struct dw_mipi_dsi_rockchip
-*dw_mipi_dsi_rockchip_find_by_id(struct device_driver *drv, unsigned int id)
-{
-	struct device *dev;
-
-	dev = driver_find_device(drv, NULL, &id,
-				 dw_mipi_dsi_rockchip_match_by_id);
-	if (!dev)
-		return NULL;
-
-	return dev_get_drvdata(dev);
-}
-
 static struct device
 *dw_mipi_dsi_rockchip_find_second(struct dw_mipi_dsi_rockchip *dsi)
 {
-	struct dw_mipi_dsi_rockchip *slave;
+	struct device_node *node = NULL;
+	struct platform_device *pdev;
+	struct dw_mipi_dsi_rockchip *dsi2;
 
-	if (of_property_read_bool(dsi->dev->of_node, "rockchip,dual-channel")) {
-		dsi->data_swap = of_property_read_bool(dsi->dev->of_node,
-						       "rockchip,data-swap");
-
-		slave = dw_mipi_dsi_rockchip_find_by_id(dsi->dev->driver, 1);
-		if (!slave)
+	node = of_parse_phandle(dsi->dev->of_node, "rockchip,dual-channel", 0);
+	if (node) {
+		pdev = of_find_device_by_node(node);
+		if (!pdev)
 			return ERR_PTR(-EPROBE_DEFER);
 
-		return slave->dev;
+		dsi2 = platform_get_drvdata(pdev);
+		if (!dsi2) {
+			platform_device_put(pdev);
+			return ERR_PTR(-EPROBE_DEFER);
+		}
+
+		return &pdev->dev;
 	}
 
 	return NULL;
+}
+
+static irqreturn_t dw_mipi_dsi_te_irq_handler(int irq, void *dev_id)
+{
+	struct dw_mipi_dsi_rockchip *dsi = (struct dw_mipi_dsi_rockchip *)dev_id;
+	struct drm_encoder *encoder = &dsi->encoder;
+
+	if (encoder->crtc)
+		rockchip_drm_te_handle(encoder->crtc);
+
+	return IRQ_HANDLED;
 }
 
 static int dw_mipi_dsi_get_dsc_info_from_sink(struct dw_mipi_dsi_rockchip *dsi,
@@ -1010,6 +973,7 @@ static int dw_mipi_dsi_get_dsc_info_from_sink(struct dw_mipi_dsi_rockchip *dsi,
 	dsi->scrambling_en = of_property_read_bool(np, "scrambling-enable");
 	dsi->dsc_enable = of_property_read_bool(np, "compressed-data");
 	dsi->block_pred_enable = of_property_read_bool(np, "blk-pred-enable");
+	of_property_read_u32(np, "dsi,flags", &dsi->mode_flags);
 	of_property_read_u32(np, "slice-width", &dsi->slice_width);
 	of_property_read_u32(np, "slice-height", &dsi->slice_height);
 	of_property_read_u32(np, "slice-per-pkt", &dsi->slice_per_pkt);
@@ -1143,258 +1107,22 @@ static int dw_mipi_dsi_rockchip_component_add(struct dw_mipi_dsi_rockchip *dsi)
 {
 	int ret;
 
-	mutex_lock(&dsi->usage_mutex);
-
-	if (dsi->usage_mode != DW_DSI_USAGE_IDLE) {
-		DRM_DEV_ERROR(dsi->dev, "dsi controller already in use\n");
-		mutex_unlock(&dsi->usage_mutex);
-		return -EBUSY;
-	}
-
-	dsi->usage_mode = DW_DSI_USAGE_DSI;
-	mutex_unlock(&dsi->usage_mutex);
-
 	ret = component_add(dsi->dev, &dw_mipi_dsi_rockchip_ops);
 	if (ret) {
 		DRM_DEV_ERROR(dsi->dev, "Failed to register component: %d\n",
 					ret);
-		goto out;
+		return ret;
 	}
 
 	return 0;
-
-out:
-	mutex_lock(&dsi->usage_mutex);
-	dsi->usage_mode = DW_DSI_USAGE_IDLE;
-	mutex_unlock(&dsi->usage_mutex);
-	return ret;
 }
 
 static int dw_mipi_dsi_rockchip_component_del(struct dw_mipi_dsi_rockchip *dsi)
 {
 	component_del(dsi->dev, &dw_mipi_dsi_rockchip_ops);
 
-	mutex_lock(&dsi->usage_mutex);
-	dsi->usage_mode = DW_DSI_USAGE_IDLE;
-	mutex_unlock(&dsi->usage_mutex);
-
 	return 0;
 }
-
-static int dw_mipi_dsi_rockchip_dphy_bind(struct device *dev,
-					  struct device *master,
-					  void *data)
-{
-	/*
-	 * Nothing to do when used as a dphy.
-	 * Just make the rest of Rockchip-DRM happy
-	 * by being here.
-	 */
-
-	return 0;
-}
-
-static void dw_mipi_dsi_rockchip_dphy_unbind(struct device *dev,
-					     struct device *master,
-					     void *data)
-{
-	/* Nothing to do when used as a dphy. */
-}
-
-static const struct component_ops dw_mipi_dsi_rockchip_dphy_ops = {
-	.bind	= dw_mipi_dsi_rockchip_dphy_bind,
-	.unbind	= dw_mipi_dsi_rockchip_dphy_unbind,
-};
-
-static int dw_mipi_dsi_dphy_init(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-	int ret;
-
-	mutex_lock(&dsi->usage_mutex);
-
-	if (dsi->usage_mode != DW_DSI_USAGE_IDLE) {
-		DRM_DEV_ERROR(dsi->dev, "dsi controller already in use\n");
-		mutex_unlock(&dsi->usage_mutex);
-		return -EBUSY;
-	}
-
-	dsi->usage_mode = DW_DSI_USAGE_PHY;
-	mutex_unlock(&dsi->usage_mutex);
-
-	ret = component_add(dsi->dev, &dw_mipi_dsi_rockchip_dphy_ops);
-	if (ret < 0)
-		goto err_graph;
-
-	if (dsi->cdata->dphy_rx_init) {
-		ret = clk_prepare_enable(dsi->pclk);
-		if (ret < 0)
-			goto err_init;
-
-		ret = clk_prepare_enable(dsi->grf_clk);
-		if (ret) {
-			clk_disable_unprepare(dsi->pclk);
-			goto err_init;
-		}
-
-		ret = dsi->cdata->dphy_rx_init(phy);
-		clk_disable_unprepare(dsi->grf_clk);
-		clk_disable_unprepare(dsi->pclk);
-		if (ret < 0)
-			goto err_init;
-	}
-
-	return 0;
-
-err_init:
-	component_del(dsi->dev, &dw_mipi_dsi_rockchip_dphy_ops);
-err_graph:
-	mutex_lock(&dsi->usage_mutex);
-	dsi->usage_mode = DW_DSI_USAGE_IDLE;
-	mutex_unlock(&dsi->usage_mutex);
-
-	return ret;
-}
-
-static int dw_mipi_dsi_dphy_exit(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-
-	component_del(dsi->dev, &dw_mipi_dsi_rockchip_dphy_ops);
-
-	mutex_lock(&dsi->usage_mutex);
-	dsi->usage_mode = DW_DSI_USAGE_IDLE;
-	mutex_unlock(&dsi->usage_mutex);
-
-	return 0;
-}
-
-static int dw_mipi_dsi_dphy_configure(struct phy *phy, union phy_configure_opts *opts)
-{
-	struct phy_configure_opts_mipi_dphy *config = &opts->mipi_dphy;
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-	int ret;
-
-	ret = phy_mipi_dphy_config_validate(&opts->mipi_dphy);
-	if (ret)
-		return ret;
-
-	dsi->dphy_config = *config;
-	dsi->lane_mbps = div_u64(config->hs_clk_rate, 1000 * 1000 * 1);
-
-	return 0;
-}
-
-static int dw_mipi_dsi_dphy_power_on(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-	int i, ret;
-
-	DRM_DEV_DEBUG(dsi->dev, "lanes %d - data_rate_mbps %u\n",
-		      dsi->dphy_config.lanes, dsi->lane_mbps);
-
-	i = max_mbps_to_parameter(dsi->lane_mbps);
-	if (i < 0) {
-		DRM_DEV_ERROR(dsi->dev, "failed to get parameter for %dmbps clock\n",
-			      dsi->lane_mbps);
-		return i;
-	}
-
-	ret = pm_runtime_resume_and_get(dsi->dev);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dsi->dev, "failed to enable device: %d\n", ret);
-		return ret;
-	}
-
-	ret = clk_prepare_enable(dsi->pclk);
-	if (ret) {
-		DRM_DEV_ERROR(dsi->dev, "Failed to enable pclk: %d\n", ret);
-		goto err_pclk;
-	}
-
-	ret = clk_prepare_enable(dsi->grf_clk);
-	if (ret) {
-		DRM_DEV_ERROR(dsi->dev, "Failed to enable grf_clk: %d\n", ret);
-		goto err_grf_clk;
-	}
-
-	ret = clk_prepare_enable(dsi->phy_cfg_clk);
-	if (ret) {
-		DRM_DEV_ERROR(dsi->dev, "Failed to enable phy_cfg_clk: %d\n", ret);
-		goto err_phy_cfg_clk;
-	}
-
-	/* do soc-variant specific init */
-	if (dsi->cdata->dphy_rx_power_on) {
-		ret = dsi->cdata->dphy_rx_power_on(phy);
-		if (ret < 0) {
-			DRM_DEV_ERROR(dsi->dev, "hardware-specific phy bringup failed: %d\n", ret);
-			goto err_pwr_on;
-		}
-	}
-
-	/*
-	 * Configure hsfreqrange according to frequency values
-	 * Set clock lane and hsfreqrange by lane0(test code 0x44)
-	 */
-	dw_mipi_dsi_phy_write(dsi, HS_RX_CONTROL_OF_LANE_CLK, 0);
-	dw_mipi_dsi_phy_write(dsi, HS_RX_CONTROL_OF_LANE_0,
-			      HSFREQRANGE_SEL(dppa_map[i].hsfreqrange));
-	dw_mipi_dsi_phy_write(dsi, HS_RX_CONTROL_OF_LANE_1, 0);
-	dw_mipi_dsi_phy_write(dsi, HS_RX_CONTROL_OF_LANE_2, 0);
-	dw_mipi_dsi_phy_write(dsi, HS_RX_CONTROL_OF_LANE_3, 0);
-
-	/* Normal operation */
-	dw_mipi_dsi_phy_write(dsi, 0x0, 0);
-
-	clk_disable_unprepare(dsi->phy_cfg_clk);
-	clk_disable_unprepare(dsi->grf_clk);
-
-	return ret;
-
-err_pwr_on:
-	clk_disable_unprepare(dsi->phy_cfg_clk);
-err_phy_cfg_clk:
-	clk_disable_unprepare(dsi->grf_clk);
-err_grf_clk:
-	clk_disable_unprepare(dsi->pclk);
-err_pclk:
-	pm_runtime_put(dsi->dev);
-	return ret;
-}
-
-static int dw_mipi_dsi_dphy_power_off(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-	int ret;
-
-	ret = clk_prepare_enable(dsi->grf_clk);
-	if (ret) {
-		DRM_DEV_ERROR(dsi->dev, "Failed to enable grf_clk: %d\n", ret);
-		return ret;
-	}
-
-	if (dsi->cdata->dphy_rx_power_off) {
-		ret = dsi->cdata->dphy_rx_power_off(phy);
-		if (ret < 0)
-			DRM_DEV_ERROR(dsi->dev, "hardware-specific phy shutdown failed: %d\n", ret);
-	}
-
-	clk_disable_unprepare(dsi->grf_clk);
-	clk_disable_unprepare(dsi->pclk);
-
-	pm_runtime_put(dsi->dev);
-
-	return ret;
-}
-
-static const struct phy_ops dw_mipi_dsi_dphy_ops = {
-	.configure	= dw_mipi_dsi_dphy_configure,
-	.power_on	= dw_mipi_dsi_dphy_power_on,
-	.power_off	= dw_mipi_dsi_dphy_power_off,
-	.init		= dw_mipi_dsi_dphy_init,
-	.exit		= dw_mipi_dsi_dphy_exit,
-};
 
 static void
 dw_mipi_dsi_rockchip_stream_standby(void *priv_data, bool standby)
@@ -1410,7 +1138,6 @@ static int dw_mipi_dsi_rockchip_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct dw_mipi_dsi_rockchip *dsi;
-	struct phy_provider *phy_provider;
 	struct resource *res;
 	const struct rockchip_dw_dsi_chip_data *cdata =
 				of_device_get_match_data(dev);
@@ -1505,8 +1232,25 @@ static int dw_mipi_dsi_rockchip_probe(struct platform_device *pdev)
 
 	dsi->grf_regmap = syscon_regmap_lookup_by_phandle(np, "rockchip,grf");
 	if (IS_ERR(dsi->grf_regmap)) {
-		DRM_DEV_ERROR(dev, "Unable to get rockchip,grf\n");
+		DRM_DEV_ERROR(dsi->dev, "Unable to get rockchip,grf\n");
 		return PTR_ERR(dsi->grf_regmap);
+	}
+
+	if (device_property_read_bool(dev, "disable-hold-mode"))
+		dsi->disable_hold_mode = true;
+
+	dsi->te_gpio = devm_gpiod_get_optional(dev, "te", GPIOD_IN);
+	if (IS_ERR(dsi->te_gpio))
+		dsi->te_gpio = NULL;
+
+	if (dsi->te_gpio) {
+		ret = devm_request_irq(dev, gpiod_to_irq(dsi->te_gpio),
+				       dw_mipi_dsi_te_irq_handler,
+				       IRQF_TRIGGER_RISING, "PANEL-TE", dsi);
+		if (ret) {
+			DRM_DEV_ERROR(dev, "failed to request TE IRQ: %d\n", ret);
+			return ret;
+		}
 	}
 
 	dsi->dev = dev;
@@ -1515,23 +1259,10 @@ static int dw_mipi_dsi_rockchip_probe(struct platform_device *pdev)
 	dsi->pdata.phy_ops = &dw_mipi_dsi_rockchip_phy_ops;
 	dsi->pdata.priv_data = dsi;
 
-	if (dsi->cdata->soc_type == RK3568)
+	if (dsi->cdata->soc_type == RK3568 || dsi->cdata->soc_type == RK3562)
 		dsi->pdata.stream_standby = dw_mipi_dsi_rockchip_stream_standby;
 
 	platform_set_drvdata(pdev, dsi);
-
-	mutex_init(&dsi->usage_mutex);
-
-	dsi->dphy = devm_phy_create(dev, NULL, &dw_mipi_dsi_dphy_ops);
-	if (IS_ERR(dsi->dphy)) {
-		DRM_DEV_ERROR(&pdev->dev, "failed to create PHY\n");
-		return PTR_ERR(dsi->dphy);
-	}
-
-	phy_set_drvdata(dsi->dphy, dsi);
-	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
-	if (IS_ERR(phy_provider))
-		return PTR_ERR(phy_provider);
 
 	dsi->dmd = dw_mipi_dsi_probe(pdev, &dsi->pdata);
 	if (IS_ERR(dsi->dmd)) {
@@ -1654,75 +1385,6 @@ static const struct rockchip_dw_dsi_chip_data rk3288_chip_data[] = {
 	{ /* sentinel */ }
 };
 
-static int rk3399_dphy_tx1rx1_init(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-
-	/*
-	 * Set TX1RX1 source to isp1.
-	 * Assume ISP0 is supplied by the RX0 dphy.
-	 */
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(0, RK3399_TXRX_SRC_SEL_ISP0));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(0, RK3399_TXRX_MASTERSLAVEZ));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(0, RK3399_TXRX_BASEDIR));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(0, RK3399_DSI1_ENABLE));
-
-	return 0;
-}
-
-static int rk3399_dphy_tx1rx1_power_on(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-
-	/* tester reset pulse */
-	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_TESTCLK | PHY_TESTCLR);
-	usleep_range(100, 150);
-
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(0, RK3399_TXRX_MASTERSLAVEZ));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(RK3399_TXRX_BASEDIR, RK3399_TXRX_BASEDIR));
-
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(0, RK3399_DSI1_FORCERXMODE));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(0, RK3399_DSI1_FORCETXSTOPMODE));
-
-	/* Disable lane turn around, which is ignored in receive mode */
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON24,
-		     HIWORD_UPDATE(0, RK3399_TXRX_TURNREQUEST));
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(RK3399_DSI1_TURNDISABLE,
-				   RK3399_DSI1_TURNDISABLE));
-	usleep_range(100, 150);
-
-	dsi_write(dsi, DSI_PHY_TST_CTRL0, PHY_TESTCLK | PHY_UNTESTCLR);
-	usleep_range(100, 150);
-
-	/* Enable dphy lanes */
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(GENMASK(dsi->dphy_config.lanes - 1, 0),
-				   RK3399_DSI1_ENABLE));
-
-	usleep_range(100, 150);
-
-	return 0;
-}
-
-static int rk3399_dphy_tx1rx1_power_off(struct phy *phy)
-{
-	struct dw_mipi_dsi_rockchip *dsi = phy_get_drvdata(phy);
-
-	regmap_write(dsi->grf_regmap, RK3399_GRF_SOC_CON23,
-		     HIWORD_UPDATE(0, RK3399_DSI1_ENABLE));
-
-	return 0;
-}
-
 static const struct rockchip_dw_dsi_chip_data rk3399_chip_data[] = {
 	{
 		.reg = 0xff960000,
@@ -1767,32 +1429,8 @@ static const struct rockchip_dw_dsi_chip_data rk3399_chip_data[] = {
 
 		.flags = DW_MIPI_NEEDS_PHY_CFG_CLK | DW_MIPI_NEEDS_GRF_CLK,
 		.max_data_lanes = 4,
-
-		.dphy_rx_init = rk3399_dphy_tx1rx1_init,
-		.dphy_rx_power_on = rk3399_dphy_tx1rx1_power_on,
-		.dphy_rx_power_off = rk3399_dphy_tx1rx1_power_off,
-
 		.max_bit_rate_per_lane = 1500000000UL,
 		.soc_type = RK3399,
-	},
-	{ /* sentinel */ }
-};
-
-static const struct rockchip_dw_dsi_chip_data rk3506_chip_data[] = {
-	{
-		.reg = 0xff640000,
-		.lanecfg1_grf_reg = RK3506_SYS_GRF_SOC_CON6,
-		.lanecfg1 = HIWORD_UPDATE(RK3506_DSI_PHY_ENABLE_LANE0 |
-					  RK3506_DSI_PHY_ENABLE_LANE1,
-					  RK3506_DSI_TURNDISABLE |
-					  RK3506_DSI_FORCERXMODE |
-					  RK3506_DSI_FORCETXSTOPMODE |
-					  RK3506_DSI_PHY_ENABLE_LANE0 |
-					  RK3506_DSI_PHY_ENABLE_LANE1),
-
-		.max_data_lanes = 2,
-		.max_bit_rate_per_lane = 1500000000UL,
-		.soc_type = RK3506,
 	},
 	{ /* sentinel */ }
 };
@@ -1816,11 +1454,12 @@ static const struct rockchip_dw_dsi_chip_data rk3562_chip_data[] = {
 static const struct rockchip_dw_dsi_chip_data rk3568_chip_data[] = {
 	{
 		.reg = 0xfe060000,
+
 		.lanecfg1_grf_reg = RK3568_GRF_VO_CON2,
-		.lanecfg1 = HIWORD_UPDATE(0, RK3568_DSI0_SKEWCALHS |
-					  RK3568_DSI0_FORCETXSTOPMODE |
-					  RK3568_DSI0_TURNDISABLE |
-					  RK3568_DSI0_FORCERXMODE),
+		.lanecfg1 = HIWORD_UPDATE(0, RK3568_DSI_TURNDISABLE |
+					     RK3568_DSI_FORCERXMODE |
+					     RK3568_DSI_FORCETXSTOPMODE),
+
 		.flags = DW_MIPI_NEEDS_HCLK,
 		.max_data_lanes = 4,
 		.max_bit_rate_per_lane = 1200000000UL,
@@ -1828,11 +1467,12 @@ static const struct rockchip_dw_dsi_chip_data rk3568_chip_data[] = {
 	},
 	{
 		.reg = 0xfe070000,
+
 		.lanecfg1_grf_reg = RK3568_GRF_VO_CON3,
-		.lanecfg1 = HIWORD_UPDATE(0, RK3568_DSI1_SKEWCALHS |
-					  RK3568_DSI1_FORCETXSTOPMODE |
-					  RK3568_DSI1_TURNDISABLE |
-					  RK3568_DSI1_FORCERXMODE),
+		.lanecfg1 = HIWORD_UPDATE(0, RK3568_DSI_TURNDISABLE |
+					     RK3568_DSI_FORCERXMODE |
+					     RK3568_DSI_FORCETXSTOPMODE),
+
 		.flags = DW_MIPI_NEEDS_HCLK,
 		.max_data_lanes = 4,
 		.max_bit_rate_per_lane = 1200000000UL,
@@ -1858,54 +1498,28 @@ static const struct rockchip_dw_dsi_chip_data rv1126_chip_data[] = {
 };
 
 static const struct of_device_id dw_mipi_dsi_rockchip_dt_ids[] = {
-#if IS_ENABLED(CONFIG_CPU_PX30)
 	{
 	 .compatible = "rockchip,px30-mipi-dsi",
 	 .data = &px30_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK312X)
-	{
+	}, {
 	 .compatible = "rockchip,rk3128-mipi-dsi",
 	 .data = &rk3128_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3288)
-	{
+	}, {
 	 .compatible = "rockchip,rk3288-mipi-dsi",
 	 .data = &rk3288_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3399)
-	{
+	}, {
 	 .compatible = "rockchip,rk3399-mipi-dsi",
 	 .data = &rk3399_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3506)
-	{
-	 .compatible = "rockchip,rk3506-mipi-dsi",
-	 .data = &rk3506_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3562)
-	{
+	}, {
 	 .compatible = "rockchip,rk3562-mipi-dsi",
 	 .data = &rk3562_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3568)
-	{
+	}, {
 	 .compatible = "rockchip,rk3568-mipi-dsi",
 	 .data = &rk3568_chip_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RV1126)
-	{
+	}, {
 	 .compatible = "rockchip,rv1126-mipi-dsi",
 	 .data = &rv1126_chip_data,
 	},
-#endif
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, dw_mipi_dsi_rockchip_dt_ids);
@@ -1915,7 +1529,7 @@ struct platform_driver dw_mipi_dsi_rockchip_driver = {
 	.remove		= dw_mipi_dsi_rockchip_remove,
 	.driver		= {
 		.of_match_table = dw_mipi_dsi_rockchip_dt_ids,
-		.pm	= &dw_mipi_dsi_rockchip_pm_ops,
+		.pm = &dw_mipi_dsi_rockchip_pm_ops,
 		.name	= "dw-mipi-dsi-rockchip",
 		/*
 		 * For dual-DSI display, one DSI pokes at the other DSI's

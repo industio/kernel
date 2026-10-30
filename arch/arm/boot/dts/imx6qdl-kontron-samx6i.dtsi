@@ -276,10 +276,6 @@
 	};
 };
 
-&hdmi {
-	ddc-i2c-bus = <&i2c2>;
-};
-
 &i2c_intern {
 	pmic@8 {
 		compatible = "fsl,pfuze100";
@@ -397,7 +393,7 @@
 
 /* I2C_GP */
 &i2c1 {
-	clock-frequency = <375000>;
+	clock-frequency = <100000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c1>;
 };
@@ -411,7 +407,7 @@
 
 /* I2C_PM */
 &i2c3 {
-	clock-frequency = <375000>;
+	clock-frequency = <100000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c3>;
 	status = "okay";

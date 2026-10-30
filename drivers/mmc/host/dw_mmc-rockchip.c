@@ -16,12 +16,10 @@
 #include "dw_mmc.h"
 #include "dw_mmc-pltfm.h"
 
-#define RK3288_CLKGEN_DIV	2
+#define RK3288_CLKGEN_DIV       2
 #define USRID_INTER_PHASE	0x20230001
 #define SDMMC_TIMING_CON0	0x130
 #define SDMMC_TIMING_CON1	0x134
-#define SDMMC_MISC_CON		0x138
-#define MEM_CLK_AUTOGATE_ENABLE BIT(5)
 #define ROCKCHIP_MMC_DELAY_SEL BIT(10)
 #define ROCKCHIP_MMC_DEGREE_MASK 0x3
 #define ROCKCHIP_MMC_DELAYNUM_OFFSET 2
@@ -30,8 +28,6 @@
 #define ROCKCHIP_MMC_DELAY_ELEMENT_PSEC 60
 #define HIWORD_UPDATE(val, mask, shift) \
 		((val) << (shift) | (mask) << ((shift) + 16))
-
-static const unsigned int freqs[] = { 100000, 200000, 300000, 400000 };
 
 struct dw_mci_rockchip_priv_data {
 	struct clk		*drv_clk;
@@ -187,7 +183,7 @@ static void dw_mci_rk3288_set_ios(struct dw_mci *host, struct mmc_ios *ios)
 
 	ret = clk_set_rate(host->ciu_clk, cclkin);
 	if (ret)
-		dev_warn(host->dev, "failed to set rate %uHz err: %d\n", cclkin, ret);
+		dev_warn(host->dev, "failed to set rate %uHz\n", ios->clock);
 
 	bus_hz = clk_get_rate(host->ciu_clk) / RK3288_CLKGEN_DIV;
 	if (bus_hz != host->bus_hz) {
@@ -309,8 +305,17 @@ static int dw_mci_v2_execute_tuning(struct dw_mci_slot *slot, u32 opcode)
 			rockchip_mmc_set_phase(host, true, degree);
 		else
 			clk_set_phase(priv->sample_clk, degree);
-		if (!mmc_send_tuning(mmc, opcode, NULL))
-			break;
+		if (mmc_send_tuning(mmc, opcode, NULL)) {
+			/*
+			 * Tuning error, the phase is a bad phase,
+			 * then try using the calculated best phase.
+			 */
+			dev_info(host->dev, "V2 tuned phase to %d error, try the best phase\n", degree);
+			degree = (degree + 180) % 360;
+			clk_set_phase(priv->sample_clk, degree);
+			if (!mmc_send_tuning(mmc, opcode, NULL))
+				break;
+		}
 	}
 
 	if (i == ARRAY_SIZE(degrees)) {
@@ -319,7 +324,7 @@ static int dw_mci_v2_execute_tuning(struct dw_mci_slot *slot, u32 opcode)
 	}
 
 done:
-	dev_info(host->dev, "Successfully tuned phase to %d\n", degree);
+	dev_info(host->dev, "V2 Successfully tuned phase to %d\n", degree);
 	priv->last_degree = degree;
 	return 0;
 }
@@ -533,30 +538,14 @@ static int dw_mci_rk3288_parse_dt(struct dw_mci *host)
 
 static int dw_mci_rockchip_init(struct dw_mci *host)
 {
-	int ret, i;
 	struct dw_mci_rockchip_priv_data *priv = host->priv;
 
 	/* It is slot 8 on Rockchip SoCs */
 	host->sdio_id0 = 8;
 
-	if (of_device_is_compatible(host->dev->of_node, "rockchip,rk3288-dw-mshc")) {
+	if (of_device_is_compatible(host->dev->of_node,
+				    "rockchip,rk3288-dw-mshc"))
 		host->bus_hz /= RK3288_CLKGEN_DIV;
-
-		/* clock driver will fail if the clock is less than the lowest source clock
-		 * divided by the internal clock divider. Test for the lowest available
-		 * clock and set the minimum freq to clock / clock divider.
-		 */
-
-		for (i = 0; i < ARRAY_SIZE(freqs); i++) {
-			ret = clk_round_rate(host->ciu_clk, freqs[i] * RK3288_CLKGEN_DIV);
-			if (ret > 0) {
-				host->minimum_speed = ret / RK3288_CLKGEN_DIV;
-				break;
-			}
-		}
-		if (ret < 0)
-			dev_warn(host->dev, "no valid minimum freq: %d\n", ret);
-	}
 
 	if (of_device_is_compatible(host->dev->of_node,
 				    "rockchip,rv1106-dw-mshc") &&
@@ -575,19 +564,27 @@ static int dw_mci_rockchip_init(struct dw_mci *host)
 	if (priv->usrid == USRID_INTER_PHASE) {
 		priv->sample_clk = NULL;
 		priv->drv_clk = NULL;
-		mci_writel(host, MISC_CON, MEM_CLK_AUTOGATE_ENABLE);
 	}
 
 	host->need_xfer_timer = true;
 	return 0;
 }
 
+/* Common capabilities of RK3288 SoC */
+static unsigned long dw_mci_rk3288_dwmmc_caps[4] = {
+	MMC_CAP_CMD23,
+	MMC_CAP_CMD23,
+	MMC_CAP_CMD23,
+	MMC_CAP_CMD23,
+};
+
 static const struct dw_mci_drv_data rk2928_drv_data = {
 	.init			= dw_mci_rockchip_init,
 };
 
 static const struct dw_mci_drv_data rk3288_drv_data = {
-	.common_caps		= MMC_CAP_CMD23,
+	.caps			= dw_mci_rk3288_dwmmc_caps,
+	.num_caps		= ARRAY_SIZE(dw_mci_rk3288_dwmmc_caps),
 	.set_ios		= dw_mci_rk3288_set_ios,
 	.execute_tuning		= dw_mci_rk3288_execute_tuning,
 	.parse_dt		= dw_mci_rk3288_parse_dt,
@@ -657,9 +654,7 @@ static int dw_mci_rockchip_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_put_noidle(&pdev->dev);
 
-	dw_mci_pltfm_remove(pdev);
-
-	return 0;
+	return dw_mci_pltfm_remove(pdev);
 }
 
 static const struct dev_pm_ops dw_mci_rockchip_dev_pm_ops = {

@@ -1,10 +1,17 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (c) 2021 Rockchip Electronics Co., Ltd. */
+/* Copyright (c) 2021 Fuzhou Rockchip Electronics Co., Ltd. */
 
 #ifndef _RKISP_EXTERNAL_H
 #define _RKISP_EXTERNAL_H
 
 #include <linux/iopoll.h>
+
+#ifdef CONFIG_CPU_RV1103B
+#define RKMOUDLE_UNITE_EXTEND_PIXEL	512
+#else
+/* using for rk3588 dual isp unite */
+#define RKMOUDLE_UNITE_EXTEND_PIXEL	128
+#endif
 
 #define RKISP_VICAP_CMD_MODE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 0, struct rkisp_vicap_mode)
@@ -29,9 +36,6 @@
 
 #define RKISP_VICAP_CMD_SOF \
 	_IOW('V', BASE_VIDIOC_PRIVATE + 7, struct rkisp_vicap_sof)
-
-#define RKISP_VICAP_CMD_MULTI_ONLINE \
-	_IOW('V', BASE_VIDIOC_PRIVATE + 8, int)
 
 #define RKISP_VICAP_BUF_CNT 3
 #define RKISP_VICAP_BUF_CNT_MAX 8
@@ -60,8 +64,7 @@ enum rkisp_vicap_link {
 };
 
 struct rkisp_vicap_mode {
-	/* copy rkisp_device name */
-	char name[128];
+	char *name;
 	enum rkisp_vicap_link rdbk_mode;
 
 	struct rkisp_vicap_input input;

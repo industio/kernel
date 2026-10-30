@@ -11,11 +11,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <arch/special.h>
-#include <objtool/builtin.h>
-#include <objtool/special.h>
-#include <objtool/warn.h>
-#include <objtool/endianness.h>
+#include "builtin.h"
+#include "special.h"
+#include "warn.h"
+#include "arch_special.h"
 
 struct special_entry {
 	const char *sec;
@@ -23,7 +22,6 @@ struct special_entry {
 	unsigned char size, orig, new;
 	unsigned char orig_len, new_len; /* group only */
 	unsigned char feature; /* ALTERNATIVE macro CPU feature */
-	unsigned char key; /* jump_label key */
 };
 
 struct special_entry entries[] = {
@@ -43,7 +41,6 @@ struct special_entry entries[] = {
 		.size = JUMP_ENTRY_SIZE,
 		.orig = JUMP_ORIG_OFFSET,
 		.new = JUMP_NEW_OFFSET,
-		.key = JUMP_KEY_OFFSET,
 	},
 	{
 		.sec = "__ex_table",
@@ -87,9 +84,8 @@ static int get_alt_entry(struct elf *elf, struct special_entry *entry,
 	if (entry->feature) {
 		unsigned short feature;
 
-		feature = bswap_if_needed(*(unsigned short *)(sec->data->d_buf +
-							      offset +
-							      entry->feature));
+		feature = *(unsigned short *)(sec->data->d_buf + offset +
+					      entry->feature);
 		arch_handle_alternative(feature, alt);
 	}
 
@@ -116,18 +112,6 @@ static int get_alt_entry(struct elf *elf, struct special_entry *entry,
 			alt->new_off -= 0x7ffffff0;
 	}
 
-	if (entry->key) {
-		struct reloc *key_reloc;
-
-		key_reloc = find_reloc_by_dest(elf, sec, offset + entry->key);
-		if (!key_reloc) {
-			WARN_FUNC("can't find key reloc",
-				  sec, offset + entry->key);
-			return -1;
-		}
-		alt->key_addend = key_reloc->addend;
-	}
-
 	return 0;
 }
 
@@ -151,13 +135,13 @@ int special_get_alts(struct elf *elf, struct list_head *alts)
 		if (!sec)
 			continue;
 
-		if (sec->sh.sh_size % entry->size != 0) {
+		if (sec->len % entry->size != 0) {
 			WARN("%s size not a multiple of %d",
 			     sec->name, entry->size);
 			return -1;
 		}
 
-		nr_entries = sec->sh.sh_size / entry->size;
+		nr_entries = sec->len / entry->size;
 
 		for (idx = 0; idx < nr_entries; idx++) {
 			alt = malloc(sizeof(*alt));

@@ -241,6 +241,8 @@ static int __init tort_init(void)
 	if (!bad_ebs)
 		goto out_check_buf;
 
+	err = 0;
+
 	/* Initialize patterns */
 	memset(patt_FF, 0xFF, mtd->erasesize);
 	for (i = 0; i < mtd->erasesize / pgsize; i++) {
@@ -253,7 +255,7 @@ static int __init tort_init(void)
 		}
 	}
 
-	get_random_bytes(patt_random, mtd->erasesize);
+	prandom_bytes(patt_random, mtd->erasesize);
 
 	err = mtdtest_scan_for_bad_eraseblocks(mtd, bad_ebs, eb, ebcnt);
 	if (err)

@@ -81,12 +81,19 @@ void gfs2_jindex_free(struct gfs2_sbd *sdp)
 static struct gfs2_jdesc *jdesc_find_i(struct list_head *head, unsigned int jid)
 {
 	struct gfs2_jdesc *jd;
+	int found = 0;
 
 	list_for_each_entry(jd, head, jd_list) {
-		if (jd->jd_jid == jid)
-			return jd;
+		if (jd->jd_jid == jid) {
+			found = 1;
+			break;
+		}
 	}
-	return NULL;
+
+	if (!found)
+		jd = NULL;
+
+	return jd;
 }
 
 struct gfs2_jdesc *gfs2_jdesc_find(struct gfs2_sbd *sdp, unsigned int jid)
@@ -182,8 +189,9 @@ int gfs2_statfs_init(struct gfs2_sbd *sdp)
 {
 	struct gfs2_inode *m_ip = GFS2_I(sdp->sd_statfs_inode);
 	struct gfs2_statfs_change_host *m_sc = &sdp->sd_statfs_master;
+	struct gfs2_inode *l_ip = GFS2_I(sdp->sd_sc_inode);
 	struct gfs2_statfs_change_host *l_sc = &sdp->sd_statfs_local;
-	struct buffer_head *m_bh;
+	struct buffer_head *m_bh, *l_bh;
 	struct gfs2_holder gh;
 	int error;
 
@@ -202,15 +210,21 @@ int gfs2_statfs_init(struct gfs2_sbd *sdp)
 				      sizeof(struct gfs2_dinode));
 		spin_unlock(&sdp->sd_statfs_spin);
 	} else {
+		error = gfs2_meta_inode_buffer(l_ip, &l_bh);
+		if (error)
+			goto out_m_bh;
+
 		spin_lock(&sdp->sd_statfs_spin);
 		gfs2_statfs_change_in(m_sc, m_bh->b_data +
 				      sizeof(struct gfs2_dinode));
-		gfs2_statfs_change_in(l_sc, sdp->sd_sc_bh->b_data +
+		gfs2_statfs_change_in(l_sc, l_bh->b_data +
 				      sizeof(struct gfs2_dinode));
 		spin_unlock(&sdp->sd_statfs_spin);
 
+		brelse(l_bh);
 	}
 
+out_m_bh:
 	brelse(m_bh);
 out:
 	gfs2_glock_dq_uninit(&gh);
@@ -223,17 +237,22 @@ void gfs2_statfs_change(struct gfs2_sbd *sdp, s64 total, s64 free,
 	struct gfs2_inode *l_ip = GFS2_I(sdp->sd_sc_inode);
 	struct gfs2_statfs_change_host *l_sc = &sdp->sd_statfs_local;
 	struct gfs2_statfs_change_host *m_sc = &sdp->sd_statfs_master;
+	struct buffer_head *l_bh;
 	s64 x, y;
 	int need_sync = 0;
+	int error;
 
-	gfs2_trans_add_meta(l_ip->i_gl, sdp->sd_sc_bh);
+	error = gfs2_meta_inode_buffer(l_ip, &l_bh);
+	if (error)
+		return;
+
+	gfs2_trans_add_meta(l_ip->i_gl, l_bh);
 
 	spin_lock(&sdp->sd_statfs_spin);
 	l_sc->sc_total += total;
 	l_sc->sc_free += free;
 	l_sc->sc_dinodes += dinodes;
-	gfs2_statfs_change_out(l_sc, sdp->sd_sc_bh->b_data +
-			       sizeof(struct gfs2_dinode));
+	gfs2_statfs_change_out(l_sc, l_bh->b_data + sizeof(struct gfs2_dinode));
 	if (sdp->sd_args.ar_statfs_percent) {
 		x = 100 * l_sc->sc_free;
 		y = m_sc->sc_free * sdp->sd_args.ar_statfs_percent;
@@ -242,18 +261,20 @@ void gfs2_statfs_change(struct gfs2_sbd *sdp, s64 total, s64 free,
 	}
 	spin_unlock(&sdp->sd_statfs_spin);
 
+	brelse(l_bh);
 	if (need_sync)
 		gfs2_wake_up_statfs(sdp);
 }
 
-void update_statfs(struct gfs2_sbd *sdp, struct buffer_head *m_bh)
+void update_statfs(struct gfs2_sbd *sdp, struct buffer_head *m_bh,
+		   struct buffer_head *l_bh)
 {
 	struct gfs2_inode *m_ip = GFS2_I(sdp->sd_statfs_inode);
 	struct gfs2_inode *l_ip = GFS2_I(sdp->sd_sc_inode);
 	struct gfs2_statfs_change_host *m_sc = &sdp->sd_statfs_master;
 	struct gfs2_statfs_change_host *l_sc = &sdp->sd_statfs_local;
 
-	gfs2_trans_add_meta(l_ip->i_gl, sdp->sd_sc_bh);
+	gfs2_trans_add_meta(l_ip->i_gl, l_bh);
 	gfs2_trans_add_meta(m_ip->i_gl, m_bh);
 
 	spin_lock(&sdp->sd_statfs_spin);
@@ -261,7 +282,7 @@ void update_statfs(struct gfs2_sbd *sdp, struct buffer_head *m_bh)
 	m_sc->sc_free += l_sc->sc_free;
 	m_sc->sc_dinodes += l_sc->sc_dinodes;
 	memset(l_sc, 0, sizeof(struct gfs2_statfs_change));
-	memset(sdp->sd_sc_bh->b_data + sizeof(struct gfs2_dinode),
+	memset(l_bh->b_data + sizeof(struct gfs2_dinode),
 	       0, sizeof(struct gfs2_statfs_change));
 	gfs2_statfs_change_out(m_sc, m_bh->b_data + sizeof(struct gfs2_dinode));
 	spin_unlock(&sdp->sd_statfs_spin);
@@ -271,12 +292,14 @@ int gfs2_statfs_sync(struct super_block *sb, int type)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 	struct gfs2_inode *m_ip = GFS2_I(sdp->sd_statfs_inode);
+	struct gfs2_inode *l_ip = GFS2_I(sdp->sd_sc_inode);
 	struct gfs2_statfs_change_host *m_sc = &sdp->sd_statfs_master;
 	struct gfs2_statfs_change_host *l_sc = &sdp->sd_statfs_local;
 	struct gfs2_holder gh;
-	struct buffer_head *m_bh;
+	struct buffer_head *m_bh, *l_bh;
 	int error;
 
+	sb_start_write(sb);
 	error = gfs2_glock_nq_init(m_ip->i_gl, LM_ST_EXCLUSIVE, GL_NOCACHE,
 				   &gh);
 	if (error)
@@ -295,20 +318,27 @@ int gfs2_statfs_sync(struct super_block *sb, int type)
 	}
 	spin_unlock(&sdp->sd_statfs_spin);
 
-	error = gfs2_trans_begin(sdp, 2 * RES_DINODE, 0);
+	error = gfs2_meta_inode_buffer(l_ip, &l_bh);
 	if (error)
 		goto out_bh;
 
-	update_statfs(sdp, m_bh);
+	error = gfs2_trans_begin(sdp, 2 * RES_DINODE, 0);
+	if (error)
+		goto out_bh2;
+
+	update_statfs(sdp, m_bh, l_bh);
 	sdp->sd_statfs_force_sync = 0;
 
 	gfs2_trans_end(sdp);
 
+out_bh2:
+	brelse(l_bh);
 out_bh:
 	brelse(m_bh);
 out_unlock:
 	gfs2_glock_dq_uninit(&gh);
 out:
+	sb_end_write(sb);
 	return error;
 }
 
@@ -321,6 +351,8 @@ struct lfcc {
  * gfs2_lock_fs_check_clean - Stop all writes to the FS and check that all
  *                            journals are clean
  * @sdp: the file system
+ * @state: the state to put the transaction lock into
+ * @t_gh: the hold on the transaction lock
  *
  * Returns: errno
  */
@@ -332,12 +364,7 @@ static int gfs2_lock_fs_check_clean(struct gfs2_sbd *sdp)
 	struct lfcc *lfcc;
 	LIST_HEAD(list);
 	struct gfs2_log_header_host lh;
-	int error, error2;
-
-	/*
-	 * Grab all the journal glocks in SH mode.  We are *probably* doing
-	 * that to prevent recovery.
-	 */
+	int error;
 
 	list_for_each_entry(jd, &sdp->sd_jindex_list, jd_list) {
 		lfcc = kmalloc(sizeof(struct lfcc), GFP_KERNEL);
@@ -354,13 +381,10 @@ static int gfs2_lock_fs_check_clean(struct gfs2_sbd *sdp)
 		list_add(&lfcc->list, &list);
 	}
 
-	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
-
 	error = gfs2_glock_nq_init(sdp->sd_freeze_gl, LM_ST_EXCLUSIVE,
-				   LM_FLAG_NOEXP | GL_NOPID,
-				   &sdp->sd_freeze_gh);
+				   LM_FLAG_NOEXP, &sdp->sd_freeze_gh);
 	if (error)
-		goto relock_shared;
+		goto out;
 
 	list_for_each_entry(jd, &sdp->sd_jindex_list, jd_list) {
 		error = gfs2_jdesc_check(jd);
@@ -375,14 +399,8 @@ static int gfs2_lock_fs_check_clean(struct gfs2_sbd *sdp)
 		}
 	}
 
-	if (!error)
-		goto out;  /* success */
-
-	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
-
-relock_shared:
-	error2 = gfs2_freeze_lock_shared(sdp, &sdp->sd_freeze_gh, 0);
-	gfs2_assert_withdraw(sdp, !error2);
+	if (error)
+		gfs2_freeze_unlock(&sdp->sd_freeze_gh);
 
 out:
 	while (!list_empty(&list)) {
@@ -396,7 +414,6 @@ out:
 
 void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
 {
-	const struct inode *inode = &ip->i_inode;
 	struct gfs2_dinode *str = buf;
 
 	str->di_header.mh_magic = cpu_to_be32(GFS2_MAGIC);
@@ -404,15 +421,15 @@ void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
 	str->di_header.mh_format = cpu_to_be32(GFS2_FORMAT_DI);
 	str->di_num.no_addr = cpu_to_be64(ip->i_no_addr);
 	str->di_num.no_formal_ino = cpu_to_be64(ip->i_no_formal_ino);
-	str->di_mode = cpu_to_be32(inode->i_mode);
-	str->di_uid = cpu_to_be32(i_uid_read(inode));
-	str->di_gid = cpu_to_be32(i_gid_read(inode));
-	str->di_nlink = cpu_to_be32(inode->i_nlink);
-	str->di_size = cpu_to_be64(i_size_read(inode));
-	str->di_blocks = cpu_to_be64(gfs2_get_inode_blocks(inode));
-	str->di_atime = cpu_to_be64(inode->i_atime.tv_sec);
-	str->di_mtime = cpu_to_be64(inode->i_mtime.tv_sec);
-	str->di_ctime = cpu_to_be64(inode->i_ctime.tv_sec);
+	str->di_mode = cpu_to_be32(ip->i_inode.i_mode);
+	str->di_uid = cpu_to_be32(i_uid_read(&ip->i_inode));
+	str->di_gid = cpu_to_be32(i_gid_read(&ip->i_inode));
+	str->di_nlink = cpu_to_be32(ip->i_inode.i_nlink);
+	str->di_size = cpu_to_be64(i_size_read(&ip->i_inode));
+	str->di_blocks = cpu_to_be64(gfs2_get_inode_blocks(&ip->i_inode));
+	str->di_atime = cpu_to_be64(ip->i_inode.i_atime.tv_sec);
+	str->di_mtime = cpu_to_be64(ip->i_inode.i_mtime.tv_sec);
+	str->di_ctime = cpu_to_be64(ip->i_inode.i_ctime.tv_sec);
 
 	str->di_goal_meta = cpu_to_be64(ip->i_goal);
 	str->di_goal_data = cpu_to_be64(ip->i_goal);
@@ -420,16 +437,16 @@ void gfs2_dinode_out(const struct gfs2_inode *ip, void *buf)
 
 	str->di_flags = cpu_to_be32(ip->i_diskflags);
 	str->di_height = cpu_to_be16(ip->i_height);
-	str->di_payload_format = cpu_to_be32(S_ISDIR(inode->i_mode) &&
+	str->di_payload_format = cpu_to_be32(S_ISDIR(ip->i_inode.i_mode) &&
 					     !(ip->i_diskflags & GFS2_DIF_EXHASH) ?
 					     GFS2_FORMAT_DE : 0);
 	str->di_depth = cpu_to_be16(ip->i_depth);
 	str->di_entries = cpu_to_be32(ip->i_entries);
 
 	str->di_eattr = cpu_to_be64(ip->i_eattr);
-	str->di_atime_nsec = cpu_to_be32(inode->i_atime.tv_nsec);
-	str->di_mtime_nsec = cpu_to_be32(inode->i_mtime.tv_nsec);
-	str->di_ctime_nsec = cpu_to_be32(inode->i_ctime.tv_nsec);
+	str->di_atime_nsec = cpu_to_be32(ip->i_inode.i_atime.tv_nsec);
+	str->di_mtime_nsec = cpu_to_be32(ip->i_inode.i_mtime.tv_nsec);
+	str->di_ctime_nsec = cpu_to_be32(ip->i_inode.i_ctime.tv_nsec);
 }
 
 /**
@@ -476,7 +493,7 @@ static int gfs2_write_inode(struct inode *inode, struct writeback_control *wbc)
  * @flags: The type of dirty
  *
  * Unfortunately it can be called under any combination of inode
- * glock and freeze glock, so we have to check carefully.
+ * glock and transaction lock, so we have to check carefully.
  *
  * At the moment this deals only with atime - it should be possible
  * to expand that role in future, once a review of the locking has
@@ -493,6 +510,8 @@ static void gfs2_dirty_inode(struct inode *inode, int flags)
 	int need_endtrans = 0;
 	int ret;
 
+	if (!(flags & I_DIRTY_INODE))
+		return;
 	if (unlikely(gfs2_withdrawn(sdp)))
 		return;
 	if (!gfs2_glock_is_locked_by_me(ip->i_gl)) {
@@ -536,8 +555,9 @@ out:
  * Returns: errno
  */
 
-void gfs2_make_fs_ro(struct gfs2_sbd *sdp)
+int gfs2_make_fs_ro(struct gfs2_sbd *sdp)
 {
+	int error = 0;
 	int log_write_allowed = test_bit(SDF_JOURNAL_LIVE, &sdp->sd_flags);
 
 	gfs2_flush_delete_work(sdp);
@@ -559,12 +579,21 @@ void gfs2_make_fs_ro(struct gfs2_sbd *sdp)
 
 		gfs2_log_flush(sdp, NULL, GFS2_LOG_HEAD_FLUSH_SHUTDOWN |
 			       GFS2_LFC_MAKE_FS_RO);
-		wait_event_timeout(sdp->sd_log_waitq,
-				   gfs2_log_is_empty(sdp),
+		wait_event(sdp->sd_reserving_log_wait,
+			   atomic_read(&sdp->sd_reserving_log) == 0);
+		gfs2_assert_warn(sdp, atomic_read(&sdp->sd_log_blks_free) ==
+				 sdp->sd_jdesc->jd_blocks);
+	} else {
+		wait_event_timeout(sdp->sd_reserving_log_wait,
+				   atomic_read(&sdp->sd_reserving_log) == 0,
 				   HZ * 5);
-		gfs2_assert_warn(sdp, gfs2_log_is_empty(sdp));
 	}
 	gfs2_quota_cleanup(sdp);
+
+	if (!log_write_allowed)
+		sdp->sd_vfs->s_flags |= SB_RDONLY;
+
+	return error;
 }
 
 /**
@@ -576,6 +605,7 @@ void gfs2_make_fs_ro(struct gfs2_sbd *sdp)
 static void gfs2_put_super(struct super_block *sb)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
+	int error;
 	struct gfs2_jdesc *jd;
 
 	/* No more recovery requests */
@@ -596,19 +626,15 @@ restart:
 	spin_unlock(&sdp->sd_jindex_spin);
 
 	if (!sb_rdonly(sb)) {
-		gfs2_make_fs_ro(sdp);
-	} else {
-		gfs2_quota_cleanup(sdp);
+		error = gfs2_make_fs_ro(sdp);
+		if (error)
+			gfs2_io_error(sdp);
 	}
-	if (gfs2_withdrawn(sdp))
-		gfs2_quota_cleanup(sdp);
 	WARN_ON(gfs2_withdrawing(sdp));
 
 	/*  At this point, we're through modifying the disk  */
 
 	/*  Release stuff  */
-
-	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
 
 	iput(sdp->sd_jindex);
 	iput(sdp->sd_statfs_inode);
@@ -623,7 +649,6 @@ restart:
 			gfs2_glock_dq_uninit(&sdp->sd_journal_gh);
 		if (gfs2_holder_initialized(&sdp->sd_jinode_gh))
 			gfs2_glock_dq_uninit(&sdp->sd_jinode_gh);
-		brelse(sdp->sd_sc_bh);
 		gfs2_glock_dq_uninit(&sdp->sd_sc_gh);
 		gfs2_glock_dq_uninit(&sdp->sd_qc_gh);
 		free_local_statfs_inodes(sdp);
@@ -648,7 +673,6 @@ restart:
 /**
  * gfs2_sync_fs - sync the filesystem
  * @sb: the superblock
- * @wait: true to wait for completion
  *
  * Flushes the log to disk.
  */
@@ -664,116 +688,59 @@ static int gfs2_sync_fs(struct super_block *sb, int wait)
 	return sdp->sd_log_error;
 }
 
-static int gfs2_freeze_locally(struct gfs2_sbd *sdp)
-{
-	struct super_block *sb = sdp->sd_vfs;
-	int error;
-
-	atomic_set(&sdp->sd_freeze_state, SFS_STARTING_FREEZE);
-
-	error = freeze_super(sb);
-	if (error)
-		goto fail;
-
-	if (test_bit(SDF_JOURNAL_LIVE, &sdp->sd_flags)) {
-		gfs2_log_flush(sdp, NULL, GFS2_LOG_HEAD_FLUSH_FREEZE |
-			       GFS2_LFC_FREEZE_GO_SYNC);
-		if (gfs2_withdrawn(sdp)) {
-			thaw_super(sb);
-			error = -EIO;
-			goto fail;
-		}
-	}
-	return 0;
-
-fail:
-	atomic_set(&sdp->sd_freeze_state, SFS_UNFROZEN);
-	return error;
-}
-
-static int gfs2_do_thaw(struct gfs2_sbd *sdp)
-{
-	struct super_block *sb = sdp->sd_vfs;
-	int error;
-
-	error = gfs2_freeze_lock_shared(sdp, &sdp->sd_freeze_gh, 0);
-	if (error)
-		goto fail;
-	error = thaw_super(sb);
-	if (!error)
-		return 0;
-
-fail:
-	fs_info(sdp, "GFS2: couldn't thaw filesystem: %d\n", error);
-	gfs2_assert_withdraw(sdp, 0);
-	return error;
-}
-
 void gfs2_freeze_func(struct work_struct *work)
 {
+	int error;
+	struct gfs2_holder freeze_gh;
 	struct gfs2_sbd *sdp = container_of(work, struct gfs2_sbd, sd_freeze_work);
 	struct super_block *sb = sdp->sd_vfs;
-	int error;
 
-	mutex_lock(&sdp->sd_freeze_mutex);
-	error = -EBUSY;
-	if (atomic_read(&sdp->sd_freeze_state) != SFS_UNFROZEN)
-		goto freeze_failed;
-
-	error = gfs2_freeze_locally(sdp);
-	if (error)
-		goto freeze_failed;
-
-	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
-	atomic_set(&sdp->sd_freeze_state, SFS_FROZEN);
-
-	error = gfs2_do_thaw(sdp);
-	if (error)
-		goto out;
-
-	atomic_set(&sdp->sd_freeze_state, SFS_UNFROZEN);
-	goto out;
-
-freeze_failed:
-	fs_info(sdp, "GFS2: couldn't freeze filesystem: %d\n", error);
-
-out:
-	mutex_unlock(&sdp->sd_freeze_mutex);
+	atomic_inc(&sb->s_active);
+	error = gfs2_freeze_lock(sdp, &freeze_gh, 0);
+	if (error) {
+		gfs2_assert_withdraw(sdp, 0);
+	} else {
+		atomic_set(&sdp->sd_freeze_state, SFS_UNFROZEN);
+		error = thaw_super(sb);
+		if (error) {
+			fs_info(sdp, "GFS2: couldn't thaw filesystem: %d\n",
+				error);
+			gfs2_assert_withdraw(sdp, 0);
+		}
+		gfs2_freeze_unlock(&freeze_gh);
+	}
 	deactivate_super(sb);
+	clear_bit_unlock(SDF_FS_FROZEN, &sdp->sd_flags);
+	wake_up_bit(&sdp->sd_flags, SDF_FS_FROZEN);
+	return;
 }
 
 /**
- * gfs2_freeze_super - prevent further writes to the filesystem
+ * gfs2_freeze - prevent further writes to the filesystem
  * @sb: the VFS structure for the filesystem
  *
  */
 
-static int gfs2_freeze_super(struct super_block *sb)
+static int gfs2_freeze(struct super_block *sb)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 	int error;
 
-	if (!mutex_trylock(&sdp->sd_freeze_mutex))
-		return -EBUSY;
-	error = -EBUSY;
-	if (atomic_read(&sdp->sd_freeze_state) != SFS_UNFROZEN)
+	mutex_lock(&sdp->sd_freeze_mutex);
+	if (atomic_read(&sdp->sd_freeze_state) != SFS_UNFROZEN) {
+		error = -EBUSY;
 		goto out;
+	}
 
 	for (;;) {
-		error = gfs2_freeze_locally(sdp);
-		if (error) {
-			fs_info(sdp, "GFS2: couldn't freeze filesystem: %d\n",
-				error);
+		if (gfs2_withdrawn(sdp)) {
+			error = -EINVAL;
 			goto out;
 		}
 
 		error = gfs2_lock_fs_check_clean(sdp);
 		if (!error)
-			break;  /* success */
-
-		error = gfs2_do_thaw(sdp);
-		if (error)
-			goto out;
+			break;
 
 		if (error == -EBUSY)
 			fs_err(sdp, "waiting for recovery before freeze\n");
@@ -787,64 +754,36 @@ static int gfs2_freeze_super(struct super_block *sb)
 		fs_err(sdp, "retrying...\n");
 		msleep(1000);
 	}
-
+	set_bit(SDF_FS_FROZEN, &sdp->sd_flags);
 out:
-	if (!error) {
-		set_bit(SDF_FREEZE_INITIATOR, &sdp->sd_flags);
-		atomic_set(&sdp->sd_freeze_state, SFS_FROZEN);
-	}
 	mutex_unlock(&sdp->sd_freeze_mutex);
 	return error;
 }
 
 /**
- * gfs2_thaw_super - reallow writes to the filesystem
+ * gfs2_unfreeze - reallow writes to the filesystem
  * @sb: the VFS structure for the filesystem
  *
  */
 
-static int gfs2_thaw_super(struct super_block *sb)
-{
-	struct gfs2_sbd *sdp = sb->s_fs_info;
-	int error;
-
-	if (!mutex_trylock(&sdp->sd_freeze_mutex))
-		return -EBUSY;
-	error = -EINVAL;
-	if (!test_bit(SDF_FREEZE_INITIATOR, &sdp->sd_flags))
-		goto out;
-
-	atomic_inc(&sb->s_active);
-	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
-
-	error = gfs2_do_thaw(sdp);
-
-	if (!error) {
-		clear_bit(SDF_FREEZE_INITIATOR, &sdp->sd_flags);
-		atomic_set(&sdp->sd_freeze_state, SFS_UNFROZEN);
-	}
-out:
-	mutex_unlock(&sdp->sd_freeze_mutex);
-	deactivate_super(sb);
-	return error;
-}
-
-void gfs2_thaw_freeze_initiator(struct super_block *sb)
+static int gfs2_unfreeze(struct super_block *sb)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 
 	mutex_lock(&sdp->sd_freeze_mutex);
-	if (!test_bit(SDF_FREEZE_INITIATOR, &sdp->sd_flags))
-		goto out;
+	if (atomic_read(&sdp->sd_freeze_state) != SFS_FROZEN ||
+	    !gfs2_holder_initialized(&sdp->sd_freeze_gh)) {
+		mutex_unlock(&sdp->sd_freeze_mutex);
+		return -EINVAL;
+	}
 
 	gfs2_freeze_unlock(&sdp->sd_freeze_gh);
-
-out:
 	mutex_unlock(&sdp->sd_freeze_mutex);
+	return wait_on_bit(&sdp->sd_flags, SDF_FS_FROZEN, TASK_INTERRUPTIBLE);
 }
 
 /**
- * statfs_slow_fill - fill in the sg for a given RG
+ * statfs_fill - fill in the sg for a given RG
  * @rgd: the RG
  * @sc: the sc structure
  *
@@ -942,7 +881,7 @@ static int gfs2_statfs_slow(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host
 /**
  * gfs2_statfs_i - Do a statfs
  * @sdp: the filesystem
- * @sc: the sc structure
+ * @sg: the sg structure
  *
  * Returns: errno
  */
@@ -973,8 +912,8 @@ static int gfs2_statfs_i(struct gfs2_sbd *sdp, struct gfs2_statfs_change_host *s
 
 /**
  * gfs2_statfs - Gather and return stats about the filesystem
- * @dentry: The name of the link
- * @buf: The buffer
+ * @sb: The superblock
+ * @statfsbuf: The buffer
  *
  * Returns: 0 on success or error code
  */
@@ -1050,7 +989,7 @@ static int gfs2_drop_inode(struct inode *inode)
 		gfs2_glock_hold(gl);
 		if (!gfs2_queue_delete_work(gl, 0))
 			gfs2_glock_queue_put(gl);
-		return 0;
+		return false;
 	}
 
 	return generic_drop_inode(inode);
@@ -1218,8 +1157,7 @@ static int gfs2_dinode_dealloc(struct gfs2_inode *ip)
 		goto out_qs;
 	}
 
-	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_EXCLUSIVE,
-				   LM_FLAG_NODE_SCOPE, &gh);
+	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_EXCLUSIVE, 0, &gh);
 	if (error)
 		goto out_qs;
 
@@ -1303,13 +1241,12 @@ static bool gfs2_upgrade_iopen_glock(struct inode *inode)
 		gfs2_glock_dq(gh);
 		return false;
 	}
-	return gfs2_glock_holder_ready(gh) == 0;
+	return true;
 }
 
 /**
  * evict_should_delete - determine whether the inode is eligible for deletion
  * @inode: The inode to evict
- * @gh: The glock holder structure
  *
  * This function determines whether the evicted inode is eligible to be deleted
  * and locks the inode glock.
@@ -1351,9 +1288,11 @@ static enum dinode_demise evict_should_delete(struct inode *inode,
 	if (ret)
 		return SHOULD_NOT_DELETE_DINODE;
 
-	ret = gfs2_instantiate(gh);
-	if (ret)
-		return SHOULD_NOT_DELETE_DINODE;
+	if (test_bit(GIF_INVALID, &ip->i_flags)) {
+		ret = gfs2_inode_refresh(ip);
+		if (ret)
+			return SHOULD_NOT_DELETE_DINODE;
+	}
 
 	/*
 	 * The inode may have been recreated in the meantime.
@@ -1540,7 +1479,7 @@ static struct inode *gfs2_alloc_inode(struct super_block *sb)
 {
 	struct gfs2_inode *ip;
 
-	ip = alloc_inode_sb(sb, gfs2_inode_cachep, GFP_KERNEL);
+	ip = kmem_cache_alloc(gfs2_inode_cachep, GFP_KERNEL);
 	if (!ip)
 		return NULL;
 	ip->i_flags = 0;
@@ -1594,8 +1533,8 @@ const struct super_operations gfs2_super_ops = {
 	.evict_inode		= gfs2_evict_inode,
 	.put_super		= gfs2_put_super,
 	.sync_fs		= gfs2_sync_fs,
-	.freeze_super		= gfs2_freeze_super,
-	.thaw_super		= gfs2_thaw_super,
+	.freeze_super		= gfs2_freeze,
+	.thaw_super		= gfs2_unfreeze,
 	.statfs			= gfs2_statfs,
 	.drop_inode		= gfs2_drop_inode,
 	.show_options		= gfs2_show_options,

@@ -70,8 +70,6 @@ extern unsigned int uvc_gadget_trace_param;
 #define UVC_MAX_REQUEST_SIZE			64
 #define UVC_MAX_EVENTS				4
 
-#define UVCG_REQUEST_HEADER_LEN			12
-
 /* ------------------------------------------------------------------------
  * Structures
  */
@@ -79,9 +77,6 @@ struct uvc_request {
 	struct usb_request *req;
 	u8 *req_buffer;
 	struct uvc_video *video;
-	struct sg_table sgt;
-	u8 header[UVCG_REQUEST_HEADER_LEN];
-	struct uvc_buffer *last_buf;
 #if defined(CONFIG_ARCH_ROCKCHIP) && defined(CONFIG_NO_GKI)
 	struct completion req_done;
 #endif
@@ -140,8 +135,6 @@ struct uvc_device {
 	/* for creating and issuing QoS requests */
 	struct pm_qos_request pm_qos;
 
-	struct uvcg_streaming_header *header;
-
 	/* Descriptors */
 	struct {
 		const struct uvc_descriptor_header * const *fs_control;
@@ -152,10 +145,9 @@ struct uvc_device {
 	} desc;
 
 	unsigned int control_intf;
-	struct usb_ep *interrupt_ep;
+	struct usb_ep *control_ep;
 	struct usb_request *control_req;
 	void *control_buf;
-	bool enable_interrupt_ep;
 
 	unsigned int streaming_intf;
 

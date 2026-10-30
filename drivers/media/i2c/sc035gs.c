@@ -304,6 +304,10 @@ static const struct sc035gs_mode supported_modes[] = {
 	},
 };
 
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_Y10_1X10,
+};
+
 static const char *const sc035gs_test_pattern_menu[] = {
 	"Disabled",
 	"Vertical Color Bar Type 1",
@@ -415,17 +419,20 @@ sc035gs_find_best_fit(struct v4l2_subdev_format *fmt)
 
 	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
 		dist = sc035gs_get_reso_dist(&supported_modes[i], framefmt);
-		if ((cur_best_fit_dist == -1 || dist < cur_best_fit_dist) &&
-		    (supported_modes[i].bus_fmt == framefmt->code)) {
+		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 	return &supported_modes[cur_best_fit];
 }
 
 static int sc035gs_set_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc035gs *sc035gs = to_sc035gs(sd);
@@ -441,7 +448,7 @@ static int sc035gs_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc035gs->mutex);
 		return -ENOTTY;
@@ -467,7 +474,7 @@ static int sc035gs_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc035gs_get_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc035gs *sc035gs = to_sc035gs(sd);
@@ -476,7 +483,7 @@ static int sc035gs_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc035gs->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc035gs->mutex);
 		return -ENOTTY;
@@ -493,20 +500,18 @@ static int sc035gs_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc035gs_enum_mbus_code(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct sc035gs *sc035gs = to_sc035gs(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = sc035gs->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc035gs_enum_frame_sizes(struct v4l2_subdev *sd,
-				    struct v4l2_subdev_state *sd_state,
+				    struct v4l2_subdev_pad_config *cfg,
 				    struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -791,6 +796,69 @@ static int sc035gs_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static const struct sc035gs_mode *sc035gs_find_mode(struct sc035gs *sc035gs, int fps)
+{
+	const struct sc035gs_mode *mode = NULL;
+	const struct sc035gs_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == sc035gs->cur_mode->width &&
+		    mode->height == sc035gs->cur_mode->height &&
+		    mode->bus_fmt == sc035gs->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int sc035gs_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct sc035gs *sc035gs = to_sc035gs(sd);
+	const struct sc035gs_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (sc035gs->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = sc035gs_find_mode(sc035gs, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	sc035gs->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(sc035gs->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(sc035gs->vblank, vblank_def,
+				 SC035GS_VTS_MAX - mode->height,
+				 1, vblank_def);
+	__v4l2_ctrl_s_ctrl_int64(sc035gs->pixel_rate, mode->pixel_rate);
+	__v4l2_ctrl_s_ctrl(sc035gs->link_freq, mode->link_freq_index);
+	sc035gs->cur_fps = mode->max_fps;
+	return 0;
+}
+
 /* Calculate the delay in us by clock rate and clock cycles */
 static inline u32 sc035gs_cal_delay(u32 cycles)
 {
@@ -894,7 +962,7 @@ static int sc035gs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc035gs *sc035gs = to_sc035gs(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_get_try_format(sd, fh->state, 0);
+		v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc035gs_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc035gs->mutex);
@@ -912,7 +980,7 @@ static int sc035gs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int sc035gs_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -928,10 +996,14 @@ static int sc035gs_enum_frame_interval(struct v4l2_subdev *sd,
 static int sc035gs_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				 struct v4l2_mbus_config *config)
 {
+	u32 val = 0;
 	struct sc035gs *sc035gs = to_sc035gs(sd);
 
+	val = 1 << (sc035gs->cur_mode->lanes - 1) |
+	      V4L2_MBUS_CSI2_CHANNEL_0 |
+	      V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = sc035gs->cur_mode->lanes;
+	config->flags = val;
 
 	return 0;
 }
@@ -958,6 +1030,7 @@ static const struct v4l2_subdev_core_ops sc035gs_core_ops = {
 static const struct v4l2_subdev_video_ops sc035gs_video_ops = {
 	.s_stream = sc035gs_s_stream,
 	.g_frame_interval = sc035gs_g_frame_interval,
+	.s_frame_interval = sc035gs_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops sc035gs_pad_ops = {
@@ -1250,7 +1323,7 @@ static int sc035gs_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc035gs->module_index, facing,
 		 SC035GS_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1276,7 +1349,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc035gs_remove(struct i2c_client *client)
+static int sc035gs_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc035gs *sc035gs = to_sc035gs(sd);
@@ -1292,6 +1365,8 @@ static void sc035gs_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc035gs_power_off(sc035gs);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

@@ -10,7 +10,6 @@
  * Copyright (c) 2003-2004 IBM Corp.
  */
 
-#include <linux/acpi.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/export.h>
@@ -57,39 +56,6 @@ static struct device_type drm_sysfs_device_connector = {
 
 struct class *drm_class;
 
-#ifdef CONFIG_ACPI
-static bool drm_connector_acpi_bus_match(struct device *dev)
-{
-	return dev->type == &drm_sysfs_device_connector;
-}
-
-static struct acpi_device *drm_connector_acpi_find_companion(struct device *dev)
-{
-	struct drm_connector *connector = to_drm_connector(dev);
-
-	return to_acpi_device_node(connector->fwnode);
-}
-
-static struct acpi_bus_type drm_connector_acpi_bus = {
-	.name = "drm_connector",
-	.match = drm_connector_acpi_bus_match,
-	.find_companion = drm_connector_acpi_find_companion,
-};
-
-static void drm_sysfs_acpi_register(void)
-{
-	register_acpi_bus_type(&drm_connector_acpi_bus);
-}
-
-static void drm_sysfs_acpi_unregister(void)
-{
-	unregister_acpi_bus_type(&drm_connector_acpi_bus);
-}
-#else
-static void drm_sysfs_acpi_register(void) { }
-static void drm_sysfs_acpi_unregister(void) { }
-#endif
-
 static char *drm_devnode(struct device *dev, umode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "dri/%s", dev_name(dev));
@@ -123,8 +89,6 @@ int drm_sysfs_init(void)
 	}
 
 	drm_class->devnode = drm_devnode;
-
-	drm_sysfs_acpi_register();
 	return 0;
 }
 
@@ -137,7 +101,6 @@ void drm_sysfs_destroy(void)
 {
 	if (IS_ERR_OR_NULL(drm_class))
 		return;
-	drm_sysfs_acpi_unregister();
 	class_remove_file(drm_class, &class_attr_version.attr);
 	class_destroy(drm_class);
 	drm_class = NULL;
@@ -202,8 +165,8 @@ static ssize_t status_show(struct device *device,
 
 	status = READ_ONCE(connector->status);
 
-	return sysfs_emit(buf, "%s\n",
-			  drm_get_connector_status_name(status));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			drm_get_connector_status_name(status));
 }
 
 static ssize_t dpms_show(struct device *device,
@@ -215,7 +178,8 @@ static ssize_t dpms_show(struct device *device,
 
 	dpms = READ_ONCE(connector->dpms);
 
-	return sysfs_emit(buf, "%s\n", drm_get_dpms_name(dpms));
+	return snprintf(buf, PAGE_SIZE, "%s\n",
+			drm_get_dpms_name(dpms));
 }
 
 static ssize_t enabled_show(struct device *device,
@@ -227,7 +191,7 @@ static ssize_t enabled_show(struct device *device,
 
 	enabled = READ_ONCE(connector->encoder);
 
-	return sysfs_emit(buf, enabled ? "enabled\n" : "disabled\n");
+	return snprintf(buf, PAGE_SIZE, enabled ? "enabled\n" : "disabled\n");
 }
 
 static ssize_t edid_show(struct file *filp, struct kobject *kobj,
@@ -408,31 +372,6 @@ void drm_sysfs_hotplug_event(struct drm_device *dev)
 	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
 }
 EXPORT_SYMBOL(drm_sysfs_hotplug_event);
-
-/**
- * drm_sysfs_connector_hotplug_event - generate a DRM uevent for any connector
- * change
- * @connector: connector which has changed
- *
- * Send a uevent for the DRM connector specified by @connector. This will send
- * a uevent with the properties HOTPLUG=1 and CONNECTOR.
- */
-void drm_sysfs_connector_hotplug_event(struct drm_connector *connector)
-{
-	struct drm_device *dev = connector->dev;
-	char hotplug_str[] = "HOTPLUG=1", conn_id[21];
-	char *envp[] = { hotplug_str, conn_id, NULL };
-
-	snprintf(conn_id, sizeof(conn_id),
-		 "CONNECTOR=%u", connector->base.id);
-
-	drm_dbg_kms(connector->dev,
-		    "[CONNECTOR:%d:%s] generating connector hotplug event\n",
-		    connector->base.id, connector->name);
-
-	kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
-}
-EXPORT_SYMBOL(drm_sysfs_connector_hotplug_event);
 
 /**
  * drm_sysfs_connector_status_event - generate a DRM uevent for connector

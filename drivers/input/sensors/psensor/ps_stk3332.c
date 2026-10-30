@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Kay Guo <kay.guo@rock-chips.com>
  */
@@ -353,9 +353,9 @@ static int proximity_stk3332_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &psensor_stk3332_ops);
 }
 
-static void proximity_stk3332_remove(struct i2c_client *client)
+static int proximity_stk3332_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &psensor_stk3332_ops);
+	return sensor_unregister_device(client, NULL, &psensor_stk3332_ops);
 }
 
 static const struct i2c_device_id proximity_stk3332_id[] = {

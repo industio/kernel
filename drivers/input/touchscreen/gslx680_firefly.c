@@ -1069,7 +1069,7 @@ error_mutex_destroy:
 	return rc;
 }
 
-static void gsl_ts_remove(struct i2c_client *client)
+static int gsl_ts_remove(struct i2c_client *client)
 {
 	struct gsl_ts *ts = i2c_get_clientdata(client);
 
@@ -1084,6 +1084,8 @@ static void gsl_ts_remove(struct i2c_client *client)
 
 	devm_kfree(&client->dev, ts->touch_data);
 	devm_kfree(&client->dev, ts);
+
+	return 0;
 }
 
 static const struct i2c_device_id gsl_ts_id[] = {

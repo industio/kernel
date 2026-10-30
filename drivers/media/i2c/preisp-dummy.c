@@ -245,10 +245,10 @@ static void pisp_dmy_get_module_inf(struct pisp_dmy *pisp_dmy,
 				    struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, PISP_DMY_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, pisp_dmy->module_name,
+	strlcpy(inf->base.sensor, PISP_DMY_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, pisp_dmy->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, pisp_dmy->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, pisp_dmy->len_name, sizeof(inf->base.lens));
 }
 
 static long pisp_dmy_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -526,7 +526,7 @@ static int pisp_dmy_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void pisp_dmy_remove(struct i2c_client *client)
+static int pisp_dmy_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct pisp_dmy *pisp_dmy = to_pisp_dmy(sd);
@@ -537,6 +537,8 @@ static void pisp_dmy_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__pisp_dmy_power_off(pisp_dmy);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

@@ -9,6 +9,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-dma-contig.h>
+#include <linux/dma-iommu.h>
 #include "dev.h"
 #include "regs.h"
 
@@ -539,7 +540,7 @@ static int rkisp1_querycap(struct file *file, void *priv,
 	struct device *dev = stream->ispdev->dev;
 	struct video_device *vdev = video_devdata(file);
 
-	strscpy(cap->card, vdev->name, sizeof(cap->card));
+	strlcpy(cap->card, vdev->name, sizeof(cap->card));
 	snprintf(cap->driver, sizeof(cap->driver),
 		 "%s_v%d", dev->driver->name,
 		 stream->ispdev->isp_ver >> 4);
@@ -659,7 +660,7 @@ int rkisp1_register_dmarx_vdev(struct rkisp1_device *dev)
 		stream->ops = &rkisp1_dmarx_streams_ops;
 		stream->config = &rkisp1_dmarx_stream_config;
 		vdev = &stream->vnode.vdev;
-		strscpy(vdev->name, DMA_VDEV_NAME, sizeof(vdev->name));
+		strlcpy(vdev->name, DMA_VDEV_NAME, sizeof(vdev->name));
 		ret = rkisp1_register_dmarx_video(stream);
 		if (ret < 0)
 			return ret;

@@ -12,6 +12,7 @@
 #include <asm/cacheflush.h>
 #include <linux/delay.h>
 #include <linux/devfreq.h>
+#include <linux/devfreq_cooling.h>
 #include <linux/iopoll.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -197,8 +198,9 @@ struct rkvenc_dev {
 	unsigned long volt;
 	unsigned long core_rate_hz;
 	unsigned long core_last_rate_hz;
+	struct ipa_power_model_data *model_data;
+	struct thermal_cooling_device *devfreq_cooling;
 	struct monitor_dev_info *mdev_info;
-	struct rockchip_opp_info opp_info;
 #endif
 	/* for iommu pagefault handle */
 	struct work_struct iommu_work;
@@ -925,7 +927,6 @@ static struct devfreq_dev_profile rkvenc_devfreq_profile = {
 	.target	= rkvenc_devfreq_target,
 	.get_dev_status	= rkvenc_devfreq_get_dev_status,
 	.get_cur_freq = rkvenc_devfreq_get_cur_freq,
-	.is_cooling_device = true,
 };
 
 static int devfreq_venc_ondemand_func(struct devfreq *df, unsigned long *freq)
@@ -950,6 +951,23 @@ static struct devfreq_governor devfreq_venc_ondemand = {
 	.name = "venc_ondemand",
 	.get_target_freq = devfreq_venc_ondemand_func,
 	.event_handler = devfreq_venc_ondemand_handler,
+};
+
+static unsigned long rkvenc_get_static_power(struct devfreq *devfreq,
+					     unsigned long voltage)
+{
+	struct device *dev = devfreq->dev.parent;
+	struct mpp_dev *mpp = dev_get_drvdata(dev);
+	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
+
+	if (!enc || !enc->model_data)
+		return 0;
+
+	return rockchip_ipa_get_static_power(enc->model_data, voltage);
+}
+
+static struct devfreq_cooling_power venc_cooling_power_data = {
+	.get_static_power = rkvenc_get_static_power,
 };
 
 static struct monitor_dev_profile enc_mdevp = {
@@ -1004,7 +1022,8 @@ static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 {
 	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 	struct clk *clk_core = enc->core_clk_info.clk;
-	struct rockchip_opp_info *opp_info = &enc->opp_info;
+	struct devfreq_cooling_power *venc_dcp = &venc_cooling_power_data;
+	struct rockchip_opp_info opp_info = {0};
 	int ret = 0;
 
 	if (!clk_core)
@@ -1022,8 +1041,8 @@ static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 		return 0;
 	}
 
-	rockchip_get_opp_data(rockchip_rkvenc_of_match, opp_info);
-	ret = rockchip_init_opp_table(mpp->dev, opp_info, NULL, "venc");
+	rockchip_get_opp_data(rockchip_rkvenc_of_match, &opp_info);
+	ret = rockchip_init_opp_table(mpp->dev, &opp_info, "leakage", "venc");
 	if (ret) {
 		dev_err(mpp->dev, "failed to init_opp_table\n");
 		return ret;
@@ -1050,13 +1069,36 @@ static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 
 	devfreq_register_opp_notifier(mpp->dev, enc->devfreq);
 
+	of_property_read_u32(mpp->dev->of_node, "dynamic-power-coefficient",
+			     (u32 *)&venc_dcp->dyn_power_coeff);
+	enc->model_data = rockchip_ipa_power_model_init(mpp->dev,
+							"venc_leakage");
+	if (IS_ERR_OR_NULL(enc->model_data)) {
+		enc->model_data = NULL;
+		dev_err(mpp->dev, "failed to initialize power model\n");
+	} else if (enc->model_data->dynamic_coefficient) {
+		venc_dcp->dyn_power_coeff =
+			enc->model_data->dynamic_coefficient;
+	}
+	if (!venc_dcp->dyn_power_coeff) {
+		dev_err(mpp->dev, "failed to get dynamic-coefficient\n");
+		goto out;
+	}
+
+	enc->devfreq_cooling =
+		of_devfreq_cooling_register_power(mpp->dev->of_node,
+						  enc->devfreq, venc_dcp);
+	if (IS_ERR_OR_NULL(enc->devfreq_cooling))
+		dev_err(mpp->dev, "failed to register cooling device\n");
+
 	enc_mdevp.data = enc->devfreq;
-	enc_mdevp.opp_info = opp_info;
 	enc->mdev_info = rockchip_system_monitor_register(mpp->dev, &enc_mdevp);
 	if (IS_ERR(enc->mdev_info)) {
 		dev_dbg(mpp->dev, "without system monitor\n");
 		enc->mdev_info = NULL;
 	}
+
+out:
 
 	return 0;
 
@@ -1074,10 +1116,11 @@ static int rkvenc_devfreq_remove(struct mpp_dev *mpp)
 
 	if (enc->mdev_info)
 		rockchip_system_monitor_unregister(enc->mdev_info);
-	if (enc->devfreq)
+	if (enc->devfreq) {
 		devfreq_unregister_opp_notifier(mpp->dev, enc->devfreq);
-	devfreq_remove_governor(&devfreq_venc_ondemand);
-	rockchip_uninit_opp_table(mpp->dev, &enc->opp_info);
+		dev_pm_opp_of_remove_table(mpp->dev);
+		devfreq_remove_governor(&devfreq_venc_ondemand);
+	}
 
 	return 0;
 }

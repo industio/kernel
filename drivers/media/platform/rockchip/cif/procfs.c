@@ -524,7 +524,7 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 	struct v4l2_rect *rect = &sensor->raw_rect;
 	struct v4l2_subdev_frame_interval *interval = &sensor->src_fi;
 	struct v4l2_subdev_selection *sel = &sensor->selection;
-	u32 mbus_flags;
+	u32 i, mbus_flags;
 	u64 fps, timestamp0, timestamp1;
 	unsigned long flags;
 	u32 time_val = 0;
@@ -536,9 +536,9 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 		seq_puts(f, "Input Info:\n");
 
 		seq_printf(f, "\tsrc subdev:%s\n", sensor->sd->name);
+		mbus_flags = sensor->mbus.flags;
 		if (sensor->mbus.type == V4L2_MBUS_PARALLEL ||
 		    sensor->mbus.type == V4L2_MBUS_BT656) {
-			mbus_flags = sensor->mbus.bus.parallel.flags;
 			seq_printf(f, "\tinterface:%s\n",
 				   sensor->mbus.type == V4L2_MBUS_PARALLEL ? "BT601" : "BT656/BT1120");
 			seq_printf(f, "\thref_pol:%s\n",
@@ -551,6 +551,16 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 				   sensor->mbus.type == V4L2_MBUS_CSI2_CPHY ? "mipi csi2 cphy" :
 				   sensor->mbus.type == V4L2_MBUS_CCP2 ? "lvds" : "unknown");
 			seq_printf(f, "\tlanes:%d\n", sensor->lanes);
+			seq_puts(f, "\tvc channel:");
+			if (mbus_flags & V4L2_MBUS_CSI2_CHANNELS) {
+				for (i = 0; i < 4; i++) {
+					if ((mbus_flags >> (4 + i)) & 0x1)
+						seq_printf(f, " %d", i);
+				}
+				seq_puts(f, "\n");
+			} else {
+				seq_puts(f, "unknown\n");
+			}
 		}
 
 		seq_printf(f, "\thdr mode: %s\n",
@@ -571,11 +581,8 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 		timestamp0 = stream->fps_stats.frm0_timestamp;
 		timestamp1 = stream->fps_stats.frm1_timestamp;
 		spin_unlock_irqrestore(&stream->fps_lock, flags);
-		if (dev->sditf[0] && dev->sditf[0]->mode.rdbk_mode < RKISP_VICAP_RDBK_AIQ)
-			fps = dev->stream[0].readout.total_time;
-		else
-			fps = timestamp0 > timestamp1 ?
-			      timestamp0 - timestamp1 : timestamp1 - timestamp0;
+		fps = timestamp0 > timestamp1 ?
+		      timestamp0 - timestamp1 : timestamp1 - timestamp0;
 		fps = div_u64(fps, 1000000);
 
 		seq_puts(f, "Output Info:\n");
@@ -591,16 +598,10 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 			if (dev->hdr.hdr_mode == NO_HDR ||
 			    dev->hdr.hdr_mode == HDR_COMPR) {
 				time_val = div_u64(stream->readout.readout_time, 1000000);
-				if (dev->sditf[0] && dev->sditf[0]->mode.rdbk_mode < RKISP_VICAP_RDBK_AIQ)
-					seq_puts(f, "\tsingle readout:N/A\n");
-				else
-					seq_printf(f, "\tsingle readout:%u ms\n", time_val);
+				seq_printf(f, "\treadout:%u ms\n", time_val);
 			} else {
 				time_val = div_u64(stream->readout.readout_time, 1000000);
-				if (dev->sditf[0] && dev->sditf[0]->mode.rdbk_mode < RKISP_VICAP_RDBK_AIQ)
-					seq_puts(f, "\tsingle readout:N/A\n");
-				else
-					seq_printf(f, "\tsingle readout:%u ms\n", time_val);
+				seq_printf(f, "\tsingle readout:%u ms\n", time_val);
 				time_val = div_u64(stream->readout.total_time, 1000000);
 				seq_printf(f, "\ttotal readout:%u ms\n", time_val);
 
@@ -656,12 +657,6 @@ static void rkcif_show_format(struct rkcif_device *dev, struct seq_file *f)
 			   dev->stream[1].total_buf_num,
 			   dev->stream[2].total_buf_num,
 			   dev->stream[3].total_buf_num);
-		if (dev->chip_id >= CHIP_RK3576_CIF)
-			seq_printf(f, "frame loss: %d %d %d %d\n",
-				   dev->stream[0].frame_loss,
-				   dev->stream[1].frame_loss,
-				   dev->stream[2].frame_loss,
-				   dev->stream[3].frame_loss);
 		if (dev->sditf[0])
 			rkcif_show_toisp_info(dev, f);
 		if (dev->reg_dbg)
@@ -696,7 +691,7 @@ static int rkcif_proc_show(struct seq_file *f, void *v)
 
 static int rkcif_proc_open(struct inode *inode, struct file *file)
 {
-	struct rkcif_device *data = pde_data(inode);
+	struct rkcif_device *data = PDE_DATA(inode);
 
 	return single_open(file, rkcif_proc_show, data);
 }

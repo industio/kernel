@@ -34,10 +34,6 @@ struct kstat {
 	 STATX_ATTR_ENCRYPTED |				\
 	 STATX_ATTR_VERITY				\
 	 )/* Attrs corresponding to FS_*_FL flags */
-#define KSTAT_ATTR_VFS_FLAGS				\
-	(STATX_ATTR_IMMUTABLE |				\
-	 STATX_ATTR_APPEND				\
-	 ) /* Attrs corresponding to S_* flags that are enforced by the VFS */
 	u64		ino;
 	dev_t		dev;
 	dev_t		rdev;
@@ -50,8 +46,6 @@ struct kstat {
 	struct timespec64 btime;			/* File creation time */
 	u64		blocks;
 	u64		mnt_id;
-	u32		dio_mem_align;
-	u32		dio_offset_align;
 };
 
 #endif

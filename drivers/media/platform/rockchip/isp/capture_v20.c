@@ -1400,7 +1400,7 @@ static int mi_frame_end(struct rkisp_stream *stream, u32 state)
 		stream->dbg.timestamp = ns;
 		stream->dbg.id = stream->curr_buf->vb.sequence;
 		if (stream->id == RKISP_STREAM_MP || stream->id == RKISP_STREAM_SP)
-			stream->dbg.delay = ns - vb2_buf->timestamp;
+			stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 
 		if (!stream->streaming) {
 			vb2_buffer_done(vb2_buf, VB2_BUF_STATE_ERROR);
@@ -1775,7 +1775,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 	if (stream->id == RKISP_STREAM_MP ||
 	    (stream->id == RKISP_STREAM_SP && stream->out_isp_fmt.fmt_type != FMT_FBCGAIN)) {
 		/* call to the other devices */
-		video_device_pipeline_stop(&node->vdev);
+		media_pipeline_stop(&node->vdev.entity);
 		ret = dev->pipe.set_stream(&dev->pipe, false);
 		if (ret < 0)
 			v4l2_err(v4l2_dev,
@@ -1918,7 +1918,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 		if (ret < 0)
 			goto stop_stream;
 
-		ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+		ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 		if (ret < 0) {
 			v4l2_err(&dev->v4l2_dev,
 				 "start pipeline failed %d\n", ret);
@@ -2002,7 +2002,7 @@ static int rkisp_stream_init(struct rkisp_device *dev, u32 id)
 
 	switch (id) {
 	case RKISP_STREAM_SP:
-		strscpy(vdev->name, SP_VDEV_NAME,
+		strlcpy(vdev->name, SP_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp_sp_streams_ops;
 		stream->config = &rkisp_sp_stream_config;
@@ -2010,31 +2010,31 @@ static int rkisp_stream_init(struct rkisp_device *dev, u32 id)
 		stream->config->fmt_size = ARRAY_SIZE(sp_fmts);
 		break;
 	case RKISP_STREAM_DMATX0:
-		strscpy(vdev->name, DMATX0_VDEV_NAME,
+		strlcpy(vdev->name, DMATX0_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp2_dmatx0_streams_ops;
 		stream->config = &rkisp2_dmatx0_stream_config;
 		break;
 	case RKISP_STREAM_DMATX1:
-		strscpy(vdev->name, DMATX1_VDEV_NAME,
+		strlcpy(vdev->name, DMATX1_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp2_dmatx1_streams_ops;
 		stream->config = &rkisp2_dmatx1_stream_config;
 		break;
 	case RKISP_STREAM_DMATX2:
-		strscpy(vdev->name, DMATX2_VDEV_NAME,
+		strlcpy(vdev->name, DMATX2_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp2_dmatx2_streams_ops;
 		stream->config = &rkisp2_dmatx2_stream_config;
 		break;
 	case RKISP_STREAM_DMATX3:
-		strscpy(vdev->name, DMATX3_VDEV_NAME,
+		strlcpy(vdev->name, DMATX3_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp2_dmatx3_streams_ops;
 		stream->config = &rkisp2_dmatx3_stream_config;
 		break;
 	default:
-		strscpy(vdev->name, MP_VDEV_NAME,
+		strlcpy(vdev->name, MP_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp_mp_streams_ops;
 		stream->config = &rkisp_mp_stream_config;

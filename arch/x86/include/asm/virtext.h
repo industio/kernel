@@ -41,18 +41,12 @@ static inline int cpu_has_vmx(void)
  * faults are guaranteed to be due to the !post-VMXON check unless the CPU is
  * magically in RM, VM86, compat mode, or at CPL>0.
  */
-static inline int cpu_vmxoff(void)
+static inline void cpu_vmxoff(void)
 {
-	asm goto("1: vmxoff\n\t"
-		  _ASM_EXTABLE(1b, %l[fault])
-		  ::: "cc", "memory" : fault);
-
-	cr4_clear_bits(X86_CR4_VMXE);
-	return 0;
-
+	asm_volatile_goto("1: vmxoff\n\t"
+			  _ASM_EXTABLE(1b, %l[fault]) :::: fault);
 fault:
 	cr4_clear_bits(X86_CR4_VMXE);
-	return -EIO;
 }
 
 static inline int cpu_vmx_enabled(void)
@@ -129,9 +123,9 @@ static inline void cpu_svm_disable(void)
 		 * case, GIF must already be set, otherwise the NMI would have
 		 * been blocked, so just eat the fault.
 		 */
-		asm goto("1: stgi\n\t"
-			  _ASM_EXTABLE(1b, %l[fault])
-			  ::: "memory" : fault);
+		asm_volatile_goto("1: stgi\n\t"
+				  _ASM_EXTABLE(1b, %l[fault])
+				  ::: "memory" : fault);
 fault:
 		wrmsrl(MSR_EFER, efer & ~EFER_SVME);
 	}

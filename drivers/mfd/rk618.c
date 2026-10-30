@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2017 Rockchip Electronics Co. Ltd.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -167,13 +167,15 @@ err_clk_disable:
 	return ret;
 }
 
-static void rk618_remove(struct i2c_client *client)
+static int rk618_remove(struct i2c_client *client)
 {
 	struct rk618 *rk618 = i2c_get_clientdata(client);
 
 	mfd_remove_devices(rk618->dev);
 	rk618_power_off(rk618);
 	clk_disable_unprepare(rk618->clkin);
+
+	return 0;
 }
 
 static void rk618_shutdown(struct i2c_client *client)

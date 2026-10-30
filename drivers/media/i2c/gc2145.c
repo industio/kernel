@@ -2122,7 +2122,7 @@ static void gc2145_set_streaming(struct gc2145 *gc2145, int on)
  */
 
 static int gc2145_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -2138,7 +2138,7 @@ static int gc2145_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int gc2145_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct gc2145 *gc2145 = to_gc2145(sd);
@@ -2165,7 +2165,7 @@ static int gc2145_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int gc2145_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -2177,7 +2177,7 @@ static int gc2145_get_fmt(struct v4l2_subdev *sd,
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
 		struct v4l2_mbus_framefmt *mf;
 
-		mf = v4l2_subdev_get_try_format(sd, sd_state, 0);
+		mf = v4l2_subdev_get_try_format(sd, cfg, 0);
 		mutex_lock(&gc2145->lock);
 		fmt->format = *mf;
 		mutex_unlock(&gc2145->lock);
@@ -2308,7 +2308,7 @@ static int gc2145_aec_ctrl(struct v4l2_subdev *sd,
 #endif
 
 static int gc2145_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
@@ -2336,7 +2336,7 @@ static int gc2145_set_fmt(struct v4l2_subdev *sd,
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		mf = v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		mf = v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 		*mf = fmt->format;
 #else
 		return -ENOTTY;
@@ -2448,7 +2448,7 @@ static int gc2145_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	struct gc2145 *gc2145 = to_gc2145(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct v4l2_mbus_framefmt *format =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 
 	dev_dbg(&client->dev, "%s:\n", __func__);
 
@@ -2465,10 +2465,14 @@ static int gc2145_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 
 	if (gc2145->bus_cfg.bus_type == V4L2_MBUS_CSI2_DPHY) {
 		config->type = V4L2_MBUS_CSI2_DPHY;
-		config->bus.mipi_csi2 = gc2145->bus_cfg.bus.mipi_csi2;
+		config->flags = V4L2_MBUS_CSI2_1_LANE |
+						V4L2_MBUS_CSI2_CHANNEL_0 |
+						V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 	} else {
 		config->type = V4L2_MBUS_PARALLEL;
-		config->bus.parallel = gc2145->bus_cfg.bus.parallel;
+		config->flags = V4L2_MBUS_HSYNC_ACTIVE_HIGH |
+				V4L2_MBUS_VSYNC_ACTIVE_LOW |
+				V4L2_MBUS_PCLK_SAMPLE_RISING;
 	}
 
 	return 0;
@@ -2528,10 +2532,10 @@ static void gc2145_get_module_inf(struct gc2145 *gc2145,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, DRIVER_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, gc2145->module_name,
+	strlcpy(inf->base.sensor, DRIVER_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, gc2145->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, gc2145->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, gc2145->len_name, sizeof(inf->base.lens));
 }
 
 static long gc2145_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -2658,7 +2662,7 @@ static int gc2145_power(struct v4l2_subdev *sd, int on)
 }
 
 static int gc2145_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct gc2145 *gc2145 = to_gc2145(sd);
@@ -2989,7 +2993,7 @@ static int gc2145_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 gc2145->module_index, facing,
 		 DRIVER_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret)
 		goto error;
 
@@ -3007,7 +3011,7 @@ error:
 	return ret;
 }
 
-static void gc2145_remove(struct i2c_client *client)
+static int gc2145_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct gc2145 *gc2145 = to_gc2145(sd);
@@ -3020,6 +3024,8 @@ static void gc2145_remove(struct i2c_client *client)
 	mutex_destroy(&gc2145->lock);
 
 	__gc2145_power_off(gc2145);
+
+	return 0;
 }
 
 static const struct i2c_device_id gc2145_id[] = {

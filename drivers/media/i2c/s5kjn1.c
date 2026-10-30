@@ -2,7 +2,7 @@
 /*
  * s5kjn1 driver
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Fuzhou Rockchip Electronics Co., Ltd.
  *
  * V0.0X01.0X00 init version.
  * V0.0X01.0X01 adjust supply sequence to suit spec
@@ -178,6 +178,8 @@ struct s5kjn1 {
 	bool			is_first_streamoff;
 	struct otp_info		*otp;
 	u32			spd_id;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_s5kjn1(sd) container_of(sd, struct s5kjn1, subdev)
@@ -870,7 +872,7 @@ static const struct s5kjn1_mode supported_modes_dphy[] = {
 		.reg_list = s5kjn1_10bit_4080x3072_dphy_30fps_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &s5kjn1_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGRBG10_1X10,
@@ -887,7 +889,7 @@ static const struct s5kjn1_mode supported_modes_dphy[] = {
 		.bpp = 10,
 		.reg_list = s5kjn1_10bit_8128x6144_dphy_10fps_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 };
 
@@ -1063,7 +1065,7 @@ s5kjn1_find_best_fit(struct s5kjn1 *s5kjn1, struct v4l2_subdev_format *fmt)
 }
 
 static int s5kjn1_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1081,7 +1083,7 @@ static int s5kjn1_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&s5kjn1->mutex);
 		return -ENOTTY;
@@ -1101,7 +1103,7 @@ static int s5kjn1_set_fmt(struct v4l2_subdev *sd,
 					 pixel_rate);
 		__v4l2_ctrl_s_ctrl(s5kjn1->link_freq,
 				   mode->mipi_freq_idx);
-
+		s5kjn1->cur_fps = mode->max_fps;
 		if (mode->width == 8128)
 			__v4l2_ctrl_modify_range(s5kjn1->anal_gain, S5KJN1_GAIN_MIN,
 						 S5KJN1_FULL_SIZE_GAIN_MAX,
@@ -1121,7 +1123,7 @@ static int s5kjn1_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int s5kjn1_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1130,7 +1132,7 @@ static int s5kjn1_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&s5kjn1->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&s5kjn1->mutex);
 		return -ENOTTY;
@@ -1147,7 +1149,7 @@ static int s5kjn1_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int s5kjn1_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1160,7 +1162,7 @@ static int s5kjn1_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int s5kjn1_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1199,8 +1201,80 @@ static int s5kjn1_g_frame_interval(struct v4l2_subdev *sd,
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
 	const struct s5kjn1_mode *mode = s5kjn1->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (s5kjn1->streaming)
+		fi->interval = s5kjn1->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct s5kjn1_mode *s5kjn1_find_mode(struct s5kjn1 *s5kjn1, int fps)
+{
+	const struct s5kjn1_mode *mode = NULL;
+	const struct s5kjn1_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < s5kjn1->cfg_num; i++) {
+		mode = &s5kjn1->support_modes[i];
+		if (mode->width == s5kjn1->cur_mode->width &&
+		    mode->height == s5kjn1->cur_mode->height &&
+		    mode->hdr_mode == s5kjn1->cur_mode->hdr_mode) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int s5kjn1_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
+	const struct s5kjn1_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	u64 pixel_rate = 0;
+	u32 lane_num = s5kjn1->bus_cfg.bus.mipi_csi2.num_data_lanes;
+	int fps;
+
+	if (s5kjn1->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = s5kjn1_find_mode(s5kjn1, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	s5kjn1->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(s5kjn1->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(s5kjn1->vblank, vblank_def,
+				 S5KJN1_VTS_MAX - mode->height,
+				 1, vblank_def);
+	pixel_rate = (u32)link_freq_items[mode->mipi_freq_idx] / mode->bpp * 2 * lane_num;
+
+	__v4l2_ctrl_s_ctrl_int64(s5kjn1->pixel_rate,
+				 pixel_rate);
+	__v4l2_ctrl_s_ctrl(s5kjn1->link_freq,
+			   mode->mipi_freq_idx);
+	s5kjn1->cur_fps = mode->max_fps;
 	return 0;
 }
 
@@ -1208,9 +1282,15 @@ static int s5kjn1_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
+	u32 lane_num = s5kjn1->bus_cfg.bus.mipi_csi2.num_data_lanes;
+	u32 val = 0;
+
+	val = 1 << (lane_num - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 
 	config->type = s5kjn1->bus_cfg.bus_type;
-	config->bus.mipi_csi2 = s5kjn1->bus_cfg.bus.mipi_csi2;
+	config->flags = val;
 
 	return 0;
 }
@@ -1317,7 +1397,7 @@ static int s5kjn1_get_channel_info(struct s5kjn1 *s5kjn1, struct rkmodule_channe
 		return -EINVAL;
 
 	if (ch_info->index == s5kjn1->spd_id && mode->spd) {
-		ch_info->vc = 1;
+		ch_info->vc = V4L2_MBUS_CSI2_CHANNEL_1;
 		ch_info->width = mode->spd->width;
 		ch_info->height = mode->spd->height;
 		ch_info->bus_fmt = mode->spd->bus_fmt;
@@ -1366,6 +1446,7 @@ static long s5kjn1_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 			__v4l2_ctrl_modify_range(s5kjn1->vblank, h,
 				S5KJN1_VTS_MAX - s5kjn1->cur_mode->height,
 				1, h);
+			s5kjn1->cur_fps = s5kjn1->cur_mode->max_fps;
 			dev_info(&s5kjn1->client->dev,
 				"sensor mode: %d\n",
 				s5kjn1->cur_mode->hdr_mode);
@@ -1782,7 +1863,7 @@ static int s5kjn1_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct s5kjn1_mode *def_mode = &s5kjn1->support_modes[0];
 
 	mutex_lock(&s5kjn1->mutex);
@@ -1800,7 +1881,7 @@ static int s5kjn1_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int s5kjn1_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1820,7 +1901,7 @@ static int s5kjn1_enum_frame_interval(struct v4l2_subdev *sd,
 #define DST_WIDTH 4064
 #define DST_HEIGHT 3072
 static int s5kjn1_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -1865,6 +1946,7 @@ static const struct v4l2_subdev_core_ops s5kjn1_core_ops = {
 static const struct v4l2_subdev_video_ops s5kjn1_video_ops = {
 	.s_stream = s5kjn1_s_stream,
 	.g_frame_interval = s5kjn1_g_frame_interval,
+	.s_frame_interval = s5kjn1_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops s5kjn1_pad_ops = {
@@ -1882,6 +1964,14 @@ static const struct v4l2_subdev_ops s5kjn1_subdev_ops = {
 	.video	= &s5kjn1_video_ops,
 	.pad	= &s5kjn1_pad_ops,
 };
+
+static void s5kjn1_modify_fps_info(struct s5kjn1 *s5kjn1)
+{
+	const struct s5kjn1_mode *mode = s5kjn1->cur_mode;
+
+	s5kjn1->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      s5kjn1->cur_vts;
+}
 
 static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1927,6 +2017,8 @@ static int s5kjn1_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = s5kjn1_write_reg(s5kjn1->client, S5KJN1_REG_VTS,
 					S5KJN1_REG_VALUE_16BIT,
 					ctrl->val + s5kjn1->cur_mode->height);
+		s5kjn1->cur_vts = ctrl->val + s5kjn1->cur_mode->height;
+		s5kjn1_modify_fps_info(s5kjn1);
 		dev_dbg(&client->dev, "set vblank 0x%x\n",
 			ctrl->val);
 		break;
@@ -2232,7 +2324,7 @@ continue_probe:
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 s5kjn1->module_index, facing,
 		 S5KJN1_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -2257,7 +2349,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void s5kjn1_remove(struct i2c_client *client)
+static int s5kjn1_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct s5kjn1 *s5kjn1 = to_s5kjn1(sd);
@@ -2273,6 +2365,8 @@ static void s5kjn1_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__s5kjn1_power_off(s5kjn1);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

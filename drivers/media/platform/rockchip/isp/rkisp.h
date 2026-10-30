@@ -63,10 +63,6 @@
 #define CIF_ISP_INPUT_H_MAX_V32_L	3136
 #define CIF_ISP_INPUT_W_MAX_V32_L_UNITE	8192
 #define CIF_ISP_INPUT_H_MAX_V32_L_UNITE	6144
-#define CIF_ISP_INPUT_W_MAX_V39		4672
-#define CIF_ISP_INPUT_H_MAX_V39		3504
-#define CIF_ISP_INPUT_W_MAX_V39_UNITE	8192
-#define CIF_ISP_INPUT_H_MAX_V39_UNITE	6144
 #define CIF_ISP_INPUT_W_MAX_V33		2880
 #define CIF_ISP_INPUT_H_MAX_V33		1620
 #define CIF_ISP_INPUT_W_MAX_V33_UNITE	3840
@@ -142,6 +138,7 @@ struct rkisp_isp_subdev {
 	atomic_t frm_sync_seq;
 	enum v4l2_quantization quantization;
 	enum v4l2_colorspace colorspace;
+	u64 frm_timestamp;
 	struct frame_debug_info dbg;
 };
 
@@ -183,7 +180,7 @@ int rkisp_update_sensor_info(struct rkisp_device *dev);
 
 u32 rkisp_mbus_pixelcode_to_v4l2(u32 pixelcode);
 
-void rkisp_isp_queue_event_sof(struct rkisp_device *dev);
+void rkisp_isp_queue_event_sof(struct rkisp_isp_subdev *isp);
 
 void rkisp_check_idle(struct rkisp_device *dev, u32 irq);
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Rockchip Electronics Co.Ltd
  * Author:
  *      Algea Cao <algea.cao@rock-chips.com>
  */
@@ -16,7 +16,7 @@
 #include <linux/of_device.h>
 #include <linux/spinlock.h>
 #include <linux/soc/rockchip/rk_vendor_storage.h>
-#include <crypto/sha1.h>
+#include <crypto/sha.h>
 #include <drm/bridge/dw_hdmi.h>
 
 #include "dw-hdmi-qp.h"

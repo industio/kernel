@@ -1,7 +1,7 @@
 /*
  * drivers/input/sensors/accel/bma2xx.c
  *
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  *
  * Author: Bin Yang <yangbin@rock - chips.com>
  *
@@ -2238,9 +2238,9 @@ static int gsensor_bma2x2_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gsensor_bma2x2_ops);
 }
 
-static void gsensor_bma2x2_remove(struct i2c_client *client)
+static int gsensor_bma2x2_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gsensor_bma2x2_ops);
+	return sensor_unregister_device(client, NULL, &gsensor_bma2x2_ops);
 }
 
 static const struct i2c_device_id gsensor_bma2x2_id[] = {

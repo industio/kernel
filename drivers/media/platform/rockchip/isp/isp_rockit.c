@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2022 Rockchip Electronics Co., Ltd. */
+/* Copyright (C) 2022 Rockchip Electronics Co., Ltd */
 
 #define pr_fmt(fmt) "isp_rockit: %s:%d " fmt, __func__, __LINE__
 
@@ -16,8 +16,7 @@ static struct rockit_cfg *rockit_cfg;
 struct rkisp_rockit_buffer {
 	struct rkisp_buffer isp_buf;
 	struct dma_buf *dmabuf;
-	struct dma_buf_attachment *dba;
-	struct sg_table *sgt;
+	void *mpi_mem;
 	void *mpi_buf;
 	struct list_head queue;
 	int buf_id;
@@ -89,8 +88,11 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 	struct rkisp_stream *stream = NULL;
 	struct rkisp_rockit_buffer *isprk_buf = NULL;
 	struct rkisp_device *ispdev = NULL;
-	int i, height, offset, dev_id;
+	const struct vb2_mem_ops *g_ops = NULL;
+	int i, ret, height, offset, dev_id;
 	struct rkisp_stream_cfg *stream_cfg = NULL;
+	void *mem = NULL;
+	struct sg_table  *sg_tbl;
 	unsigned long lock_flags = 0;
 	u32 reg, val, bytesperline;
 
@@ -105,6 +107,7 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 
 	dev_id = stream->ispdev->dev_id;
 	ispdev = stream->ispdev;
+	g_ops = ispdev->hw_dev->mem_ops;
 
 	stream_cfg = &rockit_cfg->rkisp_dev_cfg[dev_id].rkisp_stream_cfg[stream->id];
 	stream_cfg->node = input_rockit_cfg->node;
@@ -120,10 +123,6 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 	}
 
 	if (input_rockit_cfg->is_alloc) {
-		struct dma_buf_attachment *dba;
-		struct sg_table *sgt;
-		struct iosys_map map;
-
 		for (i = 0; i < ROCKIT_BUF_NUM_MAX; i++) {
 			if (!stream_cfg->buff_id[i] && !stream_cfg->rkisp_buff[i]) {
 				stream_cfg->buff_id[i] = input_rockit_cfg->mpi_id;
@@ -139,35 +138,42 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 		if (i == ROCKIT_BUF_NUM_MAX)
 			return -EINVAL;
 
-		dba = dma_buf_attach(input_rockit_cfg->buf, ispdev->hw_dev->dev);
-		if (IS_ERR(dba)) {
+		mem = g_ops->attach_dmabuf(stream->ispdev->hw_dev->dev,
+					   input_rockit_cfg->buf,
+					   input_rockit_cfg->buf->size,
+					   DMA_BIDIRECTIONAL);
+		if (IS_ERR(mem)) {
 			kfree(isprk_buf);
 			stream_cfg->buff_id[i] = 0;
-			return PTR_ERR(dba);
+			return PTR_ERR(mem);
 		}
 
-		sgt = dma_buf_map_attachment(dba, DMA_BIDIRECTIONAL);
-		if (IS_ERR(sgt)) {
-			dma_buf_detach(input_rockit_cfg->buf, dba);
+		ret = g_ops->map_dmabuf(mem);
+		if (ret) {
+			g_ops->detach_dmabuf(mem);
 			kfree(isprk_buf);
 			stream_cfg->buff_id[i] = 0;
-			return PTR_ERR(sgt);
+			return ret;
 		}
-		isprk_buf->vaddr = NULL;
-		if (dma_buf_vmap(input_rockit_cfg->buf, &map) == 0)
-			isprk_buf->vaddr = map.vaddr;
+		if (ispdev->hw_dev->is_dma_sg_ops) {
+			sg_tbl = (struct sg_table *)g_ops->cookie(mem);
+			isprk_buf->buff_addr = sg_dma_address(sg_tbl->sgl);
+		} else {
+			isprk_buf->buff_addr = *((u32 *)g_ops->cookie(mem));
+		}
+
+		isprk_buf->vaddr = g_ops->vaddr(mem);
 		if (rkisp_buf_dbg) {
 			u64 *data = isprk_buf->vaddr;
 
 			if (data)
 				*data = RKISP_DATA_CHECK;
 		}
-		isprk_buf->buff_addr = sg_dma_address(sgt->sgl);
 		get_dma_buf(input_rockit_cfg->buf);
-		isprk_buf->mpi_buf = input_rockit_cfg->mpibuf;
+
+		isprk_buf->mpi_mem = mem;
 		isprk_buf->dmabuf = input_rockit_cfg->buf;
-		isprk_buf->dba = dba;
-		isprk_buf->sgt = sgt;
+		isprk_buf->mpi_buf = input_rockit_cfg->mpibuf;
 		stream_cfg->rkisp_buff[i] = isprk_buf;
 	}
 
@@ -182,7 +188,6 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 			reg = stream->config->mi.cb_base_ad_init;
 			rkisp_write(ispdev, reg, val, false);
 			stream->dummy_buf.dma_addr = isprk_buf->buff_addr;
-			stream->dummy_buf.dbuf = isprk_buf->dmabuf;
 			v4l2_info(&ispdev->v4l2_dev, "rockit wrap buf:0x%x\n", isprk_buf->buff_addr);
 		}
 		return -EINVAL;
@@ -229,14 +234,11 @@ int rkisp_rockit_buf_queue(struct rockit_cfg *input_rockit_cfg)
 		}
 		isprk_buf->isp_buf.buff_addr[0] = dma_addr + y_offs;
 		isprk_buf->isp_buf.buff_addr[1] = dma_addr + offset;
-		isprk_buf->isp_buf.vaddr[0] = NULL;
-		isprk_buf->isp_buf.vaddr[1] = NULL;
-		isprk_buf->isp_buf.vb.vb2_buf.planes[0].mem_priv = NULL;
 		if (isprk_buf->vaddr) {
 			isprk_buf->isp_buf.vaddr[0] = isprk_buf->vaddr + y_offs;
 			isprk_buf->isp_buf.vaddr[1] = isprk_buf->vaddr + offset;
-			isprk_buf->isp_buf.vb.vb2_buf.planes[0].mem_priv = isprk_buf->sgt;
 		}
+		isprk_buf->isp_buf.vb.vb2_buf.planes[0].mem_priv = isprk_buf->mpi_mem;
 	}
 
 	v4l2_dbg(2, rkisp_debug, &ispdev->v4l2_dev,
@@ -576,6 +578,7 @@ void rkisp_rockit_buf_state_clear(struct rkisp_stream *stream)
 
 int rkisp_rockit_buf_free(struct rkisp_stream *stream)
 {
+	const struct vb2_mem_ops *g_ops = stream->ispdev->hw_dev->mem_ops;
 	struct rkisp_rockit_buffer *isprk_buf;
 	struct rkisp_stream_cfg *stream_cfg;
 	u32 i = 0, dev_id = stream->ispdev->dev_id;
@@ -588,22 +591,11 @@ int rkisp_rockit_buf_free(struct rkisp_stream *stream)
 	for (i = 0; i < ROCKIT_BUF_NUM_MAX; i++) {
 		if (stream_cfg->rkisp_buff[i]) {
 			isprk_buf = (struct rkisp_rockit_buffer *)stream_cfg->rkisp_buff[i];
-			if (isprk_buf->dba) {
-				if (isprk_buf->vaddr) {
-					struct iosys_map map = IOSYS_MAP_INIT_VADDR(isprk_buf->vaddr);
-
-					dma_buf_vunmap(isprk_buf->dmabuf, &map);
-					isprk_buf->vaddr = NULL;
-				}
-				if (isprk_buf->sgt) {
-					dma_buf_unmap_attachment(isprk_buf->dba,
-								 isprk_buf->sgt,
-								 DMA_BIDIRECTIONAL);
-					isprk_buf->sgt = NULL;
-				}
-				dma_buf_detach(isprk_buf->dmabuf, isprk_buf->dba);
+			if (isprk_buf->mpi_mem) {
+				g_ops->unmap_dmabuf(isprk_buf->mpi_mem);
+				g_ops->detach_dmabuf(isprk_buf->mpi_mem);
 				dma_buf_put(isprk_buf->dmabuf);
-				isprk_buf->dba = NULL;
+				isprk_buf->vaddr = NULL;
 			}
 			kfree(stream_cfg->rkisp_buff[i]);
 			stream_cfg->rkisp_buff[i] = NULL;

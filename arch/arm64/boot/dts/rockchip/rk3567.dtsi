@@ -6,7 +6,7 @@
 #include "rk3568.dtsi"
 
 &power {
-	power-domain@RK3568_PD_PIPE {
+	pd_pipe@RK3568_PD_PIPE {
 		reg = <RK3568_PD_PIPE>;
 		clocks = <&cru PCLK_PIPE>;
 		pm_qos = <&qos_pcie2x1>,

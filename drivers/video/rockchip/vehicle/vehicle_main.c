@@ -2,7 +2,7 @@
 /*
  * drivers/video/rockchip/video/vehicle_main.c
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Rockchip Electronics Co.Ltd
  * Authors:
  *	Zhiqin Wei <wzq@rock-chips.com>
  *      <randy.wang@rock-chips.com>
@@ -426,8 +426,9 @@ static int rk_vehicle_system_main(void *arg)
 
 	/*  1.ad */
 	VEHICLE_DG("%s: vehicle_ad_init start\r\n", __func__);
-
-	ret = vehicle_ad_init(&v->ad);
+	/* config mclk first */
+	ret = vehicle_cif_init_mclk(&v->cif);
+	ret |= vehicle_ad_init(&v->ad);
 	if (ret < 0) {
 		VEHICLE_DGERR("%s: ad init failed\r\n", __func__);
 		goto VEHICLE_AD_DEINIT;
@@ -463,7 +464,7 @@ VEHICLE_CIF_DEINIT:
 	vehicle_cif_deinit(&v->cif);
 
 VEHICLE_AD_DEINIT:
-	vehicle_ad_deinit(&v->ad);
+	vehicle_ad_deinit();
 
 VEHICLE_GPIO_DEINIT:
 	vehicle_gpio_deinit(&v->gpio_data);

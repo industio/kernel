@@ -411,7 +411,7 @@ static ssize_t spidev_rkmst_misc_write(struct file *filp, const char __user *buf
 			       len,
 			       1);
 	} else if (!strcmp(cmd, "autotest")) {
-		int addr = 0, len, loops, i;
+		int addr = 0, len, loops, i, compare;
 		unsigned long long bytes = 0;
 		unsigned long us = 0;
 		ktime_t start_time;
@@ -419,13 +419,16 @@ static ssize_t spidev_rkmst_misc_write(struct file *filp, const char __user *buf
 		ktime_t cost_time;
 		char *tempbuf;
 
-		if (argc < 2)
+		if (argc < 3)
 			return -EINVAL;
 
 		if (kstrtoint(argv[0], 0, &len))
 			return -EINVAL;
 
 		if (kstrtoint(argv[1], 0, &loops))
+			return -EINVAL;
+
+		if (kstrtoint(argv[2], 0, &compare))
 			return -EINVAL;
 
 		if (!len) {
@@ -442,13 +445,13 @@ static ssize_t spidev_rkmst_misc_write(struct file *filp, const char __user *buf
 		if (!tempbuf)
 			return -ENOMEM;
 
-		get_random_bytes(tempbuf, len);
+		prandom_bytes(tempbuf, len);
 		spidev_rkmst_xfer(spidev, tempbuf, NULL, addr, len);
 		start_time = ktime_get();
 		for (i = 0; i < loops; i++) {
-			get_random_bytes(spidev->txbuf, len);
+			prandom_bytes(spidev->txbuf, len);
 			spidev_rkmst_xfer(spidev, spidev->txbuf, spidev->rxbuf, addr, len);
-			if (memcmp(spidev->rxbuf, tempbuf, len)) {
+			if (memcmp(spidev->rxbuf, tempbuf, len) && compare) {
 				dev_err(&spi->dev, "dulplex autotest failed, loops=%d\n", i);
 				print_hex_dump(KERN_ERR, "m-d-t: ",
 					       DUMP_PREFIX_OFFSET,
@@ -487,7 +490,7 @@ static ssize_t spidev_rkmst_misc_write(struct file *filp, const char __user *buf
 
 		start_time = ktime_get();
 		for (i = 0; i < loops; i++) {
-			get_random_bytes(spidev->txbuf, len);
+			prandom_bytes(spidev->txbuf, len);
 			spidev_rkmst_xfer(spidev, spidev->txbuf, NULL, addr, len);
 			spidev_rkmst_xfer(spidev, NULL, spidev->rxbuf, addr, len);
 			if (memcmp(spidev->rxbuf, spidev->txbuf, len)) {
@@ -601,11 +604,13 @@ static int spidev_rkmst_probe(struct spi_device *spi)
 	return 0;
 }
 
-static void spidev_rkmst_remove(struct spi_device *spi)
+static int spidev_rkmst_remove(struct spi_device *spi)
 {
 	struct spidev_rkmst_data *spidev = dev_get_drvdata(&spi->dev);
 
 	misc_deregister(&spidev->misc_dev);
+
+	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -617,12 +622,6 @@ MODULE_DEVICE_TABLE(of, spidev_rkmst_dt_match);
 
 #endif /* CONFIG_OF */
 
-static const struct spi_device_id spidev_rkmst_spi_ids[] = {
-	{ .name = "spi-obj-master" },
-	{},
-};
-MODULE_DEVICE_TABLE(spi, spidev_rkmst_spi_ids);
-
 static struct spi_driver spidev_rkmst_driver = {
 	.driver = {
 		.name	= "spidev_rkmst",
@@ -631,7 +630,6 @@ static struct spi_driver spidev_rkmst_driver = {
 	},
 	.probe		= spidev_rkmst_probe,
 	.remove		= spidev_rkmst_remove,
-	.id_table	= spidev_rkmst_spi_ids,
 };
 module_spi_driver(spidev_rkmst_driver);
 

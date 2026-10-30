@@ -41,7 +41,6 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/kthread.h>
-#include <linux/vmalloc.h>
 #include <uapi/sound/asound.h>
 #include <sound/control.h>
 #include <sound/soc.h>
@@ -396,12 +395,12 @@ static int aw87xxx_profile_switch_info(struct snd_kcontrol *kcontrol,
 	profile_name = aw_acf_get_prof_name_form_index(aw87xxx->dev,
 		&aw87xxx->acf_info, count);
 	if (profile_name == NULL) {
-		strscpy(uinfo->value.enumerated.name, "NULL",
+		strlcpy(uinfo->value.enumerated.name, "NULL",
 			strlen("NULL") + 1);
 		return 0;
 	}
 
-	strscpy(name, profile_name, sizeof(uinfo->value.enumerated.name));
+	strlcpy(name, profile_name, sizeof(uinfo->value.enumerated.name));
 
 	return 0;
 }
@@ -1355,7 +1354,7 @@ exit:
 	return ret;
 }
 
-static void aw87xxx_i2c_remove(struct i2c_client *client)
+static int aw87xxx_i2c_remove(struct i2c_client *client)
 {
 	struct aw87xxx *aw87xxx = i2c_get_clientdata(client);
 
@@ -1370,6 +1369,8 @@ static void aw87xxx_i2c_remove(struct i2c_client *client)
 	g_aw87xxx_dev_cnt--;
 	list_del(&aw87xxx->list);
 	mutex_unlock(&g_aw87xxx_mutex_lock);
+
+	return 0;
 }
 
 static void aw87xxx_i2c_shutdown(struct i2c_client *client)

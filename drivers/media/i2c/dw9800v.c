@@ -951,12 +951,14 @@ err_power_off:
 	return ret;
 }
 
-static void dw9800v_remove(struct i2c_client *client)
+static int dw9800v_remove(struct i2c_client *client)
 {
 	struct dw9800v_device *dw9800v_dev = i2c_get_clientdata(client);
 
 	pm_runtime_disable(&client->dev);
 	dw9800v_subdev_cleanup(dw9800v_dev);
+
+	return 0;
 }
 
 static int dw9800v_init(struct i2c_client *client)

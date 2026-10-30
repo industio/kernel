@@ -738,9 +738,9 @@ void analogix_dp_set_training_pattern(struct analogix_dp_device *dp,
 	case TEST_PATTERN_80BIT:
 		reg = 0x3e0f83e0;
 		analogix_dp_write(dp, ANALOGIX_DP_TEST_80B_PATTERN0, reg);
-		reg = 0x3e0f83e0;
+		reg = 0x0f83e0f8;
 		analogix_dp_write(dp, ANALOGIX_DP_TEST_80B_PATTERN1, reg);
-		reg = 0x000f83e0;
+		reg = 0x0000f83e;
 		analogix_dp_write(dp, ANALOGIX_DP_TEST_80B_PATTERN2, reg);
 		reg = SCRAMBLING_ENABLE | LINK_QUAL_PATTERN_SET_80BIT;
 		analogix_dp_write(dp, ANALOGIX_DP_TRAINING_PTN_SET, reg);
@@ -1012,7 +1012,6 @@ static void analogix_dp_reuse_spd(struct analogix_dp_device *dp)
 	u32 reg, val;
 
 	switch (dp->plat_data->dev_type) {
-	case RK3576_EDP:
 	case RK3588_EDP:
 		reg = ANALOGIX_DP_SPDIF_AUDIO_CTL_0;
 		break;
@@ -1103,13 +1102,9 @@ int analogix_dp_send_psr_spd(struct analogix_dp_device *dp,
 
 int analogix_dp_phy_power_on(struct analogix_dp_device *dp)
 {
-	int submode = PHY_SUBMODE_EDP;
 	int ret;
 
-	if (dp->plat_data->support_dp_mode && dp->dp_mode)
-		submode = PHY_SUBMODE_DP;
-
-	ret = phy_set_mode_ext(dp->phy, PHY_MODE_DP, submode);
+	ret = phy_set_mode(dp->phy, PHY_MODE_DP);
 	if (ret) {
 		dev_err(dp->dev, "phy_set_mode failed: %d\n", ret);
 		return ret;
@@ -1277,22 +1272,22 @@ void analogix_dp_set_video_format(struct analogix_dp_device *dp)
 	const struct drm_display_mode *mode = &video->mode;
 	unsigned int hsw, hfp, hbp, vsw, vfp, vbp;
 
-	hsw = mode->crtc_hsync_end - mode->crtc_hsync_start;
-	hfp = mode->crtc_hsync_start - mode->crtc_hdisplay;
-	hbp = mode->crtc_htotal - mode->crtc_hsync_end;
-	vsw = mode->crtc_vsync_end - mode->crtc_vsync_start;
-	vfp = mode->crtc_vsync_start - mode->crtc_vdisplay;
-	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
+	hsw = mode->hsync_end - mode->hsync_start;
+	hfp = mode->hsync_start - mode->hdisplay;
+	hbp = mode->htotal - mode->hsync_end;
+	vsw = mode->vsync_end - mode->vsync_start;
+	vfp = mode->vsync_start - mode->vdisplay;
+	vbp = mode->vtotal - mode->vsync_end;
 
 	/* Set Video Format Parameters */
 	analogix_dp_write(dp, ANALOGIX_DP_TOTAL_LINE_CFG_L,
-			  TOTAL_LINE_CFG_L(mode->crtc_vtotal));
+			  TOTAL_LINE_CFG_L(mode->vtotal));
 	analogix_dp_write(dp, ANALOGIX_DP_TOTAL_LINE_CFG_H,
-			  TOTAL_LINE_CFG_H(mode->crtc_vtotal >> 8));
+			  TOTAL_LINE_CFG_H(mode->vtotal >> 8));
 	analogix_dp_write(dp, ANALOGIX_DP_ACTIVE_LINE_CFG_L,
-			  ACTIVE_LINE_CFG_L(mode->crtc_vdisplay));
+			  ACTIVE_LINE_CFG_L(mode->vdisplay));
 	analogix_dp_write(dp, ANALOGIX_DP_ACTIVE_LINE_CFG_H,
-			  ACTIVE_LINE_CFG_H(mode->crtc_vdisplay >> 8));
+			  ACTIVE_LINE_CFG_H(mode->vdisplay >> 8));
 	analogix_dp_write(dp, ANALOGIX_DP_V_F_PORCH_CFG,
 			  V_F_PORCH_CFG(vfp));
 	analogix_dp_write(dp, ANALOGIX_DP_V_SYNC_WIDTH_CFG,
@@ -1300,13 +1295,13 @@ void analogix_dp_set_video_format(struct analogix_dp_device *dp)
 	analogix_dp_write(dp, ANALOGIX_DP_V_B_PORCH_CFG,
 			  V_B_PORCH_CFG(vbp));
 	analogix_dp_write(dp, ANALOGIX_DP_TOTAL_PIXEL_CFG_L,
-			  TOTAL_PIXEL_CFG_L(mode->crtc_htotal));
+			  TOTAL_PIXEL_CFG_L(mode->htotal));
 	analogix_dp_write(dp, ANALOGIX_DP_TOTAL_PIXEL_CFG_H,
-			  TOTAL_PIXEL_CFG_H(mode->crtc_htotal >> 8));
+			  TOTAL_PIXEL_CFG_H(mode->htotal >> 8));
 	analogix_dp_write(dp, ANALOGIX_DP_ACTIVE_PIXEL_CFG_L,
-			  ACTIVE_PIXEL_CFG_L(mode->crtc_hdisplay));
+			  ACTIVE_PIXEL_CFG_L(mode->hdisplay));
 	analogix_dp_write(dp, ANALOGIX_DP_ACTIVE_PIXEL_CFG_H,
-			  ACTIVE_PIXEL_CFG_H(mode->crtc_hdisplay >> 8));
+			  ACTIVE_PIXEL_CFG_H(mode->hdisplay >> 8));
 	analogix_dp_write(dp, ANALOGIX_DP_H_F_PORCH_CFG_L,
 			  H_F_PORCH_CFG_L(hfp));
 	analogix_dp_write(dp, ANALOGIX_DP_H_F_PORCH_CFG_H,
@@ -1393,28 +1388,4 @@ void analogix_dp_init(struct analogix_dp_device *dp)
 	analogix_dp_config_interrupt(dp);
 	analogix_dp_init_hpd(dp);
 	analogix_dp_init_aux(dp);
-}
-
-void analogix_dp_enable_assr_mode(struct analogix_dp_device *dp, bool enable)
-{
-	u32 reg;
-
-	if (enable) {
-		reg = analogix_dp_read(dp, ANALOGIX_DP_LINK_POLICY);
-		reg |= ALTERNATE_SR_ENABLE;
-		analogix_dp_write(dp, ANALOGIX_DP_LINK_POLICY, reg);
-	} else {
-		reg = analogix_dp_read(dp, ANALOGIX_DP_LINK_POLICY);
-		reg &= ~ALTERNATE_SR_ENABLE;
-		analogix_dp_write(dp, ANALOGIX_DP_LINK_POLICY, reg);
-	}
-}
-
-bool analogix_dp_get_assr_mode(struct analogix_dp_device *dp)
-{
-	u32 reg;
-
-	reg = analogix_dp_read(dp, ANALOGIX_DP_LINK_POLICY);
-
-	return !!(reg & ALTERNATE_SR_ENABLE);
 }

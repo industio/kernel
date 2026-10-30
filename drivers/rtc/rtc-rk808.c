@@ -13,7 +13,6 @@
 #include <linux/rtc.h>
 #include <linux/bcd.h>
 #include <linux/mfd/rk808.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/i2c.h>
 
@@ -496,7 +495,7 @@ static int rk808_rtc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	return devm_rtc_register_device(rk808_rtc->rtc);
+	return rtc_register_device(rk808_rtc->rtc);
 }
 
 static struct platform_driver rk808_rtc_driver = {

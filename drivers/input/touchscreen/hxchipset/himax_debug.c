@@ -42,7 +42,7 @@ static ssize_t himax_crc_test_read(struct himax_ts_data *ts, char *buf, size_t l
 
 static ssize_t himax_vendor_read(struct file *file, char *buf, size_t len, loff_t *pos)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(file));
 	ssize_t ret = 0;
 
 	ts->core_fp.fp_reload_disable(ts, 0);
@@ -1077,7 +1077,7 @@ static void himax_get_self_edge(struct himax_ts_data *ts)
 
 static void print_state_info(struct seq_file *s)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 
 	/* seq_printf(s, "State_info_2bytes:%3d, %3d\n",
 	 * _state_info[0],hx_state_info[1]);
@@ -1095,7 +1095,7 @@ static void print_state_info(struct seq_file *s)
 
 static void himax_diag_arrange_print(struct seq_file *s, int i, int j, int transpose)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 
 	if (transpose)
 		seq_printf(s, "%6d", ts->debug.diag_mutual[j + i * ts->ic_data->HX_RX_NUM]);
@@ -1107,7 +1107,7 @@ static void himax_diag_arrange_print(struct seq_file *s, int i, int j, int trans
 static void himax_diag_arrange_inloop(struct seq_file *s, int in_init, int out_init, bool transpose,
 				      int j)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	int x_channel = ts->ic_data->HX_RX_NUM;
 	int y_channel = ts->ic_data->HX_TX_NUM;
 	int i;
@@ -1144,7 +1144,7 @@ static void himax_diag_arrange_inloop(struct seq_file *s, int in_init, int out_i
 /* print first step which is row */
 static void himax_diag_arrange_outloop(struct seq_file *s, int transpose, int out_init, int in_init)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	int j;
 	int x_channel = ts->ic_data->HX_RX_NUM;
 	int y_channel = ts->ic_data->HX_TX_NUM;
@@ -1185,7 +1185,7 @@ static void himax_diag_arrange_outloop(struct seq_file *s, int transpose, int ou
 /* determin the output format of diag */
 static void himax_diag_arrange(struct seq_file *s)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	int x_channel = ts->ic_data->HX_RX_NUM;
 	int y_channel = ts->ic_data->HX_TX_NUM;
 	int bit2, bit1, bit0;
@@ -1358,7 +1358,7 @@ static bool himax_ts_diag_func(struct himax_ts_data *ts)
 
 static int himax_diag_print(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	int x_num = ts->ic_data->HX_RX_NUM;
 	int y_num = ts->ic_data->HX_TX_NUM;
 	size_t ret = 0;
@@ -1394,7 +1394,7 @@ static int himax_diag_print(struct seq_file *s, void *v)
 
 static int himax_diag_stack_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 
 	if (ts->diag_cmd)
 		himax_diag_print(s, v);
@@ -1425,7 +1425,7 @@ static const struct proc_ops himax_proc_stack_ops = {
 
 static int himax_sram_read(struct seq_file *s, void *v, uint8_t rs)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	int d_type = 0;
 
 	d_type = (!ts->diag_cmd) ? rs : ts->diag_cmd;
@@ -1586,7 +1586,7 @@ static void flash_dump_prog_set(struct himax_ts_data *ts, uint8_t prog)
 
 static int himax_proc_flash_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	ssize_t ret = 0;
 	int i;
 	uint8_t flash_progress = ts->debug.flash_progress;
@@ -1626,7 +1626,7 @@ static int himax_proc_flash_read(struct seq_file *s, void *v)
 static ssize_t himax_proc_flash_write(struct file *filp, const char __user *buff, size_t len,
 				      loff_t *data)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(filp));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(filp));
 	char buf[80] = { 0 };
 
 	if (len >= 80) {
@@ -1777,7 +1777,7 @@ static ssize_t himax_sense_on_off_write(struct himax_ts_data *ts, char *buf, siz
 
 static ssize_t himax_debug_read(struct file *file, char *buf, size_t len, loff_t *pos)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(file));
 	ssize_t ret = 0;
 	int i = 0;
 
@@ -2011,7 +2011,7 @@ static ssize_t himax_debug_read(struct file *file, char *buf, size_t len, loff_t
 
 static ssize_t himax_debug_write(struct file *file, const char *buff, size_t len, loff_t *pos)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(file));
 	char fileName[128];
 	char buf[80] = "\0";
 	int result = 0;
@@ -2318,7 +2318,6 @@ void himax_touch_proc_deinit(struct himax_ts_data *ts)
 	remove_proc_entry(HIMAX_PROC_DELTA_FILE, ts->debug.procfs.diag_dir);
 	remove_proc_entry(HIMAX_PROC_STACK_FILE, ts->debug.procfs.diag_dir);
 	remove_proc_entry(HIMAX_PROC_VENDOR_FILE, ts->debug.procfs.proc_dir);
-	remove_proc_entry(HIMAX_PROC_DIAG_FOLDER, ts->debug.procfs.proc_dir);
 }
 
 int himax_debug_init(struct himax_ts_data *ts)

@@ -27,7 +27,6 @@ select:
           - rockchip,rk3528-gmac
           - rockchip,rk3562-gmac
           - rockchip,rk3568-gmac
-          - rockchip,rk3576-gmac
           - rockchip,rk3588-gmac
           - rockchip,rv1106-gmac
           - rockchip,rv1108-gmac
@@ -59,7 +58,6 @@ properties:
               - rockchip,rk3528-gmac
               - rockchip,rk3562-gmac
               - rockchip,rk3568-gmac
-              - rockchip,rk3576-gmac
               - rockchip,rk3588-gmac
               - rockchip,rv1106-gmac
               - rockchip,rv1126-gmac
@@ -83,8 +81,9 @@ properties:
 
   clock_in_out:
     description:
-      For RGMII, it must be "input", means main clock(125MHz)
-      is not sourced from SoC's PLL, but input from PHY.
+      For RGMII, "output" is recommended, means main clock(125MHz)
+      is sourced from SoC's PLL, use output can get better electrical
+      signal; and "input" is not sourced from SoC's PLL, but input from PHY.
       For RMII, "input" means PHY provides the reference clock(50MHz),
       "output" means GMAC provides the reference clock.
     $ref: /schemas/types.yaml#/definitions/string
@@ -92,11 +91,6 @@ properties:
 
   rockchip,grf:
     description: The phandle of the syscon node for the general register file.
-    $ref: /schemas/types.yaml#/definitions/phandle
-
-  rockchip,php-grf:
-    description:
-      The phandle of the syscon node for the peripheral general register file.
     $ref: /schemas/types.yaml#/definitions/phandle
 
   tx_delay:

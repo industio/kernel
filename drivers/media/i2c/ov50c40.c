@@ -192,6 +192,8 @@ struct ov50c40 {
 	bool			is_first_streamoff;
 	struct otp_info		*otp;
 	u32			spd_id;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_ov50c40(sd) container_of(sd, struct ov50c40, subdev)
@@ -5750,7 +5752,7 @@ static const struct ov50c40_mode supported_modes_dphy[] = {
 		.reg_list = ov50c40_10bit_4096x3072_dphy_30fps_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGBRG10_1X10,
@@ -5768,7 +5770,7 @@ static const struct ov50c40_mode supported_modes_dphy[] = {
 		.reg_list = ov50c40_10bit_8192x6144_dphy_12fps_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 #ifdef DEBUG
 	{
@@ -5787,7 +5789,7 @@ static const struct ov50c40_mode supported_modes_dphy[] = {
 		.reg_list = ov50c40_10bit_4096x3072_dphy_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGBRG10_1X10,
@@ -5805,7 +5807,7 @@ static const struct ov50c40_mode supported_modes_dphy[] = {
 		.reg_list = ov50c40_10bit_8192x6144_dphy_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGBRG10_1X10,
@@ -5822,7 +5824,7 @@ static const struct ov50c40_mode supported_modes_dphy[] = {
 		.bpp = 10,
 		.reg_list = ov50c40_10bit_4096x3072_dphy_30fps_nopd_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 #endif
 };
@@ -5844,7 +5846,7 @@ static const struct ov50c40_mode supported_modes_cphy[] = {
 		.reg_list = ov50c40_10bit_4096x3072_cphy_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGBRG10_1X10,
@@ -5862,7 +5864,7 @@ static const struct ov50c40_mode supported_modes_cphy[] = {
 		.reg_list = ov50c40_10bit_4096x3072_cphy_30fps_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SGBRG10_1X10,
@@ -5880,8 +5882,12 @@ static const struct ov50c40_mode supported_modes_cphy[] = {
 		.reg_list = ov50c40_10bit_8192x6144_cphy_12fps_regs,
 		.hdr_mode = NO_HDR,
 		.spd = &ov50c40_spd,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SGBRG10_1X10,
 };
 
 static const s64 link_freq_items[] = {
@@ -5999,10 +6005,13 @@ ov50c40_find_best_fit(struct ov50c40 *ov50c40, struct v4l2_subdev_format *fmt)
 
 	for (i = 0; i < ov50c40->cfg_num; i++) {
 		dist = ov50c40_get_reso_dist(&ov50c40->support_modes[i], framefmt);
-		if ((cur_best_fit_dist == -1 || dist < cur_best_fit_dist) &&
-			(ov50c40->support_modes[i].bus_fmt == framefmt->code)) {
+		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == ov50c40->support_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 	dev_info(&ov50c40->client->dev, "%s: cur_best_fit(%d)",
@@ -6011,7 +6020,7 @@ ov50c40_find_best_fit(struct ov50c40 *ov50c40, struct v4l2_subdev_format *fmt)
 }
 
 static int ov50c40_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -6029,7 +6038,7 @@ static int ov50c40_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&ov50c40->mutex);
 		return -ENOTTY;
@@ -6049,6 +6058,7 @@ static int ov50c40_set_fmt(struct v4l2_subdev *sd,
 					 pixel_rate);
 		__v4l2_ctrl_s_ctrl(ov50c40->link_freq,
 				   mode->mipi_freq_idx);
+		ov50c40->cur_fps = mode->max_fps;
 	}
 	dev_info(&ov50c40->client->dev, "%s: mode->mipi_freq_idx(%d)",
 		 __func__, mode->mipi_freq_idx);
@@ -6059,7 +6069,7 @@ static int ov50c40_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov50c40_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -6068,7 +6078,7 @@ static int ov50c40_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov50c40->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&ov50c40->mutex);
 		return -ENOTTY;
@@ -6085,20 +6095,18 @@ static int ov50c40_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov50c40_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct ov50c40 *ov50c40 = to_ov50c40(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = ov50c40->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int ov50c40_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -6137,8 +6145,81 @@ static int ov50c40_g_frame_interval(struct v4l2_subdev *sd,
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
 	const struct ov50c40_mode *mode = ov50c40->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (ov50c40->streaming)
+		fi->interval = ov50c40->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct ov50c40_mode *ov50c40_find_mode(struct ov50c40 *ov50c40, int fps)
+{
+	const struct ov50c40_mode *mode = NULL;
+	const struct ov50c40_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ov50c40->cfg_num; i++) {
+		mode = &ov50c40->support_modes[i];
+		if (mode->width == ov50c40->cur_mode->width &&
+		    mode->height == ov50c40->cur_mode->height &&
+		    mode->hdr_mode == ov50c40->cur_mode->hdr_mode &&
+		    mode->bus_fmt == ov50c40->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int ov50c40_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct ov50c40 *ov50c40 = to_ov50c40(sd);
+	const struct ov50c40_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	u64 pixel_rate = 0;
+	u32 lane_num = ov50c40->bus_cfg.bus.mipi_csi2.num_data_lanes;
+	int fps;
+
+	if (ov50c40->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = ov50c40_find_mode(ov50c40, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	ov50c40->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(ov50c40->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(ov50c40->vblank, vblank_def,
+				 OV50C40_VTS_MAX - mode->height,
+				 1, vblank_def);
+	pixel_rate = (u32)link_freq_items[mode->mipi_freq_idx] / mode->bpp * 2 * lane_num;
+
+	__v4l2_ctrl_s_ctrl_int64(ov50c40->pixel_rate,
+				 pixel_rate);
+	__v4l2_ctrl_s_ctrl(ov50c40->link_freq,
+			   mode->mipi_freq_idx);
+	ov50c40->cur_fps = mode->max_fps;
 	return 0;
 }
 
@@ -6146,9 +6227,15 @@ static int ov50c40_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
+	u32 lane_num = ov50c40->bus_cfg.bus.mipi_csi2.num_data_lanes;
+	u32 val = 0;
+
+	val = 1 << (lane_num - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 
 	config->type = ov50c40->bus_cfg.bus_type;
-	config->bus.mipi_csi2 = ov50c40->bus_cfg.bus.mipi_csi2;
+	config->flags = val;
 
 	return 0;
 }
@@ -6255,7 +6342,7 @@ static int ov50c40_get_channel_info(struct ov50c40 *ov50c40, struct rkmodule_cha
 		return -EINVAL;
 
 	if (ch_info->index == ov50c40->spd_id && mode->spd) {
-		ch_info->vc = 1;
+		ch_info->vc = V4L2_MBUS_CSI2_CHANNEL_1;
 		ch_info->width = mode->spd->width;
 		ch_info->height = mode->spd->height;
 		ch_info->bus_fmt = mode->spd->bus_fmt;
@@ -6278,32 +6365,50 @@ static long ov50c40_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 	long ret = 0;
 	u32 i, h, w;
 	u32 stream = 0;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case RKMODULE_SET_HDR_CFG:
 		hdr_cfg = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr_cfg->hdr_mode == ov50c40->cur_mode->hdr_mode)
+			return 0;
 		w = ov50c40->cur_mode->width;
 		h = ov50c40->cur_mode->height;
+		dst_fps = DIV_ROUND_CLOSEST(ov50c40->cur_mode->max_fps.denominator,
+			ov50c40->cur_mode->max_fps.numerator);
 		for (i = 0; i < ov50c40->cfg_num; i++) {
 			if (w == ov50c40->support_modes[i].width &&
-			h == ov50c40->support_modes[i].height &&
-			ov50c40->support_modes[i].hdr_mode == hdr_cfg->hdr_mode) {
-				ov50c40->cur_mode = &ov50c40->support_modes[i];
-				break;
+			    h == ov50c40->support_modes[i].height &&
+			    ov50c40->support_modes[i].hdr_mode == hdr_cfg->hdr_mode &&
+			    ov50c40->support_modes[i].bus_fmt == ov50c40->cur_mode->bus_fmt) {
+				cur_fps = DIV_ROUND_CLOSEST(ov50c40->support_modes[i].max_fps.denominator,
+					ov50c40->support_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == ov50c40->cfg_num) {
+		if (cur_best_fit == -1) {
 			dev_err(&ov50c40->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr_cfg->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			ov50c40->cur_mode = &ov50c40->support_modes[cur_best_fit];
 			w = ov50c40->cur_mode->hts_def - ov50c40->cur_mode->width;
 			h = ov50c40->cur_mode->vts_def - ov50c40->cur_mode->height;
 			__v4l2_ctrl_modify_range(ov50c40->hblank, w, w, 1, w);
 			__v4l2_ctrl_modify_range(ov50c40->vblank, h,
 				OV50C40_VTS_MAX - ov50c40->cur_mode->height,
 				1, h);
+			ov50c40->cur_fps = ov50c40->cur_mode->max_fps;
 			dev_info(&ov50c40->client->dev,
 				"sensor mode: %d\n",
 				ov50c40->cur_mode->hdr_mode);
@@ -6689,7 +6794,7 @@ static int ov50c40_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct ov50c40_mode *def_mode = &ov50c40->support_modes[0];
 
 	mutex_lock(&ov50c40->mutex);
@@ -6707,7 +6812,7 @@ static int ov50c40_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int ov50c40_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -6728,7 +6833,7 @@ static int ov50c40_enum_frame_interval(struct v4l2_subdev *sd,
 #define DST_WIDTH 4096
 #define DST_HEIGHT 2304
 static int ov50c40_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -6766,6 +6871,7 @@ static const struct v4l2_subdev_core_ops ov50c40_core_ops = {
 static const struct v4l2_subdev_video_ops ov50c40_video_ops = {
 	.s_stream = ov50c40_s_stream,
 	.g_frame_interval = ov50c40_g_frame_interval,
+	.s_frame_interval = ov50c40_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops ov50c40_pad_ops = {
@@ -6785,6 +6891,14 @@ static const struct v4l2_subdev_ops ov50c40_subdev_ops = {
 	.video	= &ov50c40_video_ops,
 	.pad	= &ov50c40_pad_ops,
 };
+
+static void ov50c40_modify_fps_info(struct ov50c40 *ov50c40)
+{
+	const struct ov50c40_mode *mode = ov50c40->cur_mode;
+
+	ov50c40->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      ov50c40->cur_vts;
+}
 
 static int ov50c40_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -6855,6 +6969,8 @@ static int ov50c40_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = ov50c40_write_reg(ov50c40->client, OV50C40_REG_VTS,
 					OV50C40_REG_VALUE_16BIT,
 					vts);
+		ov50c40->cur_vts = ctrl->val + ov50c40->cur_mode->height;
+		ov50c40_modify_fps_info(ov50c40);
 		dev_dbg(&client->dev, "set vblank 0x%x\n",
 			ctrl->val);
 		break;
@@ -7185,7 +7301,7 @@ continue_probe:
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 ov50c40->module_index, facing,
 		 OV50C40_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -7210,7 +7326,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void ov50c40_remove(struct i2c_client *client)
+static int ov50c40_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov50c40 *ov50c40 = to_ov50c40(sd);
@@ -7226,6 +7342,8 @@ static void ov50c40_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov50c40_power_off(ov50c40);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

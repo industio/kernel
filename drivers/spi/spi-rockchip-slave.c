@@ -2,7 +2,7 @@
 /*
  * Rockchip SPI Slave Controller Driver
  *
- * Copyright (c) 2023, Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2023, Rockchip Inc.
  * Author: Jon Lin <Jon.lin@rock-chips.com>
  */
 
@@ -15,7 +15,6 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/pinctrl/consumer.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 #include <linux/pm_runtime.h>
@@ -472,20 +471,6 @@ static int rockchip_spi_slave_prepare_dma(struct rockchip_spi *rs,
 	return 1;
 }
 
-static bool rockchip_spi_slave_can_dma(struct spi_controller *ctlr,
-				       struct spi_device *spi,
-				       struct spi_transfer *xfer)
-{
-	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
-	unsigned int bytes_per_word = xfer->bits_per_word <= 8 ? 1 : 2;
-
-	/* if the numbor of spi words to transfer is less than the fifo
-	 * length we can just fill the fifo and wait for a single irq,
-	 * so don't bother setting up dma
-	 */
-	return xfer->len / bytes_per_word >= rs->fifo_len;
-}
-
 static int rockchip_spi_slave_config(struct rockchip_spi *rs,
 		struct spi_device *spi, struct spi_transfer *xfer)
 {
@@ -688,7 +673,7 @@ static int rockchip_spi_slave_do_one_msg(struct spi_controller *ctlr, struct spi
 		rs->n_bytes = xfer->bits_per_word <= 8 ? 1 : 2;
 		rs->xfer = xfer;
 
-		use_dma = rockchip_spi_slave_can_dma(ctlr, spi, xfer);
+		use_dma = ctlr->can_dma(ctlr, spi, xfer);
 		if (use_dma)
 			rs->xfer_mode = ROCKCHIP_SPI_DMA;
 		else
@@ -730,6 +715,9 @@ static int rockchip_spi_slave_do_one_msg(struct spi_controller *ctlr, struct spi
 			memcpy(xfer->rx_buf, rs->dma_buf, xfer->len);
 
 		m->actual_length += xfer->len;
+
+		if (xfer->delay_usecs)
+			udelay(xfer->delay_usecs);
 	}
 
 out:
@@ -737,6 +725,20 @@ out:
 
 	spi_finalize_current_message(ctlr);
 	return 0;
+}
+
+static bool rockchip_spi_slave_can_dma(struct spi_controller *ctlr,
+				 struct spi_device *spi,
+				 struct spi_transfer *xfer)
+{
+	struct rockchip_spi *rs = spi_controller_get_devdata(ctlr);
+	unsigned int bytes_per_word = xfer->bits_per_word <= 8 ? 1 : 2;
+
+	/* if the numbor of spi words to transfer is less than the fifo
+	 * length we can just fill the fifo and wait for a single irq,
+	 * so don't bother setting up dma
+	 */
+	return xfer->len / bytes_per_word >= rs->fifo_len;
 }
 
 static int rockchip_spi_slave_setup(struct spi_device *spi)
@@ -814,9 +816,9 @@ static int rockchip_spi_slave_probe(struct platform_device *pdev)
 
 		rs->max_transfer_size = resource_size(&sram_res);
 		rs->dma_phys = sram_res.start;
-		rs->dma_buf = devm_ioremap(&pdev->dev, sram_res.start, resource_size(&sram_res));
-		if (!rs->dma_buf) {
-			ret = -ENOMEM;
+		rs->dma_buf = devm_ioremap_resource(&pdev->dev, &sram_res);
+		if (IS_ERR(rs->dma_buf)) {
+			ret = PTR_ERR(rs->dma_buf);
 			goto err_put_ctlr;
 		}
 		dev_err(&pdev->dev, "set sram_buf\n");
@@ -886,6 +888,7 @@ static int rockchip_spi_slave_probe(struct platform_device *pdev)
 	}
 	rs->dma_addr_tx = mem->start + ROCKCHIP_SPI_TXDR;
 	rs->dma_addr_rx = mem->start + ROCKCHIP_SPI_RXDR;
+	ctlr->can_dma = rockchip_spi_slave_can_dma;
 
 	init_completion(&rs->xfer_done);
 	switch (rs->version) {

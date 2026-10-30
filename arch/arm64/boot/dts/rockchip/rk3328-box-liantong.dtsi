@@ -637,6 +637,10 @@
 	status = "okay";
 };
 
+&usbdrd_dwc3 {
+	status = "okay";
+};
+
 &vdpu {
 	status = "okay";
 };

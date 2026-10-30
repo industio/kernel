@@ -4769,7 +4769,8 @@ rkisp_params_check_bigmode_v32(struct rkisp_isp_params_vdev *params_vdev)
 	if (ispdev->isp_ver == ISP_V32_L)
 		return rkisp_params_check_bigmode_v32_lite(params_vdev);
 
-	if (hw->unite == ISP_UNITE_ONE)
+	if (hw->unite == ISP_UNITE_ONE &&
+	    (hw->dev_link_num > 1 || ispdev->unite_div > ISP_UNITE_DIV1))
 		hw->is_multi_overflow = true;
 multi_overflow:
 	if (hw->is_multi_overflow) {
@@ -4940,11 +4941,10 @@ rkisp_params_first_cfg_v32(struct rkisp_isp_params_vdev *params_vdev)
 	struct rkisp_device *dev = params_vdev->dev;
 	struct rkisp_isp_params_val_v32 *priv_val = params_vdev->priv_val;
 	struct isp32_isp_params_cfg *params = params_vdev->isp32_params;
-	unsigned long flags = 0;
 	int i;
 
 	rkisp_params_check_bigmode_v32(params_vdev);
-	spin_lock_irqsave(&params_vdev->config_lock, flags);
+	spin_lock(&params_vdev->config_lock);
 	/* override the default things */
 	if (!params->module_cfg_update && !params->module_en_update)
 		dev_warn(dev->dev, "can not get first iq setting in stream on\n");
@@ -4964,7 +4964,7 @@ rkisp_params_first_cfg_v32(struct rkisp_isp_params_vdev *params_vdev)
 		__isp_isr_other_en(params_vdev, params + i, RKISP_PARAMS_ALL, i);
 		__isp_isr_meas_en(params_vdev, params + i, RKISP_PARAMS_ALL, i);
 	}
-	spin_unlock_irqrestore(&params_vdev->config_lock, flags);
+	spin_unlock(&params_vdev->config_lock);
 
 	if (dev->hw_dev->is_frm_buf && priv_val->buf_frm.mem_priv) {
 		u32 size = priv_val->buf_frm.size;
@@ -5411,10 +5411,9 @@ rkisp_params_cfg_v32(struct rkisp_isp_params_vdev *params_vdev,
 	struct rkisp_device *dev = params_vdev->dev;
 	struct isp32_isp_params_cfg *new_params = NULL;
 	struct rkisp_buffer *cur_buf = params_vdev->cur_buf;
-	unsigned long flags = 0;
 	int i;
 
-	spin_lock_irqsave(&params_vdev->config_lock, flags);
+	spin_lock(&params_vdev->config_lock);
 	if (!params_vdev->streamon)
 		goto unlock;
 
@@ -5478,7 +5477,7 @@ rkisp_params_cfg_v32(struct rkisp_isp_params_vdev *params_vdev,
 
 unlock:
 	params_vdev->cur_buf = cur_buf;
-	spin_unlock_irqrestore(&params_vdev->config_lock, flags);
+	spin_unlock(&params_vdev->config_lock);
 }
 
 static void

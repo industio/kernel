@@ -678,7 +678,7 @@
 		#size-cells = <2>;
 		ranges;
 
-		drm_logo: drm-logo@0 {
+		drm_logo: drm-logo@00000000 {
 			compatible = "rockchip,drm-logo";
 			reg = <0x0 0x0 0x0 0x0>;
 		};
@@ -688,7 +688,7 @@
 			reg = <0x0 0x0 0x0 0x0>;
 		};
 
-		drm_cubic_lut: drm-cubic-lut@0 {
+		drm_cubic_lut: drm-cubic-lut@00000000 {
 			compatible = "rockchip,drm-cubic-lut";
 			reg = <0x0 0x0 0x0 0x0>;
 		};
@@ -1607,7 +1607,6 @@
 		rockchip,temp-hysteresis = <5000>;
 		rockchip,low-temp = <10000>;
 		rockchip,low-temp-min-volt = <925000>;
-		rockchip,init-freq = <1000000>;
 
 		opp-300000000 {
 			opp-supported-hw = <0xf9 0xffff>;
@@ -2289,13 +2288,13 @@
 		phys = <&combphy_pu PHY_TYPE_PCIE>;
 		phy-names = "pcie-phy";
 		power-domains = <&power RK3562_PD_PHP>;
-		ranges = <0x81000000 0x0 0xfc100000 0x0 0xfc100000 0x0 0x100000
+		ranges = <0x00000800 0x0 0xfc000000 0x0 0xfc000000 0x0 0x100000
+			  0x81000000 0x0 0xfc100000 0x0 0xfc100000 0x0 0x100000
 			  0x82000000 0x0 0xfc200000 0x0 0xfc200000 0x0 0x1e00000
 			  0xc3000000 0x3 0x00000000 0x3 0x00000000 0x0 0x40000000>;
 		reg = <0x0 0xfe000000 0x0 0x400000>,
-		      <0x0 0xff500000 0x0 0x10000>,
-		      <0x0 0xfc000000 0x0 0x100000>;
-		reg-names = "pcie-dbi", "pcie-apb", "config";
+		      <0x0 0xff500000 0x0 0x10000>;
+		reg-names = "pcie-dbi", "pcie-apb";
 		resets = <&cru SRST_PCIE20_POWERUP>;
 		reset-names = "pipe";
 		status = "disabled";
@@ -3319,7 +3318,7 @@
 	rockchip_suspend: rockchip-suspend {
 		compatible = "rockchip,pm-rk3562";
 		status = "disabled";
-		rockchip,sleep-debug-en = <0>;
+		rockchip,sleep-debug-en = <1>;
 		rockchip,sleep-mode-config = <
 			(0
 			| RKPM_SLP_DEEP1_MODE
@@ -3335,7 +3334,6 @@
 			| RKPM_GPIO0_WKUP_EN
 			)
 		>;
-		power-domains = <&power RK3562_PD_PHP>;
 	};
 };
 

@@ -40,7 +40,7 @@ static int himax_chip_num;
 
 static ssize_t himax_self_test(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	size_t ret = 0;
 
 	I("%s: enter, %d\n", __func__, __LINE__);
@@ -79,7 +79,7 @@ static void himax_self_test_seq_stop(struct seq_file *s, void *v)
 
 static int himax_self_test_seq_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	size_t ret = 0;
 
 	if (ts->chip_test_r_flag) {
@@ -111,7 +111,7 @@ static int himax_self_test_proc_open(struct inode *inode, struct file *file)
 static ssize_t himax_self_test_write(struct file *filp, const char __user *buff, size_t len,
 				     loff_t *data)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(filp));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(filp));
 	char buf[80] = { 0 };
 
 	if (len >= 80) {
@@ -152,7 +152,7 @@ static void himax_WPBPlock_node_seq_stop(struct seq_file *s, void *v)
 
 static int himax_WPBPlock_node_seq_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	size_t ret = 0;
 	uint8_t status;
 
@@ -182,7 +182,7 @@ static int himax_WPBPlock_node_proc_open(struct inode *inode, struct file *file)
 static ssize_t himax_WPBPlock_node_write(struct file *filp, const char __user *buff, size_t len,
 					 loff_t *data)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(filp));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(filp));
 	char buf[80] = { 0 };
 	int result = 0;
 
@@ -229,7 +229,7 @@ static void himax_fail_det_seq_stop(struct seq_file *s, void *v)
 
 static int himax_fail_det_seq_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	size_t ret = 0;
 	uint8_t data[24] = { 0 };
 
@@ -351,7 +351,7 @@ static void himax_bank_search_set(struct himax_ts_data *ts, uint16_t Nframe, uin
 }
 static int himax_chip_inspect_mode(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	uint8_t tmp_addr[4];
 	uint8_t tmp_data[4];
 	char buf[64] = { 0 };
@@ -506,7 +506,7 @@ static int himax_chip_inspect_mode(struct seq_file *s, void *v)
 
 static ssize_t himax_inspect_mode(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 
 	I("%s: enter, %d\n", __func__, __LINE__);
 
@@ -571,7 +571,7 @@ static void himax_inspect_mode_seq_stop(struct seq_file *s, void *v)
 
 static int himax_inspect_mode_seq_read(struct seq_file *s, void *v)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(s->file));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(s->file));
 	size_t ret = 0;
 
 	if (ts->chip_test_r_flag) {
@@ -603,7 +603,7 @@ static int himax_inspect_mode_proc_open(struct inode *inode, struct file *file)
 static ssize_t himax_inspect_mode_write(struct file *filp, const char __user *buff, size_t len,
 					loff_t *data)
 {
-	struct himax_ts_data *ts = pde_data(file_inode(filp));
+	struct himax_ts_data *ts = PDE_DATA(file_inode(filp));
 	char buf[80] = { 0 };
 
 	if (len >= 80) {
@@ -653,7 +653,7 @@ static int himax_common_proc_init(struct himax_ts_data *ts)
 
 	if (ts->debug.procfs.proc_dir == NULL) {
 		E(" %s: himax_touch_proc_dir file create failed!\n", __func__);
-		goto fail_1;
+		return -ENOMEM;
 	}
 #if defined(CONFIG_TOUCHSCREEN_HIMAX_INSPECT)
 	himax_inspection_init(ts);
@@ -663,7 +663,7 @@ static int himax_common_proc_init(struct himax_ts_data *ts)
 				 &himax_proc_self_test_ops, ts);
 	if (ts->debug.procfs.self_test == NULL) {
 		E(" %s: proc self_test file create failed!\n", __func__);
-		goto fail_2;
+		goto fail_1;
 	}
 
 	ts->debug.procfs.wpbplock_node =
@@ -671,7 +671,7 @@ static int himax_common_proc_init(struct himax_ts_data *ts)
 				 &himax_proc_WPBPlock_node_ops, ts);
 	if (ts->debug.procfs.wpbplock_node == NULL) {
 		E(" %s: proc BPlock file create failed!\n", __func__);
-		goto fail_3;
+		goto fail_1;
 	}
 
 	ts->debug.procfs.fail_det =
@@ -679,7 +679,7 @@ static int himax_common_proc_init(struct himax_ts_data *ts)
 				 &himax_proc_fail_det_ops, ts);
 	if (ts->debug.procfs.fail_det == NULL) {
 		E(" %s: proc fail det file create failed!\n", __func__);
-		goto fail_4;
+		goto fail_1;
 	}
 
 #if defined(HX_TP_INSPECT_MODE)
@@ -689,23 +689,15 @@ static int himax_common_proc_init(struct himax_ts_data *ts)
 
 	if (ts->debug.procfs.inspect_mode == NULL) {
 		E(" %s: proc INSPECT_MODE file create failed!\n", __func__);
-		goto fail_5;
+		goto fail_6;
 	}
 #endif
 	return 0;
 #if defined(HX_TP_INSPECT_MODE)
-fail_5:
-	remove_proc_entry(HIMAX_PROC_FAIL_DET_FILE, ts->debug.procfs.proc_dir);
+fail_6:
+	remove_proc_entry(HIMAX_PROC_INSPECT_MODE_FILE, ts->debug.procfs.proc_dir);
 #endif
-fail_4:
-	remove_proc_entry(HIMAX_PROC_WP_BP_LOCK_FILE, ts->debug.procfs.proc_dir);
-fail_3:
 	remove_proc_entry(HIMAX_PROC_SELF_TEST_FILE, ts->debug.procfs.proc_dir);
-fail_2:
-	if (ts->location)
-		remove_proc_entry(ts->location, NULL);
-	else
-		remove_proc_entry(HIMAX_PROC_TOUCH_FOLDER, NULL);
 fail_1:
 	return -ENOMEM;
 }
@@ -713,15 +705,7 @@ fail_1:
 static void himax_common_proc_deinit(struct himax_ts_data *ts)
 {
 	remove_proc_entry(HIMAX_PROC_SELF_TEST_FILE, ts->debug.procfs.proc_dir);
-	remove_proc_entry(HIMAX_PROC_WP_BP_LOCK_FILE, ts->debug.procfs.proc_dir);
-	remove_proc_entry(HIMAX_PROC_FAIL_DET_FILE, ts->debug.procfs.proc_dir);
-#if defined(HX_TP_INSPECT_MODE)
-	remove_proc_entry(HIMAX_PROC_INSPECT_MODE_FILE, ts->debug.procfs.proc_dir);
-#endif
-	if (ts->location)
-		remove_proc_entry(ts->location, NULL);
-	else
-		remove_proc_entry(HIMAX_PROC_TOUCH_FOLDER, NULL);
+	remove_proc_entry(HIMAX_PROC_TOUCH_FOLDER, NULL);
 }
 
 void himax_parse_assign_cmd(uint32_t addr, uint8_t *cmd, int len)
@@ -2055,13 +2039,12 @@ found_hx_chip:
 
 	/*touch data init*/
 	err = himax_report_data_init(ts);
+#if defined(HIMAX_I2C_PLATFORM)
+	himax_sysfs_init(ts);
+#endif
+
 	if (err)
 		goto err_report_data_init_failed;
-#if defined(HIMAX_I2C_PLATFORM)
-	err = himax_sysfs_init(ts);
-	if (err)
-		goto err_creat_sysfs_file_failed;
-#endif
 
 	if (himax_common_proc_init(ts)) {
 		E(" %s: himax_common proc_init failed!\n", __func__);
@@ -2086,14 +2069,9 @@ found_hx_chip:
 	return 0;
 
 err_creat_proc_file_failed:
-#if defined(HIMAX_I2C_PLATFORM)
-	himax_sysfs_deinit(ts);
-err_creat_sysfs_file_failed:
-#endif
 	himax_report_data_deinit(ts);
 err_report_data_init_failed:
-	input_unregister_device(ts->input_dev);
-	ts->input_dev = NULL;
+
 #if defined(HX_CONFIG_FB) || defined(HX_CONFIG_DRM)
 	cancel_delayed_work_sync(&ts->work_att);
 	destroy_workqueue(ts->himax_att_wq);
@@ -2164,26 +2142,19 @@ void himax_chip_common_deinit(struct himax_ts_data *ts)
 	cancel_delayed_work_sync(&ts->work_att);
 	destroy_workqueue(ts->himax_att_wq);
 #endif
+	input_free_device(ts->input_dev);
 #if defined(HX_CONTAINER_SPEED_UP)
 	cancel_delayed_work_sync(&ts->ts_int_work);
 	destroy_workqueue(ts->ts_int_workqueue);
 #endif
+
 #if defined(HX_BOOT_UPGRADE)
 	cancel_delayed_work_sync(&ts->work_boot_upgrade);
 	destroy_workqueue(ts->himax_boot_upgrade_wq);
 #endif
 	himax_gpio_power_deconfig(ts->pdata);
 	himax_mcu_in_cmd_struct_free(ts);
-	if (ts->input_dev) {
-		input_unregister_device(ts->input_dev);
-		ts->input_dev = NULL;
-	}
 
-#if defined(HIMAX_I2C_PLATFORM)
-	himax_sysfs_deinit(ts);
-#endif
-	kfree(ts->rw_buf);
-	ts->rw_buf = NULL;
 	kfree(ts->hx_touch_data);
 	ts->hx_touch_data = NULL;
 	kfree(ts->ic_data);

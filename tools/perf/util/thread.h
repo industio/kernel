@@ -39,7 +39,6 @@ struct thread {
 	pid_t			tid;
 	pid_t			ppid;
 	int			cpu;
-	int			guest_cpu; /* For QEMU thread */
 	refcount_t		refcnt;
 	bool			comm_set;
 	int			comm_len;

@@ -2,7 +2,7 @@
 /*
  * Maxim MAX96752F GMSL2 Deserializer
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Rockchip Electronics Co. Ltd.
  */
 
 #include <linux/backlight.h>
@@ -270,11 +270,13 @@ static int max96752f_probe(struct i2c_client *client)
 	return 0;
 }
 
-static void max96752f_remove(struct i2c_client *client)
+static int max96752f_remove(struct i2c_client *client)
 {
 	struct max96752f *max96752f = i2c_get_clientdata(client);
 
 	drm_panel_remove(&max96752f->panel);
+
+	return 0;
 }
 
 static int __maybe_unused max96752f_suspend(struct device *dev)

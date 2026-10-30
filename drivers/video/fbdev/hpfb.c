@@ -344,7 +344,6 @@ static int hpfb_dio_probe(struct dio_dev *d, const struct dio_device_id *ent)
 	if (hpfb_init_one(paddr, vaddr)) {
 		if (d->scode >= DIOII_SCBASE)
 			iounmap((void *)vaddr);
-		release_mem_region(d->resource.start, resource_size(&d->resource));
 		return -ENOMEM;
 	}
 	return 0;
@@ -376,7 +375,7 @@ static struct dio_driver hpfb_driver = {
     .remove    = hpfb_remove_one,
 };
 
-static int __init hpfb_init(void)
+int __init hpfb_init(void)
 {
 	unsigned int sid;
 	unsigned char i;
@@ -416,7 +415,7 @@ static int __init hpfb_init(void)
 	return 0;
 }
 
-static void __exit hpfb_cleanup_module(void)
+void __exit hpfb_cleanup_module(void)
 {
 	dio_unregister_driver(&hpfb_driver);
 }

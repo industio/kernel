@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2020 Rockchip Electronics Co. Ltd.
  *
  * Author: Zorro Liu <zorro.liu@rock-chips.com>
  */
@@ -639,8 +639,9 @@ static int tps65185_probe(struct i2c_client *client, const struct i2c_device_id 
 	return 0;
 }
 
-static void tps65185_remove(struct i2c_client *client)
+static int tps65185_remove(struct i2c_client *client)
 {
+	return 0;
 }
 
 static const struct i2c_device_id tps65185_id[] = {

@@ -60,7 +60,6 @@ const char *mpp_device_name[MPP_DEVICE_BUTT] = {
 	[MPP_DEVICE_VEPU1]		= "VEPU1",
 	[MPP_DEVICE_VEPU2]		= "VEPU2",
 	[MPP_DEVICE_VEPU2_JPEG]		= "VEPU2",
-	[MPP_DEVICE_RKJPEGE]		= "RKJPEGE",
 	[MPP_DEVICE_VEPU22]		= "VEPU22",
 	[MPP_DEVICE_IEP2]		= "IEP2",
 	[MPP_DEVICE_VDPP]		= "VDPP",
@@ -550,9 +549,7 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 	}
 	disable_irq(mpp->irq);
 	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
-		mpp_err("session %d:%d task %d has been handled\n",
-			session->device_type, session->index, task->task_index);
-		enable_irq(mpp->irq);
+		mpp_err("task has been handled\n");
 		return;
 	}
 	mpp_err("session %d:%d task %d processing time out!\n",
@@ -1428,7 +1425,7 @@ static int mpp_process_request(struct mpp_session *session,
 
 			mpp_iommu_down_read(mpp->iommu_info);
 			buffer = mpp_dma_import_fd(mpp->iommu_info,
-						   session->dma, fd, 1);
+						   session->dma, fd);
 			mpp_iommu_up_read(mpp->iommu_info);
 			if (IS_ERR_OR_NULL(buffer)) {
 				mpp_err("can not import fd %d\n", fd);
@@ -1835,7 +1832,7 @@ mpp_task_attach_fd(struct mpp_task *task, int fd)
 		mem_region->is_dup = true;
 	} else {
 		mpp_iommu_down_read(mpp->iommu_info);
-		buffer = mpp_dma_import_fd(mpp->iommu_info, dma, fd, 0);
+		buffer = mpp_dma_import_fd(mpp->iommu_info, dma, fd);
 		mpp_iommu_up_read(mpp->iommu_info);
 		if (IS_ERR(buffer)) {
 			mpp_err("can't import dma-buf %d\n", fd);
@@ -2239,10 +2236,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	if (IS_ERR(mpp->iommu_info)) {
 		dev_err(dev, "failed to attach iommu\n");
 		mpp->iommu_info = NULL;
-	} else {
-		mpp->iommu_info->queue = mpp->queue;
 	}
-
 	if (mpp->hw_ops->init) {
 		ret = mpp->hw_ops->init(mpp);
 		if (ret)
@@ -2653,7 +2647,7 @@ static int fops_show_u32(struct seq_file *file, void *v)
 
 static int fops_open_u32(struct inode *inode, struct file *file)
 {
-	return single_open(file, fops_show_u32, pde_data(inode));
+	return single_open(file, fops_show_u32, PDE_DATA(inode));
 }
 
 static ssize_t fops_write_u32(struct file *file, const char __user *buf,

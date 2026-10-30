@@ -1031,7 +1031,7 @@ gov_attr_wo(boostpulse);
 gov_attr_rw(boostpulse_duration);
 gov_attr_rw(io_is_busy);
 
-static struct attribute *interactive_attrs[] = {
+static struct attribute *interactive_attributes[] = {
 	&target_loads.attr,
 	&above_hispeed_delay.attr,
 	&hispeed_freq.attr,
@@ -1045,10 +1045,9 @@ static struct attribute *interactive_attrs[] = {
 	&io_is_busy.attr,
 	NULL
 };
-ATTRIBUTE_GROUPS(interactive);
 
 static struct kobj_type interactive_tunables_ktype = {
-	.default_groups = interactive_groups,
+	.default_attrs = interactive_attributes,
 	.sysfs_ops = &governor_sysfs_ops,
 };
 
@@ -1369,7 +1368,7 @@ static void rockchip_cpufreq_policy_init(struct interactive_policy *ipolicy)
 }
 #endif
 
-static int cpufreq_interactive_init(struct cpufreq_policy *policy)
+int cpufreq_interactive_init(struct cpufreq_policy *policy)
 {
 	struct interactive_policy *ipolicy;
 	struct interactive_tunables *tunables;
@@ -1460,7 +1459,7 @@ static int cpufreq_interactive_init(struct cpufreq_policy *policy)
 	return ret;
 }
 
-static void cpufreq_interactive_exit(struct cpufreq_policy *policy)
+void cpufreq_interactive_exit(struct cpufreq_policy *policy)
 {
 	struct interactive_policy *ipolicy = policy->governor_data;
 	struct interactive_tunables *tunables = ipolicy->tunables;
@@ -1495,7 +1494,7 @@ static void cpufreq_interactive_exit(struct cpufreq_policy *policy)
 	interactive_policy_free(ipolicy);
 }
 
-static int cpufreq_interactive_start(struct cpufreq_policy *policy)
+int cpufreq_interactive_start(struct cpufreq_policy *policy)
 {
 	struct interactive_policy *ipolicy = policy->governor_data;
 	struct interactive_cpu *icpu;
@@ -1522,7 +1521,7 @@ static int cpufreq_interactive_start(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static void cpufreq_interactive_stop(struct cpufreq_policy *policy)
+void cpufreq_interactive_stop(struct cpufreq_policy *policy)
 {
 	struct interactive_policy *ipolicy = policy->governor_data;
 	struct interactive_cpu *icpu;
@@ -1540,7 +1539,7 @@ static void cpufreq_interactive_stop(struct cpufreq_policy *policy)
 	}
 }
 
-static void cpufreq_interactive_limits(struct cpufreq_policy *policy)
+void cpufreq_interactive_limits(struct cpufreq_policy *policy)
 {
 	struct interactive_cpu *icpu;
 	unsigned int cpu;

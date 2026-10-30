@@ -6,12 +6,10 @@
 #include <linux/module.h>
 #include <linux/gpio/consumer.h>
 #include <linux/regmap.h>
-#include <linux/iopoll.h>
 #include <linux/mutex.h>
 #include <linux/mii.h>
 #include <linux/phy.h>
 #include <linux/if_bridge.h>
-#include <linux/if_vlan.h>
 #include <linux/etherdevice.h>
 
 #include "lan9303.h"
@@ -23,10 +21,6 @@
  */
 #define LAN9303_CHIP_REV 0x14
 # define LAN9303_CHIP_ID 0x9303
-# define LAN9352_CHIP_ID 0x9352
-# define LAN9353_CHIP_ID 0x9353
-# define LAN9354_CHIP_ID 0x9354
-# define LAN9355_CHIP_ID 0x9355
 #define LAN9303_IRQ_CFG 0x15
 # define LAN9303_IRQ_CFG_IRQ_ENABLE BIT(8)
 # define LAN9303_IRQ_CFG_IRQ_POL BIT(4)
@@ -37,7 +31,6 @@
 #define LAN9303_INT_EN 0x17
 # define LAN9303_INT_EN_PHY_INT2_EN BIT(27)
 # define LAN9303_INT_EN_PHY_INT1_EN BIT(26)
-#define LAN9303_BYTE_ORDER 0x19
 #define LAN9303_HW_CFG 0x1D
 # define LAN9303_HW_CFG_READY BIT(27)
 # define LAN9303_HW_CFG_AMDX_EN_PORT2 BIT(26)
@@ -826,8 +819,6 @@ static void lan9303_handle_reset(struct lan9303 *chip)
 	if (!chip->reset_gpio)
 		return;
 
-	gpiod_set_value_cansleep(chip->reset_gpio, 1);
-
 	if (chip->reset_duration != 0)
 		msleep(chip->reset_duration);
 
@@ -853,44 +844,21 @@ static int lan9303_disable_processing(struct lan9303 *chip)
 static int lan9303_check_device(struct lan9303 *chip)
 {
 	int ret;
-	int err;
 	u32 reg;
-
-	/* In I2C-managed configurations this polling loop will clash with
-	 * switch's reading of EEPROM right after reset and this behaviour is
-	 * not configurable. While lan9303_read() already has quite long retry
-	 * timeout, seems not all cases are being detected as arbitration error.
-	 *
-	 * According to datasheet, EEPROM loader has 30ms timeout (in case of
-	 * missing EEPROM).
-	 *
-	 * Loading of the largest supported EEPROM is expected to take at least
-	 * 5.9s.
-	 */
-	err = read_poll_timeout(lan9303_read, ret,
-				!ret && reg & LAN9303_HW_CFG_READY,
-				20000, 6000000, false,
-				chip->regmap, LAN9303_HW_CFG, &reg);
-	if (ret) {
-		dev_err(chip->dev, "failed to read HW_CFG reg: %pe\n",
-			ERR_PTR(ret));
-		return ret;
-	}
-	if (err) {
-		dev_err(chip->dev, "HW_CFG not ready: 0x%08x\n", reg);
-		return err;
-	}
 
 	ret = lan9303_read(chip->regmap, LAN9303_CHIP_REV, &reg);
 	if (ret) {
 		dev_err(chip->dev, "failed to read chip revision register: %d\n",
 			ret);
+		if (!chip->reset_gpio) {
+			dev_dbg(chip->dev,
+				"hint: maybe failed due to missing reset GPIO\n");
+		}
 		return ret;
 	}
 
-	if (((reg >> 16) != LAN9303_CHIP_ID) &&
-	    ((reg >> 16) != LAN9354_CHIP_ID)) {
-		dev_err(chip->dev, "unexpected device found: LAN%4.4X\n",
+	if ((reg >> 16) != LAN9303_CHIP_ID) {
+		dev_err(chip->dev, "expecting LAN9303 chip, but found: %X\n",
 			reg >> 16);
 		return -ENODEV;
 	}
@@ -906,7 +874,7 @@ static int lan9303_check_device(struct lan9303 *chip)
 	if (ret)
 		dev_warn(chip->dev, "failed to disable switching %d\n", ret);
 
-	dev_info(chip->dev, "Found LAN%4.4X rev. %u\n", (reg >> 16), reg & 0xffff);
+	dev_info(chip->dev, "Found LAN9303 rev. %u\n", reg & 0xffff);
 
 	ret = lan9303_detect_phy_setup(chip);
 	if (ret) {
@@ -1117,40 +1085,32 @@ static void lan9303_adjust_link(struct dsa_switch *ds, int port,
 static int lan9303_port_enable(struct dsa_switch *ds, int port,
 			       struct phy_device *phy)
 {
-	struct dsa_port *dp = dsa_to_port(ds, port);
 	struct lan9303 *chip = ds->priv;
 
-	if (!dsa_port_is_user(dp))
+	if (!dsa_is_user_port(ds, port))
 		return 0;
-
-	vlan_vid_add(dsa_port_to_master(dp), htons(ETH_P_8021Q), port);
 
 	return lan9303_enable_processing_port(chip, port);
 }
 
 static void lan9303_port_disable(struct dsa_switch *ds, int port)
 {
-	struct dsa_port *dp = dsa_to_port(ds, port);
 	struct lan9303 *chip = ds->priv;
 
-	if (!dsa_port_is_user(dp))
+	if (!dsa_is_user_port(ds, port))
 		return;
-
-	vlan_vid_del(dsa_port_to_master(dp), htons(ETH_P_8021Q), port);
 
 	lan9303_disable_processing_port(chip, port);
 	lan9303_phy_write(ds, chip->phy_addr_base + port, MII_BMCR, BMCR_PDOWN);
 }
 
 static int lan9303_port_bridge_join(struct dsa_switch *ds, int port,
-				    struct dsa_bridge bridge,
-				    bool *tx_fwd_offload,
-				    struct netlink_ext_ack *extack)
+				    struct net_device *br)
 {
 	struct lan9303 *chip = ds->priv;
 
 	dev_dbg(chip->dev, "%s(port %d)\n", __func__, port);
-	if (dsa_port_bridge_same(dsa_to_port(ds, 1), dsa_to_port(ds, 2))) {
+	if (dsa_to_port(ds, 1)->bridge_dev == dsa_to_port(ds, 2)->bridge_dev) {
 		lan9303_bridge_ports(chip);
 		chip->is_bridged = true;  /* unleash stp_state_set() */
 	}
@@ -1159,7 +1119,7 @@ static int lan9303_port_bridge_join(struct dsa_switch *ds, int port,
 }
 
 static void lan9303_port_bridge_leave(struct dsa_switch *ds, int port,
-				      struct dsa_bridge bridge)
+				      struct net_device *br)
 {
 	struct lan9303 *chip = ds->priv;
 
@@ -1222,8 +1182,7 @@ static void lan9303_port_fast_age(struct dsa_switch *ds, int port)
 }
 
 static int lan9303_port_fdb_add(struct dsa_switch *ds, int port,
-				const unsigned char *addr, u16 vid,
-				struct dsa_db db)
+				const unsigned char *addr, u16 vid)
 {
 	struct lan9303 *chip = ds->priv;
 
@@ -1233,8 +1192,8 @@ static int lan9303_port_fdb_add(struct dsa_switch *ds, int port,
 }
 
 static int lan9303_port_fdb_del(struct dsa_switch *ds, int port,
-				const unsigned char *addr, u16 vid,
-				struct dsa_db db)
+				const unsigned char *addr, u16 vid)
+
 {
 	struct lan9303 *chip = ds->priv;
 
@@ -1275,25 +1234,18 @@ static int lan9303_port_mdb_prepare(struct dsa_switch *ds, int port,
 	return 0;
 }
 
-static int lan9303_port_mdb_add(struct dsa_switch *ds, int port,
-				const struct switchdev_obj_port_mdb *mdb,
-				struct dsa_db db)
+static void lan9303_port_mdb_add(struct dsa_switch *ds, int port,
+				 const struct switchdev_obj_port_mdb *mdb)
 {
 	struct lan9303 *chip = ds->priv;
-	int err;
-
-	err = lan9303_port_mdb_prepare(ds, port, mdb);
-	if (err)
-		return err;
 
 	dev_dbg(chip->dev, "%s(%d, %pM, %d)\n", __func__, port, mdb->addr,
 		mdb->vid);
-	return lan9303_alr_add_port(chip, mdb->addr, port, false);
+	lan9303_alr_add_port(chip, mdb->addr, port, false);
 }
 
 static int lan9303_port_mdb_del(struct dsa_switch *ds, int port,
-				const struct switchdev_obj_port_mdb *mdb,
-				struct dsa_db db)
+				const struct switchdev_obj_port_mdb *mdb)
 {
 	struct lan9303 *chip = ds->priv;
 
@@ -1324,6 +1276,7 @@ static const struct dsa_switch_ops lan9303_switch_ops = {
 	.port_fdb_add           = lan9303_port_fdb_add,
 	.port_fdb_del           = lan9303_port_fdb_del,
 	.port_fdb_dump          = lan9303_port_fdb_dump,
+	.port_mdb_prepare       = lan9303_port_mdb_prepare,
 	.port_mdb_add           = lan9303_port_mdb_add,
 	.port_mdb_del           = lan9303_port_mdb_del,
 };
@@ -1378,7 +1331,6 @@ static int lan9303_probe_reset_gpio(struct lan9303 *chip,
 int lan9303_probe(struct lan9303 *chip, struct device_node *np)
 {
 	int ret;
-	u32 reg;
 
 	mutex_init(&chip->indirect_mutex);
 	mutex_init(&chip->alr_mutex);
@@ -1388,19 +1340,6 @@ int lan9303_probe(struct lan9303 *chip, struct device_node *np)
 		return ret;
 
 	lan9303_handle_reset(chip);
-
-	/* First read to the device.  This is a Dummy read to ensure MDIO */
-	/* access is in 32-bit sync. */
-	ret = lan9303_read(chip->regmap, LAN9303_BYTE_ORDER, &reg);
-	if (ret) {
-		dev_err(chip->dev, "failed to access the device: %d\n",
-			ret);
-		if (!chip->reset_gpio) {
-			dev_dbg(chip->dev,
-				"hint: maybe failed due to missing reset GPIO\n");
-		}
-		return ret;
-	}
 
 	ret = lan9303_check_device(chip);
 	if (ret)
@@ -1433,12 +1372,6 @@ int lan9303_remove(struct lan9303 *chip)
 	return 0;
 }
 EXPORT_SYMBOL(lan9303_remove);
-
-void lan9303_shutdown(struct lan9303 *chip)
-{
-	dsa_switch_shutdown(chip->ds);
-}
-EXPORT_SYMBOL(lan9303_shutdown);
 
 MODULE_AUTHOR("Juergen Borleis <kernel@pengutronix.de>");
 MODULE_DESCRIPTION("Core driver for SMSC/Microchip LAN9303 three port ethernet switch");

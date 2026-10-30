@@ -67,7 +67,6 @@ struct multicodecs_data {
 	struct extcon_dev *extcon;
 	struct delayed_work handler;
 	unsigned int mclk_fs;
-	unsigned int *mclk_fs_map;
 	bool codec_hp_det;
 	u32 num_keys;
 	u32 last_key;
@@ -83,9 +82,9 @@ struct multicodecs_data {
 	unsigned int rx_slot_mask;
 };
 
-static unsigned int headset_extcon_cable[] = {
-	EXTCON_NONE,
-	EXTCON_NONE,
+static const unsigned int headset_extcon_cable[] = {
+	EXTCON_JACK_MICROPHONE,
+	EXTCON_JACK_HEADPHONE,
 	EXTCON_NONE,
 };
 
@@ -334,31 +333,7 @@ static const struct snd_soc_dapm_widget mc_dapm_widgets[] = {
 	SND_SOC_DAPM_SUPPLY("Headphone Power", SND_SOC_NOPM, 0, 0, NULL, 0),
 };
 
-static int mc_switch_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct multicodecs_data *mc_data = snd_soc_card_get_drvdata(card);
-	struct soc_mixer_control *mc = (struct soc_mixer_control *)kcontrol->private_value;
-	struct gpio_desc *gpio = mc->reg == 1 ? mc_data->hp_ctl_gpio : mc_data->spk_ctl_gpio;
-
-	ucontrol->value.integer.value[0] = gpiod_get_value_cansleep(gpio);
-	return 0;
-}
-
-static int mc_switch_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_soc_card *card = snd_kcontrol_chip(kcontrol);
-	struct multicodecs_data *mc_data = snd_soc_card_get_drvdata(card);
-	struct soc_mixer_control *mc = (struct soc_mixer_control *)kcontrol->private_value;
-	struct gpio_desc *gpio = mc->reg == 1 ? mc_data->hp_ctl_gpio : mc_data->spk_ctl_gpio;
-
-	gpiod_set_value_cansleep(gpio, ucontrol->value.integer.value[0] ? 1 : 0);
-	return 0;
-}
-
 static const struct snd_kcontrol_new mc_controls[] = {
-	SOC_SINGLE_EXT("spk switch", 0, 0, 1, 0, mc_switch_get, mc_switch_put),
-	SOC_SINGLE_EXT("hp switch", 1, 0, 1, 0, mc_switch_get, mc_switch_put),
 	SOC_DAPM_PIN_SWITCH("Headphone"),
 	SOC_DAPM_PIN_SWITCH("Speaker"),
 	SOC_DAPM_PIN_SWITCH("Main Mic"),
@@ -373,20 +348,15 @@ static int rk_multicodecs_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *codec_dai;
 	struct multicodecs_data *mc_data = snd_soc_card_get_drvdata(rtd->card);
 	unsigned int mclk;
-	unsigned int codec_mclk;
 	int ret, i;
 
 	mclk = params_rate(params) * mc_data->mclk_fs;
 
 	for_each_rtd_codec_dais(rtd, i, codec_dai) {
-		if (mc_data->mclk_fs_map[i] > 0)
-			codec_mclk = params_rate(params) * mc_data->mclk_fs_map[i];
-		else
-			codec_mclk = mclk;
-		ret = snd_soc_dai_set_sysclk(codec_dai, substream->stream, codec_mclk,
+		ret = snd_soc_dai_set_sysclk(codec_dai, substream->stream, mclk,
 					     SND_SOC_CLOCK_IN);
 		if (ret && ret != -ENOTSUPP) {
-			pr_err("Set codec_dai sysclk(%uHZ) failed: %d\n", codec_mclk, ret);
+			pr_err("Set codec_dai sysclk failed: %d\n", ret);
 			goto out;
 		}
 	}
@@ -394,7 +364,7 @@ static int rk_multicodecs_hw_params(struct snd_pcm_substream *substream,
 	ret = snd_soc_dai_set_sysclk(cpu_dai, substream->stream, mclk,
 				     SND_SOC_CLOCK_OUT);
 	if (ret && ret != -ENOTSUPP) {
-		pr_err("Set cpu_dai sysclk(%uHZ) failed: %d\n", mclk, ret);
+		pr_err("Set cpu_dai sysclk failed: %d\n", ret);
 		goto out;
 	}
 
@@ -482,10 +452,10 @@ static int rk_dailink_init(struct snd_soc_pcm_runtime *rtd)
 	if (!zones)
 		return -ENOMEM;
 
-	ret = snd_soc_card_jack_new_pins(card, "Headset",
-					 SND_JACK_HEADSET,
-					 jack_headset,
-					 pins, ARRAY_SIZE(jack_pins));
+	ret = snd_soc_card_jack_new(card, "Headset",
+				    SND_JACK_HEADSET,
+				    jack_headset,
+				    pins, ARRAY_SIZE(jack_pins));
 	if (ret)
 		return ret;
 	ret = snd_soc_jack_add_zones(jack_headset, ARRAY_SIZE(headset_zones), zones);
@@ -535,10 +505,12 @@ static int rk_multicodecs_parse_daifmt(struct device_node *node,
 	struct device_node *framemaster = NULL;
 	unsigned int daifmt;
 
-	daifmt = snd_soc_daifmt_parse_format(node, prefix);
+	daifmt = snd_soc_of_parse_daifmt(node, prefix,
+					 &bitclkmaster, &framemaster);
 
-	snd_soc_daifmt_parse_clock_provider_as_phandle(node, prefix, &bitclkmaster, &framemaster);
-	if (!bitclkmaster && !framemaster) {
+	daifmt &= ~SND_SOC_DAIFMT_MASTER_MASK;
+
+	if (strlen(prefix) && !bitclkmaster && !framemaster) {
 		/*
 		 * No dai-link level and master setting was not found from
 		 * sound node level, revert back to legacy DT parsing and
@@ -546,10 +518,15 @@ static int rk_multicodecs_parse_daifmt(struct device_node *node,
 		 */
 		pr_debug("%s: Revert to legacy daifmt parsing\n", __func__);
 
-		daifmt |= snd_soc_daifmt_parse_clock_provider_as_flag(codec, NULL);
+		daifmt = snd_soc_of_parse_daifmt(codec, NULL, NULL, NULL) |
+			(daifmt & ~SND_SOC_DAIFMT_CLOCK_MASK);
 	} else {
-		daifmt |= snd_soc_daifmt_clock_provider_from_bitmap(
-				((codec == bitclkmaster) << 4) | (codec == framemaster));
+		if (codec == bitclkmaster)
+			daifmt |= (codec == framemaster) ?
+				SND_SOC_DAIFMT_CBM_CFM : SND_SOC_DAIFMT_CBM_CFS;
+		else
+			daifmt |= (codec == framemaster) ?
+				SND_SOC_DAIFMT_CBS_CFM : SND_SOC_DAIFMT_CBS_CFS;
 	}
 
 	/*
@@ -740,16 +717,6 @@ static int rk_multicodecs_probe_keys(struct platform_device *pdev,
 	return ret;
 }
 
-static int rk_multicodecs_resume_post(struct snd_soc_card *card)
-{
-	struct multicodecs_data *mc_data = dev_get_drvdata(card->dev);
-
-	if (gpiod_to_irq(mc_data->hp_det_gpio) >= 0)
-		queue_delayed_work(system_power_efficient_wq, &mc_data->handler,
-				   msecs_to_jiffies(200));
-	return 0;
-}
-
 static int rk_multicodecs_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card;
@@ -757,12 +724,10 @@ static int rk_multicodecs_probe(struct platform_device *pdev)
 	struct snd_soc_dai_link_component *codecs;
 	struct multicodecs_data *mc_data;
 	struct of_phandle_args args;
-	unsigned int *map;
 	u32 val;
 	int count, irq;
 	int ret = 0, i = 0, idx = 0;
 	const char *prefix = "rockchip,";
-	int cable = 0;
 
 	ret = wait_locked_card(np, &pdev->dev);
 	if (ret < 0) {
@@ -876,14 +841,6 @@ static int rk_multicodecs_probe(struct platform_device *pdev)
 		card->num_links = 3;
 	}
 
-	map = devm_kcalloc(&pdev->dev, count, sizeof(*map), GFP_KERNEL);
-	if (!map)
-		return -ENOMEM;
-	ret = of_property_read_u32_array(np, "rockchip,mclk-fs-mapping", map, count);
-	if (ret)
-		memset(map, 0x0, sizeof(*map) * count);
-	mc_data->mclk_fs_map = map;
-
 	mc_data->mclk_fs = DEFAULT_MCLK_FS;
 	if (!of_property_read_u32(np, "rockchip,mclk-fs", &val))
 		mc_data->mclk_fs = val;
@@ -909,7 +866,6 @@ static int rk_multicodecs_probe(struct platform_device *pdev)
 		ret = rk_multicodecs_probe_keys(pdev, mc_data);
 		if (ret)
 			dev_warn(&pdev->dev, "Has no input keys\n");
-		headset_extcon_cable[cable++] = EXTCON_JACK_MICROPHONE;
 	}
 
 	INIT_DEFERRABLE_WORK(&mc_data->handler, adc_jack_handler);
@@ -929,10 +885,6 @@ static int rk_multicodecs_probe(struct platform_device *pdev)
 	mc_data->hp_det_gpio = devm_gpiod_get_optional(&pdev->dev, "hp-det", GPIOD_IN);
 	if (IS_ERR(mc_data->hp_det_gpio))
 		return PTR_ERR(mc_data->hp_det_gpio);
-	if (gpiod_to_irq(mc_data->hp_det_gpio) >= 0) {
-		headset_extcon_cable[cable++] = EXTCON_JACK_HEADPHONE;
-		card->resume_post = &rk_multicodecs_resume_post;
-	}
 
 	mc_data->extcon = devm_extcon_dev_allocate(&pdev->dev, headset_extcon_cable);
 	if (IS_ERR(mc_data->extcon)) {

@@ -40,6 +40,14 @@ void genl_unlock(void)
 }
 EXPORT_SYMBOL(genl_unlock);
 
+#ifdef CONFIG_LOCKDEP
+bool lockdep_genl_is_held(void)
+{
+	return lockdep_is_held(&genl_mutex);
+}
+EXPORT_SYMBOL(lockdep_genl_is_held);
+#endif
+
 static void genl_lock_all(void)
 {
 	down_write(&cb_lock);
@@ -78,28 +86,9 @@ static unsigned long mc_group_start = 0x3 | BIT(GENL_ID_CTRL) |
 static unsigned long *mc_groups = &mc_group_start;
 static unsigned long mc_groups_longs = 1;
 
-/* We need the last attribute with non-zero ID therefore a 2-entry array */
-static struct nla_policy genl_policy_reject_all[] = {
-	{ .type = NLA_REJECT },
-	{ .type = NLA_REJECT },
-};
-
 static int genl_ctrl_event(int event, const struct genl_family *family,
 			   const struct genl_multicast_group *grp,
 			   int grp_id);
-
-static void
-genl_op_fill_in_reject_policy(const struct genl_family *family,
-			      struct genl_ops *op)
-{
-	BUILD_BUG_ON(ARRAY_SIZE(genl_policy_reject_all) - 1 != 1);
-
-	if (op->policy || op->cmd < family->resv_start_op)
-		return;
-
-	op->policy = genl_policy_reject_all;
-	op->maxattr = 1;
-}
 
 static const struct genl_family *genl_family_find_byid(unsigned int id)
 {
@@ -132,8 +121,6 @@ static void genl_op_from_full(const struct genl_family *family,
 		op->maxattr = family->maxattr;
 	if (!op->policy)
 		op->policy = family->policy;
-
-	genl_op_fill_in_reject_policy(family, op);
 }
 
 static int genl_get_cmd_full(u32 cmd, const struct genl_family *family,
@@ -163,8 +150,6 @@ static void genl_op_from_small(const struct genl_family *family,
 
 	op->maxattr = family->maxattr;
 	op->policy = family->policy;
-
-	genl_op_fill_in_reject_policy(family, op);
 }
 
 static int genl_get_cmd_small(u32 cmd, const struct genl_family *family,
@@ -379,8 +364,6 @@ static int genl_validate_ops(const struct genl_family *family)
 
 		genl_get_cmd_by_index(i, family, &op);
 		if (op.dumpit == NULL && op.doit == NULL)
-			return -EINVAL;
-		if (WARN_ON(op.cmd >= family->resv_start_op && op.validate))
 			return -EINVAL;
 		for (j = i + 1; j < genl_get_cmd_cnt(family); j++) {
 			struct genl_ops op2;
@@ -764,36 +747,6 @@ out:
 	return err;
 }
 
-static int genl_header_check(const struct genl_family *family,
-			     struct nlmsghdr *nlh, struct genlmsghdr *hdr,
-			     struct netlink_ext_ack *extack)
-{
-	u16 flags;
-
-	/* Only for commands added after we started validating */
-	if (hdr->cmd < family->resv_start_op)
-		return 0;
-
-	if (hdr->reserved) {
-		NL_SET_ERR_MSG(extack, "genlmsghdr.reserved field is not 0");
-		return -EINVAL;
-	}
-
-	/* Old netlink flags have pretty loose semantics, allow only the flags
-	 * consumed by the core where we can enforce the meaning.
-	 */
-	flags = nlh->nlmsg_flags;
-	if ((flags & NLM_F_DUMP) == NLM_F_DUMP) /* DUMP is 2 bits */
-		flags &= ~NLM_F_DUMP;
-	if (flags & ~(NLM_F_REQUEST | NLM_F_ACK | NLM_F_ECHO)) {
-		NL_SET_ERR_MSG(extack,
-			       "ambiguous or reserved bits set in nlmsg_flags");
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static int genl_family_rcv_msg(const struct genl_family *family,
 			       struct sk_buff *skb,
 			       struct nlmsghdr *nlh,
@@ -810,9 +763,6 @@ static int genl_family_rcv_msg(const struct genl_family *family,
 
 	hdrlen = GENL_HDRLEN + family->hdrsize;
 	if (nlh->nlmsg_len < nlmsg_msg_size(hdrlen))
-		return -EINVAL;
-
-	if (genl_header_check(family, nlh, hdr, extack))
 		return -EINVAL;
 
 	if (genl_get_cmd(hdr->cmd, family, &op))
@@ -1147,11 +1097,15 @@ static int genl_ctrl_event(int event, const struct genl_family *family,
 	if (IS_ERR(msg))
 		return PTR_ERR(msg);
 
-	if (!family->netnsok)
+	if (!family->netnsok) {
 		genlmsg_multicast_netns(&genl_ctrl, &init_net, msg, 0,
 					0, GFP_KERNEL);
-	else
-		genlmsg_multicast_allns(&genl_ctrl, msg, 0, 0);
+	} else {
+		rcu_read_lock();
+		genlmsg_multicast_allns(&genl_ctrl, msg, 0,
+					0, GFP_ATOMIC);
+		rcu_read_unlock();
+	}
 
 	return 0;
 }
@@ -1402,7 +1356,6 @@ static struct genl_family genl_ctrl __ro_after_init = {
 	.module = THIS_MODULE,
 	.ops = genl_ctrl_ops,
 	.n_ops = ARRAY_SIZE(genl_ctrl_ops),
-	.resv_start_op = CTRL_CMD_GETPOLICY + 1,
 	.mcgrps = genl_ctrl_groups,
 	.n_mcgrps = ARRAY_SIZE(genl_ctrl_groups),
 	.id = GENL_ID_CTRL,
@@ -1411,46 +1364,11 @@ static struct genl_family genl_ctrl __ro_after_init = {
 	.netnsok = true,
 };
 
-static int genl_bind(struct net *net, int group)
-{
-	const struct genl_family *family;
-	unsigned int id;
-	int ret = 0;
-
-	down_read(&cb_lock);
-
-	idr_for_each_entry(&genl_fam_idr, family, id) {
-		const struct genl_multicast_group *grp;
-		int i;
-
-		if (family->n_mcgrps == 0)
-			continue;
-
-		i = group - family->mcgrp_offset;
-		if (i < 0 || i >= family->n_mcgrps)
-			continue;
-
-		grp = &family->mcgrps[i];
-		if ((grp->flags & GENL_UNS_ADMIN_PERM) &&
-		    !ns_capable(net->user_ns, CAP_NET_ADMIN))
-			ret = -EPERM;
-		if (grp->cap_sys_admin &&
-		    !ns_capable(net->user_ns, CAP_SYS_ADMIN))
-			ret = -EPERM;
-
-		break;
-	}
-
-	up_read(&cb_lock);
-	return ret;
-}
-
 static int __net_init genl_pernet_init(struct net *net)
 {
 	struct netlink_kernel_cfg cfg = {
 		.input		= genl_rcv,
 		.flags		= NL_CFG_F_NONROOT_RECV,
-		.bind		= genl_bind,
 	};
 
 	/* we'll bump the group number right afterwards */
@@ -1496,23 +1414,23 @@ problem:
 
 core_initcall(genl_init);
 
-static int genlmsg_mcast(struct sk_buff *skb, u32 portid, unsigned long group)
+static int genlmsg_mcast(struct sk_buff *skb, u32 portid, unsigned long group,
+			 gfp_t flags)
 {
 	struct sk_buff *tmp;
 	struct net *net, *prev = NULL;
 	bool delivered = false;
 	int err;
 
-	rcu_read_lock();
 	for_each_net_rcu(net) {
 		if (prev) {
-			tmp = skb_clone(skb, GFP_ATOMIC);
+			tmp = skb_clone(skb, flags);
 			if (!tmp) {
 				err = -ENOMEM;
 				goto error;
 			}
 			err = nlmsg_multicast(prev->genl_sock, tmp,
-					      portid, group, GFP_ATOMIC);
+					      portid, group, flags);
 			if (!err)
 				delivered = true;
 			else if (err != -ESRCH)
@@ -1521,31 +1439,26 @@ static int genlmsg_mcast(struct sk_buff *skb, u32 portid, unsigned long group)
 
 		prev = net;
 	}
-	err = nlmsg_multicast(prev->genl_sock, skb, portid, group, GFP_ATOMIC);
 
-	rcu_read_unlock();
-
+	err = nlmsg_multicast(prev->genl_sock, skb, portid, group, flags);
 	if (!err)
 		delivered = true;
 	else if (err != -ESRCH)
 		return err;
 	return delivered ? 0 : -ESRCH;
  error:
-	rcu_read_unlock();
-
 	kfree_skb(skb);
 	return err;
 }
 
 int genlmsg_multicast_allns(const struct genl_family *family,
 			    struct sk_buff *skb, u32 portid,
-			    unsigned int group)
+			    unsigned int group, gfp_t flags)
 {
 	if (WARN_ON_ONCE(group >= family->n_mcgrps))
 		return -EINVAL;
-
 	group = family->mcgrp_offset + group;
-	return genlmsg_mcast(skb, portid, group);
+	return genlmsg_mcast(skb, portid, group, flags);
 }
 EXPORT_SYMBOL(genlmsg_multicast_allns);
 
@@ -1554,12 +1467,14 @@ void genl_notify(const struct genl_family *family, struct sk_buff *skb,
 {
 	struct net *net = genl_info_net(info);
 	struct sock *sk = net->genl_sock;
+	int report = 0;
+
+	if (info->nlhdr)
+		report = nlmsg_report(info->nlhdr);
 
 	if (WARN_ON_ONCE(group >= family->n_mcgrps))
 		return;
-
 	group = family->mcgrp_offset + group;
-	nlmsg_notify(sk, skb, info->snd_portid, group,
-		     nlmsg_report(info->nlhdr), flags);
+	nlmsg_notify(sk, skb, info->snd_portid, group, report, flags);
 }
 EXPORT_SYMBOL(genl_notify);

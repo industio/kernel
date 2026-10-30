@@ -993,6 +993,73 @@ static const struct rk_csc_mode_coef g_mode_csc_coef[] = {
 	},
 };
 
+struct csc_mapping {
+	enum vop_csc_format csc_format;
+	enum color_space_type rgb_color_space;
+	enum color_space_type yuv_color_space;
+	bool rgb_full_range;
+	bool yuv_full_range;
+};
+
+static const struct csc_mapping csc_mapping_table[] = {
+	{
+		CSC_BT601L,
+		OPTM_CS_E_RGB,
+		OPTM_CS_E_XV_YCC_601,
+		true,
+		false,
+	},
+	{
+		CSC_BT709L,
+		OPTM_CS_E_RGB,
+		OPTM_CS_E_XV_YCC_709,
+		true,
+		false,
+	},
+	{
+		CSC_BT601F,
+		OPTM_CS_E_RGB,
+		OPTM_CS_E_XV_YCC_601,
+		true,
+		true,
+	},
+	{
+		CSC_BT2020,
+		OPTM_CS_E_RGB_2020,
+		OPTM_CS_E_XV_YCC_2020,
+		true,
+		true,
+	},
+	{
+		CSC_BT709L_13BIT,
+		OPTM_CS_E_RGB,
+		OPTM_CS_E_XV_YCC_709,
+		true,
+		false,
+	},
+	{
+		CSC_BT709F_13BIT,
+		OPTM_CS_E_RGB,
+		OPTM_CS_E_XV_YCC_709,
+		true,
+		true,
+	},
+	{
+		CSC_BT2020L_13BIT,
+		OPTM_CS_E_RGB_2020,
+		OPTM_CS_E_XV_YCC_2020,
+		true,
+		false,
+	},
+	{
+		CSC_BT2020F_13BIT,
+		OPTM_CS_E_RGB_2020,
+		OPTM_CS_E_XV_YCC_2020,
+		true,
+		true,
+	},
+};
+
 static const struct rk_pq_csc_coef r2y_for_y2y = {
 	306, 601, 117,
 	-173, -339, 512,
@@ -1006,15 +1073,15 @@ static const struct rk_pq_csc_coef y2r_for_y2y = {
 };
 
 static const struct rk_pq_csc_coef r2y_for_r2r = {
-	218, 732, 74,
-	-117, -395, 512,
-	512, -465, -47,
-};
-
-static const struct rk_pq_csc_coef y2r_for_r2r = {
 	1024, 0, 1612,
 	1024, -192, -480,
 	1024, 1900, -2,
+};
+
+static const struct rk_pq_csc_coef y2r_for_r2r = {
+	218, 732, 74,
+	-117, -395, 512,
+	512, -465, -47,
 };
 
 static const struct rk_pq_csc_coef rgb_input_swap_matrix = {
@@ -1029,50 +1096,30 @@ static const struct rk_pq_csc_coef yuv_output_swap_matrix = {
 	0, 1, 0,
 };
 
-static
-enum color_space_type get_color_space_type(enum drm_color_encoding color_encoding, bool is_yuv)
-{
-	enum color_space_type color_space_type;
-
-	switch (color_encoding) {
-	case DRM_COLOR_YCBCR_BT601:
-		if (is_yuv)
-			color_space_type = OPTM_CS_E_XV_YCC_601;
-		else
-			color_space_type = OPTM_CS_E_RGB;
-		break;
-	case DRM_COLOR_YCBCR_BT709:
-		if (is_yuv)
-			color_space_type = OPTM_CS_E_XV_YCC_709;
-		else
-			color_space_type = OPTM_CS_E_RGB;
-		break;
-	case DRM_COLOR_YCBCR_BT2020:
-		if (is_yuv)
-			color_space_type = OPTM_CS_E_XV_YCC_2020;
-		else
-			color_space_type = OPTM_CS_E_RGB_2020;
-		break;
-	default:
-		if (is_yuv)
-			color_space_type = OPTM_CS_E_XV_YCC_601;
-		else
-			color_space_type = OPTM_CS_E_RGB_2020;
-	}
-
-	return color_space_type;
-}
-
-static int csc_get_mode_index(bool is_input_full_range, bool is_output_full_range,
-			      bool is_input_yuv, bool is_output_yuv,
-			      enum drm_color_encoding color_encoding)
+static int csc_get_mode_index(int post_csc_mode, bool is_input_yuv, bool is_output_yuv)
 {
 	const struct rk_csc_colorspace_info *colorspace_info;
+	enum color_space_type input_color_space;
+	enum color_space_type output_color_space;
+	bool is_input_full_range;
+	bool is_output_full_range;
 	int i;
-	enum color_space_type input_color_space, output_color_space;
 
-	input_color_space = get_color_space_type(color_encoding, is_input_yuv);
-	output_color_space = get_color_space_type(color_encoding, is_output_yuv);
+	for (i = 0; i < ARRAY_SIZE(csc_mapping_table); i++) {
+		if (post_csc_mode == csc_mapping_table[i].csc_format) {
+			input_color_space = is_input_yuv ? csc_mapping_table[i].yuv_color_space :
+					    csc_mapping_table[i].rgb_color_space;
+			is_input_full_range = is_input_yuv ? csc_mapping_table[i].yuv_full_range :
+					      csc_mapping_table[i].rgb_full_range;
+			output_color_space = is_output_yuv ? csc_mapping_table[i].yuv_color_space :
+					     csc_mapping_table[i].rgb_color_space;
+			is_output_full_range = is_output_yuv ? csc_mapping_table[i].yuv_full_range :
+					       csc_mapping_table[i].rgb_full_range;
+			break;
+		}
+	}
+	if (i >= ARRAY_SIZE(csc_mapping_table))
+		return -EINVAL;
 
 	for (i = 0; i < ARRAY_SIZE(g_mode_csc_coef); i++) {
 		colorspace_info = &g_mode_csc_coef[i].st_csc_color_info;
@@ -1521,7 +1568,7 @@ static void rockchip_swap_color_channel(bool is_input_yuv, bool is_output_yuv,
 }
 
 int rockchip_calc_post_csc(struct post_csc *csc_cfg, struct post_csc_coef *csc_simple_coef,
-			   struct post_csc_convert_mode *convert_mode)
+			   int csc_mode, bool is_input_yuv, bool is_output_yuv)
 {
 	int ret = 0;
 	struct rk_pq_csc_coef out_matrix;
@@ -1529,27 +1576,22 @@ int rockchip_calc_post_csc(struct post_csc *csc_cfg, struct post_csc_coef *csc_s
 	const struct rk_csc_mode_coef *csc_mode_cfg;
 	int bit_num = PQ_CSC_SIMPLE_MAT_PARAM_FIX_BIT_WIDTH;
 
-	ret = csc_get_mode_index(convert_mode->is_input_full_range,
-				 convert_mode->is_output_full_range, convert_mode->is_input_yuv,
-				 convert_mode->is_output_yuv, convert_mode->color_encoding);
+	ret = csc_get_mode_index(csc_mode, is_input_yuv, is_output_yuv);
 	if (ret < 0) {
-		DRM_ERROR("get csc index err:\n");
-		DRM_ERROR("input yuv %d full_range %d,output yuv %d full_range %d\n",
-			  convert_mode->is_input_yuv, convert_mode->is_input_full_range,
-			  convert_mode->is_output_yuv, convert_mode->is_output_full_range);
+		DRM_ERROR("invalid csc_mode:%d\n", csc_mode);
 		return ret;
 	}
 
 	csc_mode_cfg = &g_mode_csc_coef[ret];
+
 	if (csc_cfg)
-		ret = csc_calc_adjust_output_coef(convert_mode->is_input_yuv,
-						  convert_mode->is_output_yuv, csc_cfg,
+		ret = csc_calc_adjust_output_coef(is_input_yuv, is_output_yuv, csc_cfg,
 						  csc_mode_cfg, &out_matrix, &out_dc);
 	else
 		ret = csc_calc_default_output_coef(csc_mode_cfg, &out_matrix, &out_dc);
 
-	rockchip_swap_color_channel(convert_mode->is_input_yuv, convert_mode->is_output_yuv,
-				    csc_simple_coef, &out_matrix, &out_dc);
+	rockchip_swap_color_channel(is_input_yuv, is_output_yuv, csc_simple_coef, &out_matrix,
+				    &out_dc);
 
 	csc_simple_coef->csc_dc0 = csc_simple_round(csc_simple_coef->csc_dc0, bit_num);
 	csc_simple_coef->csc_dc1 = csc_simple_round(csc_simple_coef->csc_dc1, bit_num);

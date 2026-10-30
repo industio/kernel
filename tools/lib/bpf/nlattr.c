@@ -27,12 +27,12 @@ static struct nlattr *nla_next(const struct nlattr *nla, int *remaining)
 	int totlen = NLA_ALIGN(nla->nla_len);
 
 	*remaining -= totlen;
-	return (struct nlattr *)((void *)nla + totlen);
+	return (struct nlattr *) ((char *) nla + totlen);
 }
 
 static int nla_ok(const struct nlattr *nla, int remaining)
 {
-	return remaining >= (int)sizeof(*nla) &&
+	return remaining >= sizeof(*nla) &&
 	       nla->nla_len >= sizeof(*nla) &&
 	       nla->nla_len <= remaining;
 }

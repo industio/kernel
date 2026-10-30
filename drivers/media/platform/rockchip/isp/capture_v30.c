@@ -1036,7 +1036,7 @@ static int mi_frame_end(struct rkisp_stream *stream, u32 state)
 		stream->dbg.interval = ns - stream->dbg.timestamp;
 		stream->dbg.timestamp = ns;
 		stream->dbg.id = buf->vb.sequence;
-		stream->dbg.delay = ns - vb2_buf->timestamp;
+		stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 
 		if (vir->streaming && vir->conn_id == stream->id) {
 			spin_lock_irqsave(&vir->vbq_lock, lock_flags);
@@ -1319,7 +1319,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 
 	rkisp_stream_stop(stream);
 	/* call to the other devices */
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 	ret = dev->pipe.set_stream(&dev->pipe, false);
 	if (ret < 0)
 		v4l2_err(v4l2_dev, "pipeline stream-off failed:%d\n", ret);
@@ -1451,7 +1451,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 	if (ret < 0)
 		goto stop_stream;
 
-	ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+	ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(v4l2_dev, "start pipeline failed %d\n", ret);
 		goto pipe_stream_off;

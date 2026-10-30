@@ -1,6 +1,6 @@
 /* drivers/input/sensors/gyro/Ewtsa.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: zhangaihui <zah@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -278,7 +278,7 @@ static int ewtsa_enable(struct i2c_client *client)
 	return 0;
 }
 
-static void gyro_dev_reset(struct i2c_client *client)
+void gyro_dev_reset(struct i2c_client *client)
 {
 	struct sensor_private_data *sensor =
 	    (struct sensor_private_data *) i2c_get_clientdata(client);
@@ -431,9 +431,9 @@ static int gyro_ewtsa_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gyro_ewtsa_ops);
 }
 
-static void gyro_ewtsa_remove(struct i2c_client *client)
+static int gyro_ewtsa_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gyro_ewtsa_ops);
+	return sensor_unregister_device(client, NULL, &gyro_ewtsa_ops);
 }
 
 static const struct i2c_device_id gyro_ewtsa_id[] = {

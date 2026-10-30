@@ -47,7 +47,7 @@ void __init idle_thread_set_boot_cpu(void)
  *
  * Creates the thread if it does not exist.
  */
-static __always_inline void idle_init(unsigned int cpu)
+static inline void idle_init(unsigned int cpu)
 {
 	struct task_struct *tsk = per_cpu(idle_threads, cpu);
 
@@ -291,7 +291,7 @@ int smpboot_register_percpu_thread(struct smp_hotplug_thread *plug_thread)
 	unsigned int cpu;
 	int ret = 0;
 
-	cpus_read_lock();
+	get_online_cpus();
 	mutex_lock(&smpboot_threads_lock);
 	for_each_online_cpu(cpu) {
 		ret = __smpboot_create_thread(plug_thread, cpu);
@@ -304,7 +304,7 @@ int smpboot_register_percpu_thread(struct smp_hotplug_thread *plug_thread)
 	list_add(&plug_thread->list, &hotplug_threads);
 out:
 	mutex_unlock(&smpboot_threads_lock);
-	cpus_read_unlock();
+	put_online_cpus();
 	return ret;
 }
 EXPORT_SYMBOL_GPL(smpboot_register_percpu_thread);
@@ -317,12 +317,12 @@ EXPORT_SYMBOL_GPL(smpboot_register_percpu_thread);
  */
 void smpboot_unregister_percpu_thread(struct smp_hotplug_thread *plug_thread)
 {
-	cpus_read_lock();
+	get_online_cpus();
 	mutex_lock(&smpboot_threads_lock);
 	list_del(&plug_thread->list);
 	smpboot_destroy_threads(plug_thread);
 	mutex_unlock(&smpboot_threads_lock);
-	cpus_read_unlock();
+	put_online_cpus();
 }
 EXPORT_SYMBOL_GPL(smpboot_unregister_percpu_thread);
 
@@ -392,13 +392,6 @@ int cpu_check_up_prepare(int cpu)
 		 */
 		return -EAGAIN;
 
-	case CPU_UP_PREPARE:
-		/*
-		 * Timeout while waiting for the CPU to show up. Allow to try
-		 * again later.
-		 */
-		return 0;
-
 	default:
 
 		/* Should not happen.  Famous last words. */
@@ -433,7 +426,7 @@ bool cpu_wait_death(unsigned int cpu, int seconds)
 
 	/* The outgoing CPU will normally get done quite quickly. */
 	if (atomic_read(&per_cpu(cpu_hotplug_state, cpu)) == CPU_DEAD)
-		goto update_state_early;
+		goto update_state;
 	udelay(5);
 
 	/* But if the outgoing CPU dawdles, wait increasingly long times. */
@@ -444,17 +437,16 @@ bool cpu_wait_death(unsigned int cpu, int seconds)
 			break;
 		sleep_jf = DIV_ROUND_UP(sleep_jf * 11, 10);
 	}
-update_state_early:
-	oldstate = atomic_read(&per_cpu(cpu_hotplug_state, cpu));
 update_state:
+	oldstate = atomic_read(&per_cpu(cpu_hotplug_state, cpu));
 	if (oldstate == CPU_DEAD) {
 		/* Outgoing CPU died normally, update state. */
 		smp_mb(); /* atomic_read() before update. */
 		atomic_set(&per_cpu(cpu_hotplug_state, cpu), CPU_POST_DEAD);
 	} else {
 		/* Outgoing CPU still hasn't died, set state accordingly. */
-		if (!atomic_try_cmpxchg(&per_cpu(cpu_hotplug_state, cpu),
-					&oldstate, CPU_BROKEN))
+		if (atomic_cmpxchg(&per_cpu(cpu_hotplug_state, cpu),
+				   oldstate, CPU_BROKEN) != oldstate)
 			goto update_state;
 		ret = false;
 	}
@@ -476,14 +468,14 @@ bool cpu_report_death(void)
 	int newstate;
 	int cpu = smp_processor_id();
 
-	oldstate = atomic_read(&per_cpu(cpu_hotplug_state, cpu));
 	do {
+		oldstate = atomic_read(&per_cpu(cpu_hotplug_state, cpu));
 		if (oldstate != CPU_BROKEN)
 			newstate = CPU_DEAD;
 		else
 			newstate = CPU_DEAD_FROZEN;
-	} while (!atomic_try_cmpxchg(&per_cpu(cpu_hotplug_state, cpu),
-				     &oldstate, newstate));
+	} while (atomic_cmpxchg(&per_cpu(cpu_hotplug_state, cpu),
+				oldstate, newstate) != oldstate);
 	return newstate == CPU_DEAD;
 }
 

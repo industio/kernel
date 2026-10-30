@@ -15,7 +15,6 @@
 #include <linux/workqueue.h>
 #include <linux/compat.h>
 #include <linux/sched/deadline.h>
-#include <linux/task_work.h>
 
 #include "posix-timers.h"
 
@@ -35,20 +34,14 @@ void posix_cputimers_group_init(struct posix_cputimers *pct, u64 cpu_limit)
  * tsk->signal->posix_cputimers.bases[clock].nextevt expiration cache if
  * necessary. Needs siglock protection since other code may update the
  * expiration cache as well.
- *
- * Returns 0 on success, -ESRCH on failure.  Can fail if the task is exiting and
- * we cannot lock_task_sighand.  Cannot fail if task is current.
  */
-int update_rlimit_cpu(struct task_struct *task, unsigned long rlim_new)
+void update_rlimit_cpu(struct task_struct *task, unsigned long rlim_new)
 {
 	u64 nsecs = rlim_new * NSEC_PER_SEC;
-	unsigned long irq_fl;
 
-	if (!lock_task_sighand(task, &irq_fl))
-		return -ESRCH;
+	spin_lock_irq(&task->sighand->siglock);
 	set_process_cpu_timer(task, CPUCLOCK_PROF, &nsecs, NULL);
-	unlock_task_sighand(task, &irq_fl);
-	return 0;
+	spin_unlock_irq(&task->sighand->siglock);
 }
 
 /*
@@ -286,7 +279,7 @@ void thread_group_sample_cputime(struct task_struct *tsk, u64 *samples)
  * @tsk:	Task for which cputime needs to be started
  * @samples:	Storage for time samples
  *
- * The thread group cputime accounting is avoided when there are no posix
+ * The thread group cputime accouting is avoided when there are no posix
  * CPU timers armed. Before starting a timer it's required to check whether
  * the time accounting is active. If not, a full update of the atomic
  * accounting store needs to be done and the accounting enabled.
@@ -297,8 +290,6 @@ static void thread_group_start_cputime(struct task_struct *tsk, u64 *samples)
 {
 	struct thread_group_cputimer *cputimer = &tsk->signal->cputimer;
 	struct posix_cputimers *pct = &tsk->signal->posix_cputimers;
-
-	lockdep_assert_task_sighand_held(tsk);
 
 	/* Check if cputimer isn't running. This is accessed without locking. */
 	if (!READ_ONCE(pct->timers_active)) {
@@ -399,7 +390,7 @@ static int posix_cpu_timer_create(struct k_itimer *new_timer)
 	/*
 	 * If posix timer expiry is handled in task work context then
 	 * timer::it_lock can be taken without disabling interrupts as all
-	 * other locking happens in task context. This requires a separate
+	 * other locking happens in task context. This requires a seperate
 	 * lock class key otherwise regular posix timer expiry would record
 	 * the lock class being taken in interrupt context and generate a
 	 * false positive warning.
@@ -413,55 +404,6 @@ static int posix_cpu_timer_create(struct k_itimer *new_timer)
 	rcu_read_unlock();
 	return 0;
 }
-
-static struct posix_cputimer_base *timer_base(struct k_itimer *timer,
-					      struct task_struct *tsk)
-{
-	int clkidx = CPUCLOCK_WHICH(timer->it_clock);
-
-	if (CPUCLOCK_PERTHREAD(timer->it_clock))
-		return tsk->posix_cputimers.bases + clkidx;
-	else
-		return tsk->signal->posix_cputimers.bases + clkidx;
-}
-
-/*
- * Force recalculating the base earliest expiration on the next tick.
- * This will also re-evaluate the need to keep around the process wide
- * cputime counter and tick dependency and eventually shut these down
- * if necessary.
- */
-static void trigger_base_recalc_expires(struct k_itimer *timer,
-					struct task_struct *tsk)
-{
-	struct posix_cputimer_base *base = timer_base(timer, tsk);
-
-	base->nextevt = 0;
-}
-
-/*
- * Dequeue the timer and reset the base if it was its earliest expiration.
- * It makes sure the next tick recalculates the base next expiration so we
- * don't keep the costly process wide cputime counter around for a random
- * amount of time, along with the tick dependency.
- *
- * If another timer gets queued between this and the next tick, its
- * expiration will update the base next event if necessary on the next
- * tick.
- */
-static void disarm_timer(struct k_itimer *timer, struct task_struct *p)
-{
-	struct cpu_timer *ctmr = &timer->it.cpu;
-	struct posix_cputimer_base *base;
-
-	if (!cpu_timer_dequeue(ctmr))
-		return;
-
-	base = timer_base(timer, p);
-	if (cpu_timer_getexpires(ctmr) == base->nextevt)
-		trigger_base_recalc_expires(timer, p);
-}
-
 
 /*
  * Clean up a CPU-clock timer that is about to be destroyed.
@@ -497,7 +439,7 @@ static int posix_cpu_timer_del(struct k_itimer *timer)
 		if (timer->it.cpu.firing)
 			ret = TIMER_RETRY;
 		else
-			disarm_timer(timer, p);
+			cpu_timer_dequeue(ctmr);
 
 		unlock_task_sighand(p, &flags);
 	}
@@ -556,9 +498,15 @@ void posix_cpu_timers_exit_group(struct task_struct *tsk)
  */
 static void arm_timer(struct k_itimer *timer, struct task_struct *p)
 {
-	struct posix_cputimer_base *base = timer_base(timer, p);
+	int clkidx = CPUCLOCK_WHICH(timer->it_clock);
 	struct cpu_timer *ctmr = &timer->it.cpu;
 	u64 newexp = cpu_timer_getexpires(ctmr);
+	struct posix_cputimer_base *base;
+
+	if (CPUCLOCK_PERTHREAD(timer->it_clock))
+		base = p->posix_cputimers.bases + clkidx;
+	else
+		base = p->signal->posix_cputimers.bases + clkidx;
 
 	if (!cpu_timer_enqueue(&base->tqhead, ctmr))
 		return;
@@ -575,7 +523,7 @@ static void arm_timer(struct k_itimer *timer, struct task_struct *p)
 	if (CPUCLOCK_PERTHREAD(timer->it_clock))
 		tick_dep_set_task(p, TICK_DEP_BIT_POSIX_TIMER);
 	else
-		tick_dep_set_signal(p, TICK_DEP_BIT_POSIX_TIMER);
+		tick_dep_set_signal(p->signal, TICK_DEP_BIT_POSIX_TIMER);
 }
 
 /*
@@ -755,29 +703,16 @@ static int posix_cpu_timer_set(struct k_itimer *timer, int timer_flags,
 	timer->it_overrun_last = 0;
 	timer->it_overrun = -1;
 
-	if (val >= new_expires) {
-		if (new_expires != 0) {
-			/*
-			 * The designated time already passed, so we notify
-			 * immediately, even if the thread never runs to
-			 * accumulate more time on this clock.
-			 */
-			cpu_timer_fire(timer);
-		}
-
+	if (new_expires != 0 && !(val < new_expires)) {
 		/*
-		 * Make sure we don't keep around the process wide cputime
-		 * counter or the tick dependency if they are not necessary.
+		 * The designated time already passed, so we notify
+		 * immediately, even if the thread never runs to
+		 * accumulate more time on this clock.
 		 */
-		sighand = lock_task_sighand(p, &flags);
-		if (!sighand)
-			goto out;
-
-		if (!cpu_timer_queued(ctmr))
-			trigger_base_recalc_expires(timer, p);
-
-		unlock_task_sighand(p, &flags);
+		cpu_timer_fire(timer);
 	}
+
+	ret = 0;
  out:
 	rcu_read_unlock();
 	if (old)
@@ -872,7 +807,7 @@ static inline void check_dl_overrun(struct task_struct *tsk)
 {
 	if (tsk->dl.dl_overrun) {
 		tsk->dl.dl_overrun = 0;
-		send_signal_locked(SIGXCPU, SEND_SIG_PRIV, tsk, PIDTYPE_TGID);
+		__group_send_sig_info(SIGXCPU, SEND_SIG_PRIV, tsk);
 	}
 }
 
@@ -886,7 +821,7 @@ static bool check_rlimit(u64 time, u64 limit, int signo, bool rt, bool hard)
 			rt ? "RT" : "CPU", hard ? "hard" : "soft",
 			current->comm, task_pid_nr(current));
 	}
-	send_signal_locked(signo, SEND_SIG_PRIV, current, PIDTYPE_TGID);
+	__group_send_sig_info(signo, SEND_SIG_PRIV, current);
 	return true;
 }
 
@@ -960,7 +895,7 @@ static void check_cpu_itimer(struct task_struct *tsk, struct cpu_itimer *it,
 		trace_itimer_expire(signo == SIGPROF ?
 				    ITIMER_PROF : ITIMER_VIRTUAL,
 				    task_tgid(tsk), cur_time);
-		send_signal_locked(signo, SEND_SIG_PRIV, tsk, PIDTYPE_TGID);
+		__group_send_sig_info(signo, SEND_SIG_PRIV, tsk);
 	}
 
 	if (it->expires && it->expires < *expires)
@@ -1353,7 +1288,7 @@ static void handle_posix_cpu_timers(struct task_struct *tsk)
 		check_process_timers(tsk, &firing);
 
 		/*
-		 * The above timer checks have updated the expiry cache and
+		 * The above timer checks have updated the exipry cache and
 		 * because nothing can have queued or modified timers after
 		 * sighand lock was taken above it is guaranteed to be
 		 * consistent. So the next timer interrupt fastpath check
@@ -1485,8 +1420,9 @@ void set_process_cpu_timer(struct task_struct *tsk, unsigned int clkid,
 			}
 		}
 
-		if (*newval)
-			*newval += now;
+		if (!*newval)
+			return;
+		*newval += now;
 	}
 
 	/*
@@ -1496,7 +1432,7 @@ void set_process_cpu_timer(struct task_struct *tsk, unsigned int clkid,
 	if (*newval < *nextevt)
 		*nextevt = *newval;
 
-	tick_dep_set_signal(tsk, TICK_DEP_BIT_POSIX_TIMER);
+	tick_dep_set_signal(tsk->signal, TICK_DEP_BIT_POSIX_TIMER);
 }
 
 static int do_cpu_nanosleep(const clockid_t which_clock, int flags,

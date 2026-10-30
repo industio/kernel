@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /**
- * Copyright 2023 Rockchip Electronics Co., Ltd.
+ * Copyright 2023 ROCKCHIP
  */
 
 #include <linux/module.h>

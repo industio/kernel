@@ -2,7 +2,7 @@
 /*
  * Rockchip machine ASoC driver for boards using a RT5645/RT5650 CODEC.
  *
- * Copyright (c) 2015, Rockchip Electronics Co., Ltd. All rights reserved.
+ * Copyright (c) 2015, ROCKCHIP CORPORATION.  All rights reserved.
  */
 
 #include <linux/module.h>
@@ -107,7 +107,7 @@ static int rk_init(struct snd_soc_pcm_runtime *runtime)
 				    SND_JACK_HEADPHONE | SND_JACK_MICROPHONE |
 				    SND_JACK_BTN_0 | SND_JACK_BTN_1 |
 				    SND_JACK_BTN_2 | SND_JACK_BTN_3,
-				    &headset_jack);
+				    &headset_jack, NULL, 0);
 	if (ret) {
 		dev_err(card->dev, "New Headset Jack failed! (%d)\n", ret);
 		return ret;

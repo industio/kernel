@@ -1,6 +1,6 @@
 /* include/linux/sensor-dev.h - sensor header file
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -113,7 +113,6 @@ enum sensor_id {
 	LIGHT_ID_STK3410,
 	LIGHT_ID_EM3071X,
 	LIGHT_ID_UCS14620,
-	LIGHT_ID_STK33562,
 
 	PROXIMITY_ID_ALL,
 	PROXIMITY_ID_AL3006,
@@ -123,7 +122,6 @@ enum sensor_id {
 	PROXIMITY_ID_STK3410,
 	PROXIMITY_ID_EM3071X,
 	PROXIMITY_ID_UCS14620,
-	PROXIMITY_ID_STK33562,
 
 	TEMPERATURE_ID_ALL,
 	TEMPERATURE_ID_MS5607,
@@ -270,7 +268,7 @@ extern int sensor_unregister_device(struct i2c_client *client,
 extern void sensor_shutdown(struct i2c_client *client);
 extern const struct dev_pm_ops sensor_pm_ops;
 
-#define DBG(x...)	no_printk(x)
+#define DBG(x...)
 
 #define GSENSOR_IOCTL_MAGIC			'a'
 #define GBUFF_SIZE				12	/* Rx buffer size */

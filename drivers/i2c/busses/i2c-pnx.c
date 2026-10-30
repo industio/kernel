@@ -118,7 +118,7 @@ static inline int wait_reset(struct i2c_pnx_algo_data *data)
 /**
  * i2c_pnx_start - start a device
  * @slave_addr:		slave address
- * @alg_data:		pointer to local driver data structure
+ * @adap:		pointer to adapter structure
  *
  * Generate a START signal in the desired mode.
  */
@@ -174,7 +174,7 @@ static int i2c_pnx_start(unsigned char slave_addr,
 
 /**
  * i2c_pnx_stop - stop a device
- * @alg_data:		pointer to local driver data structure
+ * @adap:		pointer to I2C adapter structure
  *
  * Generate a STOP signal to terminate the master transaction.
  */
@@ -203,7 +203,7 @@ static void i2c_pnx_stop(struct i2c_pnx_algo_data *alg_data)
 
 /**
  * i2c_pnx_master_xmit - transmit data to slave
- * @alg_data:		pointer to local driver data structure
+ * @adap:		pointer to I2C adapter structure
  *
  * Sends one byte of data to the slave
  */
@@ -269,7 +269,7 @@ static int i2c_pnx_master_xmit(struct i2c_pnx_algo_data *alg_data)
 
 /**
  * i2c_pnx_master_rcv - receive data from slave
- * @alg_data:		pointer to local driver data structure
+ * @adap:		pointer to I2C adapter structure
  *
  * Reads one byte data from the slave
  */

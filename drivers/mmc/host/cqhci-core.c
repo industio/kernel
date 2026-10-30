@@ -45,23 +45,17 @@ static inline u8 *get_link_desc(struct cqhci_host *cq_host, u8 tag)
 	return desc + cq_host->task_desc_len;
 }
 
-static inline size_t get_trans_desc_offset(struct cqhci_host *cq_host, u8 tag)
-{
-	return cq_host->trans_desc_len * cq_host->mmc->max_segs * tag;
-}
-
 static inline dma_addr_t get_trans_desc_dma(struct cqhci_host *cq_host, u8 tag)
 {
-	size_t offset = get_trans_desc_offset(cq_host, tag);
-
-	return cq_host->trans_desc_dma_base + offset;
+	return cq_host->trans_desc_dma_base +
+		(cq_host->mmc->max_segs * tag *
+		 cq_host->trans_desc_len);
 }
 
 static inline u8 *get_trans_desc(struct cqhci_host *cq_host, u8 tag)
 {
-	size_t offset = get_trans_desc_offset(cq_host, tag);
-
-	return cq_host->trans_desc_base + offset;
+	return cq_host->trans_desc_base +
+		(cq_host->trans_desc_len * cq_host->mmc->max_segs * tag);
 }
 
 static void setup_trans_desc(struct cqhci_host *cq_host, u8 tag)
@@ -152,7 +146,7 @@ static void cqhci_dumpregs(struct cqhci_host *cq_host)
 }
 
 /*
- * The allocated descriptor table for task, link & transfer descriptors
+ * The allocated descriptor table for task, link & transfer descritors
  * looks like:
  * |----------|
  * |task desc |  |->|----------|
@@ -200,7 +194,8 @@ static int cqhci_host_alloc_tdl(struct cqhci_host *cq_host)
 
 	cq_host->desc_size = cq_host->slot_sz * cq_host->num_slots;
 
-	cq_host->data_size = get_trans_desc_offset(cq_host, cq_host->mmc->cqe_qdepth);
+	cq_host->data_size = cq_host->trans_desc_len * cq_host->mmc->max_segs *
+		cq_host->mmc->cqe_qdepth;
 
 	pr_debug("%s: cqhci: desc_size: %zu data_sz: %zu slot-sz: %d\n",
 		 mmc_hostname(cq_host->mmc), cq_host->desc_size, cq_host->data_size,
@@ -474,8 +469,8 @@ static int cqhci_dma_map(struct mmc_host *host, struct mmc_request *mrq)
 	return sg_count;
 }
 
-void cqhci_set_tran_desc(u8 *desc, dma_addr_t addr, int len, bool end,
-			 bool dma64)
+static void cqhci_set_tran_desc(u8 *desc, dma_addr_t addr, int len, bool end,
+				bool dma64)
 {
 	__le32 *attr = (__le32 __force *)desc;
 
@@ -495,7 +490,6 @@ void cqhci_set_tran_desc(u8 *desc, dma_addr_t addr, int len, bool end,
 		dataddr[0] = cpu_to_le32(addr);
 	}
 }
-EXPORT_SYMBOL(cqhci_set_tran_desc);
 
 static int cqhci_prep_tran_desc(struct mmc_request *mrq,
 			       struct cqhci_host *cq_host, int tag)
@@ -523,11 +517,7 @@ static int cqhci_prep_tran_desc(struct mmc_request *mrq,
 
 		if ((i+1) == sg_count)
 			end = true;
-		if (cq_host->ops->set_tran_desc)
-			cq_host->ops->set_tran_desc(cq_host, &desc, addr, len, end, dma64);
-		else
-			cqhci_set_tran_desc(desc, addr, len, end, dma64);
-
+		cqhci_set_tran_desc(desc, addr, len, end, dma64);
 		desc += cq_host->trans_desc_len;
 	}
 
@@ -827,15 +817,8 @@ irqreturn_t cqhci_irq(struct mmc_host *mmc, u32 intmask, int cmd_error,
 	pr_debug("%s: cqhci: IRQ status: 0x%08x\n", mmc_hostname(mmc), status);
 
 	if ((status & (CQHCI_IS_RED | CQHCI_IS_GCE | CQHCI_IS_ICCE)) ||
-	    cmd_error || data_error) {
-		if (status & CQHCI_IS_RED)
-			mmc_debugfs_err_stats_inc(mmc, MMC_ERR_CMDQ_RED);
-		if (status & CQHCI_IS_GCE)
-			mmc_debugfs_err_stats_inc(mmc, MMC_ERR_CMDQ_GCE);
-		if (status & CQHCI_IS_ICCE)
-			mmc_debugfs_err_stats_inc(mmc, MMC_ERR_CMDQ_ICCE);
+	    cmd_error || data_error)
 		cqhci_error_irq(mmc, status, cmd_error, data_error);
-	}
 
 	if (status & CQHCI_IS_TCC) {
 		/* read TCN and complete the request */
@@ -914,8 +897,8 @@ static bool cqhci_timeout(struct mmc_host *mmc, struct mmc_request *mrq,
 	spin_unlock_irqrestore(&cq_host->lock, flags);
 
 	if (timed_out) {
-		pr_err("%s: cqhci: timeout for tag %d, qcnt %d\n",
-		       mmc_hostname(mmc), tag, cq_host->qcnt);
+		pr_err("%s: cqhci: timeout for tag %d\n",
+		       mmc_hostname(mmc), tag);
 		cqhci_dumpregs(cq_host);
 	}
 
@@ -1119,9 +1102,6 @@ static void cqhci_recovery_finish(struct mmc_host *mmc)
 	cqhci_writel(cq_host, CQHCI_IS_HAC | CQHCI_IS_TCL, CQHCI_IS);
 
 	cqhci_set_irqs(cq_host, CQHCI_IS_MASK);
-
-	/* Add emmc hardware reset after cqe recovery. */
-	mmc_hw_reset(mmc->card);
 
 	pr_debug("%s: cqhci: recovery done\n", mmc_hostname(mmc));
 }

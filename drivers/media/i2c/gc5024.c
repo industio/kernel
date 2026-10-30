@@ -118,7 +118,6 @@
 #define OF_CAMERA_PINCTRL_STATE_SLEEP	"rockchip,camera_sleep"
 
 #define GC5024_NAME			"gc5024"
-#define GC5024_MEDIA_BUS_FMT		MEDIA_BUS_FMT_SBGGR10_1X10
 
 static const char * const gc5024_supply_names[] = {
 	"avdd",		/* Analog power */
@@ -134,6 +133,7 @@ struct regval {
 };
 
 struct gc5024_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -174,6 +174,8 @@ struct gc5024 {
 	const char		*module_facing;
 	const char		*module_name;
 	const char		*len_name;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_gc5024(sd) container_of(sd, struct gc5024, subdev)
@@ -324,6 +326,7 @@ static const struct regval gc5024_2592x1944_regs[] = {
 
 static const struct gc5024_mode supported_modes_2lane[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 2592,
 		.height = 1944,
 		.max_fps = {
@@ -335,6 +338,10 @@ static const struct gc5024_mode supported_modes_2lane[] = {
 		.vts_def = 0x07D0,
 		.reg_list = gc5024_2592x1944_regs,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const struct gc5024_mode *supported_modes;
@@ -434,6 +441,10 @@ gc5024_find_best_fit(struct gc5024 *gc5024,
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -441,7 +452,7 @@ gc5024_find_best_fit(struct gc5024 *gc5024,
 }
 
 static int gc5024_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct gc5024 *gc5024 = to_gc5024(sd);
@@ -451,13 +462,13 @@ static int gc5024_set_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&gc5024->mutex);
 
 	mode = gc5024_find_best_fit(gc5024, fmt);
-	fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fmt->format.code = mode->bus_fmt;
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&gc5024->mutex);
 		return -ENOTTY;
@@ -471,6 +482,7 @@ static int gc5024_set_fmt(struct v4l2_subdev *sd,
 		__v4l2_ctrl_modify_range(gc5024->vblank, vblank_def,
 					 GC5024_VTS_MAX - mode->height,
 					 1, vblank_def);
+		gc5024->cur_fps = mode->max_fps;
 	}
 
 	mutex_unlock(&gc5024->mutex);
@@ -479,7 +491,7 @@ static int gc5024_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc5024_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct gc5024 *gc5024 = to_gc5024(sd);
@@ -488,7 +500,7 @@ static int gc5024_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&gc5024->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&gc5024->mutex);
 		return -ENOTTY;
@@ -496,7 +508,7 @@ static int gc5024_get_fmt(struct v4l2_subdev *sd,
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
-		fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
 	}
 	mutex_unlock(&gc5024->mutex);
@@ -505,18 +517,18 @@ static int gc5024_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc5024_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int gc5024_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct gc5024 *gc5024 = to_gc5024(sd);
@@ -524,7 +536,7 @@ static int gc5024_enum_frame_sizes(struct v4l2_subdev *sd,
 	if (fse->index >= gc5024->cfg_num)
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
+	if (fse->code != gc5024->cur_mode->bus_fmt)
 		return -EINVAL;
 
 	fse->min_width  = supported_modes[fse->index].width;
@@ -541,7 +553,72 @@ static int gc5024_g_frame_interval(struct v4l2_subdev *sd,
 	struct gc5024 *gc5024 = to_gc5024(sd);
 	const struct gc5024_mode *mode = gc5024->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (gc5024->streaming)
+		fi->interval = gc5024->cur_fps;
+	else
+		fi->interval = mode->max_fps;
+
+	return 0;
+}
+
+static const struct gc5024_mode *gc5024_find_mode(struct gc5024 *gc5024, int fps)
+{
+	const struct gc5024_mode *mode = NULL;
+	const struct gc5024_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < gc5024->cfg_num; i++) {
+		mode = &supported_modes[i];
+		if (mode->width == gc5024->cur_mode->width &&
+		    mode->height == gc5024->cur_mode->height &&
+		    mode->bus_fmt == gc5024->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int gc5024_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct gc5024 *gc5024 = to_gc5024(sd);
+	const struct gc5024_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (gc5024->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = gc5024_find_mode(gc5024, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	gc5024->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(gc5024->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(gc5024->vblank, vblank_def,
+				 GC5024_VTS_MAX - mode->height,
+				 1, vblank_def);
+	gc5024->cur_fps = mode->max_fps;
 
 	return 0;
 }
@@ -549,13 +626,13 @@ static int gc5024_g_frame_interval(struct v4l2_subdev *sd,
 static void gc5024_get_module_inf(struct gc5024 *gc5024,
 				  struct rkmodule_inf *inf)
 {
-	strscpy(inf->base.sensor,
+	strlcpy(inf->base.sensor,
 		GC5024_NAME,
 		sizeof(inf->base.sensor));
-	strscpy(inf->base.module,
+	strlcpy(inf->base.module,
 		gc5024->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens,
+	strlcpy(inf->base.lens,
 		gc5024->len_name,
 		sizeof(inf->base.lens));
 }
@@ -853,14 +930,14 @@ static int gc5024_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct gc5024 *gc5024 = to_gc5024(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct gc5024_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&gc5024->mutex);
 	/* Initialize try_fmt */
 	try_fmt->width = def_mode->width;
 	try_fmt->height = def_mode->height;
-	try_fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	try_fmt->code = def_mode->bus_fmt;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	mutex_unlock(&gc5024->mutex);
@@ -880,7 +957,9 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 
 	if (2 == sensor->lane_num) {
 		config->type = V4L2_MBUS_CSI2_DPHY;
-		config->bus.mipi_csi2.num_data_lanes = sensor->lane_num;
+		config->flags = V4L2_MBUS_CSI2_2_LANE |
+				V4L2_MBUS_CSI2_CHANNEL_0 |
+				V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 	} else {
 		dev_err(&sensor->client->dev,
 				"unsupported lane_num(%d)\n", sensor->lane_num);
@@ -889,7 +968,7 @@ static int sensor_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 }
 
 static int gc5024_enum_frame_interval(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct gc5024 *gc5024 = to_gc5024(sd);
@@ -897,7 +976,7 @@ static int gc5024_enum_frame_interval(struct v4l2_subdev *sd,
 	if (fie->index >= gc5024->cfg_num)
 		return -EINVAL;
 
-	fie->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fie->code = supported_modes[fie->index].bus_fmt;
 	fie->width = supported_modes[fie->index].width;
 	fie->height = supported_modes[fie->index].height;
 	fie->interval = supported_modes[fie->index].max_fps;
@@ -926,6 +1005,7 @@ static const struct v4l2_subdev_core_ops gc5024_core_ops = {
 static const struct v4l2_subdev_video_ops gc5024_video_ops = {
 	.s_stream = gc5024_s_stream,
 	.g_frame_interval = gc5024_g_frame_interval,
+	.s_frame_interval = gc5024_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops gc5024_pad_ops = {
@@ -1038,6 +1118,14 @@ static int gc5024_set_gain_reg(struct gc5024 *gc5024, u32 a_gain)
 	return ret;
 }
 
+static void gc5024_modify_fps_info(struct gc5024 *gc5024)
+{
+	const struct gc5024_mode *mode = gc5024->cur_mode;
+
+	gc5024->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      gc5024->cur_vts;
+}
+
 static int gc5024_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct gc5024 *gc5024 = container_of(ctrl->handler,
@@ -1087,6 +1175,8 @@ static int gc5024_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret |= gc5024_write_reg(gc5024->client,
 			GC5024_REG_VTS_L,
 			(ctrl->val) & 0xff);
+		gc5024->cur_vts = ctrl->val + gc5024->cur_mode->height;
+		gc5024_modify_fps_info(gc5024);
 		break;
 
 	default:
@@ -1361,7 +1451,7 @@ static int gc5024_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 gc5024->module_index, facing,
 		 GC5024_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1387,7 +1477,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void gc5024_remove(struct i2c_client *client)
+static int gc5024_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct gc5024 *gc5024 = to_gc5024(sd);
@@ -1403,6 +1493,8 @@ static void gc5024_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__gc5024_power_off(gc5024);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

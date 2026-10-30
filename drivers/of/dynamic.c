@@ -227,12 +227,10 @@ static void __of_attach_node(struct device_node *np)
 	np->sibling = np->parent->child;
 	np->parent->child = np;
 	of_node_clear_flag(np, OF_DETACHED);
-	np->fwnode.flags |= FWNODE_FLAG_NOT_DEVICE;
 }
 
 /**
  * of_attach_node() - Plug a device node into the tree and global list.
- * @np:		Pointer to the caller's Device Node
  */
 int of_attach_node(struct device_node *np)
 {
@@ -285,7 +283,6 @@ void __of_detach_node(struct device_node *np)
 
 /**
  * of_detach_node() - "Unplug" a node from the device tree.
- * @np:		Pointer to the caller's Device Node
  */
 int of_detach_node(struct device_node *np)
 {
@@ -323,7 +320,7 @@ static void property_list_free(struct property *prop_list)
 
 /**
  * of_node_release() - release a dynamically allocated node
- * @kobj: kernel object of the node to be released
+ * @kref: kref element of the node to be released
  *
  * In of_node_put() this function is passed to kref_put() as the destructor.
  */

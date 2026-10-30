@@ -566,3 +566,4 @@ wl_ext_genl_deinit(struct net_device *net)
 
 }
 #endif
+

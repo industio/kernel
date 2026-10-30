@@ -66,7 +66,7 @@ static int rpc_proc_show(struct seq_file *seq, void *v) {
 
 static int rpc_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, rpc_proc_show, pde_data(inode));
+	return single_open(file, rpc_proc_show, PDE_DATA(inode));
 }
 
 static const struct proc_ops rpc_proc_ops = {
@@ -309,7 +309,7 @@ EXPORT_SYMBOL_GPL(rpc_proc_unregister);
 struct proc_dir_entry *
 svc_proc_register(struct net *net, struct svc_stat *statp, const struct proc_ops *proc_ops)
 {
-	return do_register(net, statp->program->pg_name, net, proc_ops);
+	return do_register(net, statp->program->pg_name, statp, proc_ops);
 }
 EXPORT_SYMBOL_GPL(svc_proc_register);
 

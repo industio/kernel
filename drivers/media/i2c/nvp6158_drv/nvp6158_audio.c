@@ -1356,7 +1356,6 @@ void nvp6158_audio_set_aoc_format(decoder_dev_ch_info_s *decoder_info)
 			break;
 		case AHD20_720P_50P :
 			nvp6158_set_aoc_720_50p(decoder_info);
-			fallthrough;
 		case AHD20_720P_60P :
 			nvp6158_set_aoc_720_60p(decoder_info);
 			printk("[%s] Not supported yet. [0x%X] \r\n", __func__, decoder_info->fmt_def);
@@ -1371,7 +1370,6 @@ void nvp6158_audio_set_aoc_format(decoder_dev_ch_info_s *decoder_info)
 			// 3M
 		case AHD30_3M_25P :
 			nvp6158_set_aoc_3m_25p(decoder_info);
-			fallthrough;
 		case AHD30_3M_30P :
 			nvp6158_set_aoc_3m_30p(decoder_info);
 			printk("[%s] Not supported yet. [0x%X] \r\n", __func__, decoder_info->fmt_def);
@@ -1379,10 +1377,8 @@ void nvp6158_audio_set_aoc_format(decoder_dev_ch_info_s *decoder_info)
 			// 4M
 		case AHD30_4M_25P :
 			nvp6158_set_aoc_4m_25p(decoder_info);
-			fallthrough;
 		case AHD30_4M_30P :
 			nvp6158_set_aoc_4m_30p(decoder_info);
-			fallthrough;
 		case AHD30_4M_15P :
 			nvp6158_set_aoc_4m_15p(decoder_info);
 			printk("[%s] Not supported yet. [0x%X] \r\n", __func__, decoder_info->fmt_def);
@@ -1390,7 +1386,6 @@ void nvp6158_audio_set_aoc_format(decoder_dev_ch_info_s *decoder_info)
 			// 5M
 		case AHD30_5M_12_5P :
 			nvp6158_set_aoc_5m_12_5p(decoder_info);
-			fallthrough;
 		case AHD30_5M_20P :
 			nvp6158_set_aoc_5m_20p(decoder_info);
 			printk("[%s] Not supported yet. [0x%X] \r\n", __func__, decoder_info->fmt_def);
@@ -1403,7 +1398,6 @@ void nvp6158_audio_set_aoc_format(decoder_dev_ch_info_s *decoder_info)
 			// 8M
 		case AHD30_8M_12_5P :
 			nvp6158_set_aoc_8m_12_5p(decoder_info);
-			fallthrough;
 		case AHD30_8M_15P :
 			nvp6158_set_aoc_8m_15p(decoder_info);
 			printk("[%s] Not supported yet. [0x%X] \r\n", __func__, decoder_info->fmt_def);

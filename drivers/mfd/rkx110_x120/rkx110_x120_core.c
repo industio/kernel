@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Rockchip Electronics Co. Ltd.
  *
  * Author: Zhang Yubing <yubing.zhang@rock-chips.com>
  */
@@ -1026,7 +1026,7 @@ err:
 	return ret;
 }
 
-static void rk_serdes_i2c_remove(struct i2c_client *client)
+static int rk_serdes_i2c_remove(struct i2c_client *client)
 {
 	struct rk_serdes *rk_serdes = i2c_get_clientdata(client);
 
@@ -1034,6 +1034,8 @@ static void rk_serdes_i2c_remove(struct i2c_client *client)
 		regulator_disable(rk_serdes->supply);
 
 	mfd_remove_devices(rk_serdes->dev);
+
+	return 0;
 }
 
 static const struct of_device_id rk_serdes_of_match[] = {

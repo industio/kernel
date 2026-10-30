@@ -1,0 +1,9 @@
+
+config LT8912B
+	tristate "LT8912B Driver"
+	default m
+	help
+	  Control LT8912B Chip
+	  Select m:build as a separate module;
+	  Select y:Build into the kernel
+	  Select n:Not build 

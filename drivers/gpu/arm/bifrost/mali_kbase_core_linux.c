@@ -4517,6 +4517,38 @@ int power_control_init(struct kbase_device *kbdev)
 	 * from completing its initialization.
 	 */
 #if defined(CONFIG_PM_OPP)
+#if defined(CONFIG_REGULATOR)
+#if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
+	if (kbdev->nr_regulators > 0) {
+		kbdev->token = dev_pm_opp_set_regulators(kbdev->dev, regulator_names);
+
+		if (kbdev->token < 0) {
+			err = kbdev->token;
+			goto regulators_probe_defer;
+		}
+	}
+#elif (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
+	if (kbdev->nr_regulators > 0) {
+		kbdev->opp_table = dev_pm_opp_set_regulators(kbdev->dev, regulator_names,
+							     kbdev->nr_regulators);
+
+		if (IS_ERR(kbdev->opp_table)) {
+			dev_err(kbdev->dev, "Failed to set regulators\n");
+			return 0;
+		}
+		kbdev->opp_table =
+			dev_pm_opp_register_set_opp_helper(kbdev->dev,
+							   kbase_devfreq_opp_helper);
+		if (IS_ERR(kbdev->opp_table)) {
+			dev_pm_opp_put_regulators(kbdev->opp_table);
+			kbdev->opp_table = NULL;
+			dev_err(kbdev->dev, "Failed to set opp helper\n");
+			return 0;
+		}
+	}
+#endif /* (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE) */
+#endif /* CONFIG_REGULATOR */
+
 #ifdef CONFIG_ARCH_ROCKCHIP
        err = kbase_platform_rk_init_opp_table(kbdev);
        if (err)
@@ -4555,11 +4587,18 @@ void power_control_term(struct kbase_device *kbdev)
 	unsigned int i;
 
 #if defined(CONFIG_PM_OPP)
-#ifdef CONFIG_ARCH_ROCKCHIP
-	kbase_platform_rk_uninit_opp_table(kbdev);
-#else
 	dev_pm_opp_of_remove_table(kbdev->dev);
-#endif
+#if defined(CONFIG_REGULATOR)
+#if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
+	if (kbdev->token > -EPERM) {
+		dev_pm_opp_unregister_set_opp_helper(kbdev->opp_table);
+		dev_pm_opp_put_regulators(kbdev->token);
+	}
+#elif (KERNEL_VERSION(4, 10, 0) <= LINUX_VERSION_CODE)
+	if (!IS_ERR_OR_NULL(kbdev->opp_table))
+		dev_pm_opp_put_regulators(kbdev->opp_table);
+#endif /* (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE) */
+#endif /* CONFIG_REGULATOR */
 #endif /* CONFIG_PM_OPP */
 
 	for (i = 0; i < BASE_MAX_NR_CLOCKS_REGULATORS; i++) {
@@ -4861,7 +4900,8 @@ static struct dentry *init_debugfs(struct kbase_device *kbdev)
 
 #ifdef CONFIG_MALI_BIFROST_DEVFREQ
 #if IS_ENABLED(CONFIG_DEVFREQ_THERMAL)
-	if (kbdev->devfreq && kbdev->devfreq_cooling)
+	if (kbdev->devfreq && !kbdev->model_data &&
+	    !kbdev->dfc_power.dyn_power_coeff)
 		kbase_ipa_debugfs_init(kbdev);
 #endif /* CONFIG_DEVFREQ_THERMAL */
 #endif /* CONFIG_MALI_BIFROST_DEVFREQ */
@@ -5691,6 +5731,10 @@ static int kbase_platform_device_probe(struct platform_device *pdev)
 
 	kbdev->dev = &pdev->dev;
 
+#if (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE)
+	kbdev->token = -EPERM;
+#endif /* (KERNEL_VERSION(6, 0, 0) <= LINUX_VERSION_CODE) */
+
 	dev_set_drvdata(kbdev->dev, kbdev);
 #if (KERNEL_VERSION(5, 3, 0) <= LINUX_VERSION_CODE)
 	mutex_lock(&kbase_probe_mutex);
@@ -5948,8 +5992,8 @@ static int kbase_device_runtime_idle(struct device *dev)
 /* The power management operations for the platform driver.
  */
 static const struct dev_pm_ops kbase_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(kbase_device_suspend,
-			    kbase_device_resume)
+	.suspend = kbase_device_suspend,
+	.resume = kbase_device_resume,
 #ifdef KBASE_PM_RUNTIME
 	.runtime_suspend = kbase_device_runtime_suspend,
 	.runtime_resume = kbase_device_runtime_resume,

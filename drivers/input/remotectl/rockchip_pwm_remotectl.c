@@ -839,7 +839,6 @@ static int rk_pwm_probe(struct platform_device *pdev)
 	struct clk *clk;
 	struct clk *p_clk;
 	struct cpumask cpumask;
-	unsigned long irq_flags = IRQF_NO_SUSPEND;
 	int num;
 	int irq;
 	int ret;
@@ -942,7 +941,6 @@ static int rk_pwm_probe(struct platform_device *pdev)
 	ddata->wakeup = 1;
 
 	if (ddata->pwm_data->pwm_version < 4) {
-		irq_flags = IRQF_NO_SUSPEND | IRQF_SHARED;
 		of_property_read_u32(np, "remote_pwm_id", &pwm_id);
 		pwm_id %= 4;
 		ddata->remote_pwm_id = pwm_id;
@@ -980,7 +978,7 @@ static int rk_pwm_probe(struct platform_device *pdev)
 	cpumask_set_cpu(cpu_id, &cpumask);
 	irq_set_affinity_hint(irq, &cpumask);
 	ret = devm_request_irq(&pdev->dev, irq, ddata->pwm_data->funcs.irq_handler,
-			       irq_flags, "pwm_rc", ddata);
+			       IRQF_NO_SUSPEND, "rk_pwm_irq", ddata);
 	if (ret) {
 		dev_err(&pdev->dev, "cannot claim IRQ %d\n", irq);
 		goto error_irq;
@@ -1015,6 +1013,7 @@ static int rk_pwm_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM
 static int remotectl_suspend(struct device *dev)
 {
 	int cpu = 0;
@@ -1032,7 +1031,6 @@ static int remotectl_suspend(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
 static int remotectl_resume(struct device *dev)
 {
 	struct cpumask cpumask;
@@ -1068,11 +1066,6 @@ static const struct dev_pm_ops remotectl_pm_ops = {
 };
 #endif
 
-static void rk_pwm_remotectl_shutdown(struct platform_device *pdev)
-{
-	remotectl_suspend(&pdev->dev);
-}
-
 static struct platform_driver rk_pwm_driver = {
 	.driver = {
 		.name = "remotectl-pwm",
@@ -1082,7 +1075,6 @@ static struct platform_driver rk_pwm_driver = {
 #endif
 	},
 	.remove = rk_pwm_remove,
-	.shutdown = rk_pwm_remotectl_shutdown,
 };
 
 module_platform_driver_probe(rk_pwm_driver, rk_pwm_probe);

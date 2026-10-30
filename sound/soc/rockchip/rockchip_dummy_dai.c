@@ -2,7 +2,7 @@
 /*
  * ALSA SoC Audio Layer - Rockchip Dummy Controller driver
  *
- * Copyright (c) 2024 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2024 Rockchip Electronics Co. Ltd.
  */
 
 #include <linux/module.h>
@@ -47,7 +47,6 @@ static const struct of_device_id rockchip_dummy_dai_match[] __maybe_unused = {
 
 static const struct snd_soc_component_driver rockchip_dummy_dai_component = {
 	.name = DRV_NAME,
-	.legacy_dai_naming = 1,
 };
 
 static int rockchip_dummy_dai_probe(struct platform_device *pdev)

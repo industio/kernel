@@ -36,6 +36,7 @@
 struct pic32_rng {
 	void __iomem	*base;
 	struct hwrng	rng;
+	struct clk	*clk;
 };
 
 /*
@@ -69,7 +70,6 @@ static int pic32_rng_read(struct hwrng *rng, void *buf, size_t max,
 static int pic32_rng_probe(struct platform_device *pdev)
 {
 	struct pic32_rng *priv;
-	struct clk *clk;
 	u32 v;
 	int ret;
 
@@ -81,9 +81,13 @@ static int pic32_rng_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
-	clk = devm_clk_get_enabled(&pdev->dev, NULL);
-	if (IS_ERR(clk))
-		return PTR_ERR(clk);
+	priv->clk = devm_clk_get(&pdev->dev, NULL);
+	if (IS_ERR(priv->clk))
+		return PTR_ERR(priv->clk);
+
+	ret = clk_prepare_enable(priv->clk);
+	if (ret)
+		return ret;
 
 	/* enable TRNG in enhanced mode */
 	v = TRNGEN | TRNGMOD;
@@ -92,20 +96,26 @@ static int pic32_rng_probe(struct platform_device *pdev)
 	priv->rng.name = pdev->name;
 	priv->rng.read = pic32_rng_read;
 
-	ret = devm_hwrng_register(&pdev->dev, &priv->rng);
+	ret = hwrng_register(&priv->rng);
 	if (ret)
-		return ret;
+		goto err_register;
 
 	platform_set_drvdata(pdev, priv);
 
 	return 0;
+
+err_register:
+	clk_disable_unprepare(priv->clk);
+	return ret;
 }
 
 static int pic32_rng_remove(struct platform_device *pdev)
 {
 	struct pic32_rng *rng = platform_get_drvdata(pdev);
 
+	hwrng_unregister(&rng->rng);
 	writel(0, rng->base + RNGCON);
+	clk_disable_unprepare(rng->clk);
 	return 0;
 }
 

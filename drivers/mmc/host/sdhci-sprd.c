@@ -8,7 +8,6 @@
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/highmem.h>
-#include <linux/iopoll.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -39,9 +38,6 @@
 #define  SDHCI_SPRD_BIT_CMD_DLY_INV		BIT(13)
 #define  SDHCI_SPRD_BIT_POSRD_DLY_INV		BIT(21)
 #define  SDHCI_SPRD_BIT_NEGRD_DLY_INV		BIT(29)
-
-#define SDHCI_SPRD_REG_32_DLL_STS0	0x210
-#define SDHCI_SPRD_DLL_LOCKED		BIT(18)
 
 #define SDHCI_SPRD_REG_32_BUSY_POSI		0x250
 #define  SDHCI_SPRD_BIT_OUTR_CLK_AUTO_EN	BIT(25)
@@ -205,13 +201,13 @@ static inline u32 sdhci_sprd_calc_div(u32 base_clk, u32 clk)
 	if ((base_clk / div) > (clk * 2))
 		div++;
 
+	if (div > SDHCI_SPRD_CLK_MAX_DIV)
+		div = SDHCI_SPRD_CLK_MAX_DIV;
+
 	if (div % 2)
 		div = (div + 1) / 2;
 	else
 		div = div / 2;
-
-	if (div > SDHCI_SPRD_CLK_MAX_DIV)
-		div = SDHCI_SPRD_CLK_MAX_DIV;
 
 	return div;
 }
@@ -266,15 +262,6 @@ static void sdhci_sprd_enable_phy_dll(struct sdhci_host *host)
 	sdhci_writel(host, tmp, SDHCI_SPRD_REG_32_DLL_CFG);
 	/* wait 1ms */
 	usleep_range(1000, 1250);
-
-	if (read_poll_timeout(sdhci_readl, tmp, (tmp & SDHCI_SPRD_DLL_LOCKED),
-		2000, USEC_PER_SEC, false, host, SDHCI_SPRD_REG_32_DLL_STS0)) {
-		pr_err("%s: DLL locked fail!\n", mmc_hostname(host->mmc));
-		pr_info("%s: DLL_STS0 : 0x%x, DLL_CFG : 0x%x\n",
-			 mmc_hostname(host->mmc),
-			 sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_STS0),
-			 sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_CFG));
-	}
 }
 
 static void sdhci_sprd_set_clock(struct sdhci_host *host, unsigned int clock)
@@ -409,33 +396,12 @@ static void sdhci_sprd_request_done(struct sdhci_host *host,
 	mmc_request_done(host->mmc, mrq);
 }
 
-static void sdhci_sprd_set_power(struct sdhci_host *host, unsigned char mode,
-				 unsigned short vdd)
-{
-	struct mmc_host *mmc = host->mmc;
-
-	switch (mode) {
-	case MMC_POWER_OFF:
-		mmc_regulator_set_ocr(host->mmc, mmc->supply.vmmc, 0);
-
-		mmc_regulator_disable_vqmmc(mmc);
-		break;
-	case MMC_POWER_ON:
-		mmc_regulator_enable_vqmmc(mmc);
-		break;
-	case MMC_POWER_UP:
-		mmc_regulator_set_ocr(host->mmc, mmc->supply.vmmc, vdd);
-		break;
-	}
-}
-
 static struct sdhci_ops sdhci_sprd_ops = {
 	.read_l = sdhci_sprd_readl,
 	.write_l = sdhci_sprd_writel,
 	.write_w = sdhci_sprd_writew,
 	.write_b = sdhci_sprd_writeb,
 	.set_clock = sdhci_sprd_set_clock,
-	.set_power = sdhci_sprd_set_power,
 	.get_max_clock = sdhci_sprd_get_max_clock,
 	.get_min_clock = sdhci_sprd_get_min_clock,
 	.set_bus_width = sdhci_set_bus_width,
@@ -701,10 +667,6 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	host->caps1 &= ~(SDHCI_SUPPORT_SDR50 | SDHCI_SUPPORT_SDR104 |
 			 SDHCI_SUPPORT_DDR50);
 
-	ret = mmc_regulator_get_supply(host->mmc);
-	if (ret)
-		goto pm_runtime_disable;
-
 	ret = sdhci_setup_host(host);
 	if (ret)
 		goto pm_runtime_disable;
@@ -835,7 +797,7 @@ static struct platform_driver sdhci_sprd_driver = {
 	.driver = {
 		.name = "sdhci_sprd_r11",
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
-		.of_match_table = sdhci_sprd_of_match,
+		.of_match_table = of_match_ptr(sdhci_sprd_of_match),
 		.pm = &sdhci_sprd_pm_ops,
 	},
 };

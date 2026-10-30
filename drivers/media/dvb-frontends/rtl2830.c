@@ -609,7 +609,7 @@ static int rtl2830_pid_filter(struct dvb_frontend *fe, u8 index, u16 pid, int on
 		index, pid, onoff);
 
 	/* skip invalid PIDs (0x2000) */
-	if (pid > 0x1fff || index >= 32)
+	if (pid > 0x1fff || index > 32)
 		return 0;
 
 	if (onoff)
@@ -865,7 +865,7 @@ err:
 	return ret;
 }
 
-static void rtl2830_remove(struct i2c_client *client)
+static int rtl2830_remove(struct i2c_client *client)
 {
 	struct rtl2830_dev *dev = i2c_get_clientdata(client);
 
@@ -874,6 +874,8 @@ static void rtl2830_remove(struct i2c_client *client)
 	i2c_mux_del_adapters(dev->muxc);
 	regmap_exit(dev->regmap);
 	kfree(dev);
+
+	return 0;
 }
 
 static const struct i2c_device_id rtl2830_id_table[] = {

@@ -2,7 +2,7 @@
 /*
  * ALSA SoC Audio Layer - Rockchip Multi-DAIS  driver
  *
- * Copyright (c) 2018 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
  * Author: Sugar Zhang <sugar.zhang@rock-chips.com>
  *
  */
@@ -10,7 +10,6 @@
 #include <linux/module.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of_device.h>
-#include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
@@ -59,7 +58,6 @@ static int rockchip_mdais_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *cparams;
 	struct snd_soc_dai *child;
 	unsigned int *channel_maps;
-	unsigned int freq;
 	int ret = 0, i = 0;
 
 	cparams = kmemdup(params, sizeof(*params), GFP_KERNEL);
@@ -72,16 +70,6 @@ static int rockchip_mdais_hw_params(struct snd_pcm_substream *substream,
 		child = mdais->dais[i].dai;
 		if (!channel_maps[i])
 			continue;
-
-		if (mdais->mclk_fs_maps[i] > 0) {
-			freq = params_rate(params) * mdais->mclk_fs_maps[i];
-			ret = snd_soc_dai_set_sysclk(child, substream->stream, freq,
-						     SND_SOC_CLOCK_OUT);
-			if (ret && ret != -ENOTSUPP) {
-				dev_err(dai->dev, "Set sysclk(%uHZ) failed: %d\n", freq, ret);
-				break;
-			}
-		}
 
 		hw_refine_channels(cparams, channel_maps[i]);
 		if (child->driver->ops && child->driver->ops->hw_params) {
@@ -231,13 +219,9 @@ static int rockchip_mdais_set_sysclk(struct snd_soc_dai *cpu_dai, int clk_id,
 
 	for (i = 0; i < mdais->num_dais; i++) {
 		child = mdais->dais[i].dai;
-		if (mdais->mclk_fs_maps[i] > 0)
-			continue;
 		ret = snd_soc_dai_set_sysclk(child, clk_id, freq, dir);
-		if (ret && ret != -ENOTSUPP) {
-			dev_err(cpu_dai->dev, "Set soc_dai sysclk(%uHZ) failed: %d\n", freq, ret);
+		if (ret && ret != -ENOTSUPP)
 			return ret;
-		}
 	}
 
 	return 0;
@@ -344,7 +328,6 @@ static const struct snd_soc_dai_ops rockchip_mdais_dai_ops = {
 
 static const struct snd_soc_component_driver rockchip_mdais_component = {
 	.name = DAIS_DRV_NAME,
-	.legacy_dai_naming = 1,
 };
 
 static const struct of_device_id rockchip_mdais_match[] = {
@@ -424,10 +407,10 @@ static void mdais_parse_daifmt(struct device_node *node, struct rk_dai *dais,
 		format_mask |= SND_SOC_DAIFMT_INV_MASK;
 	ret = mdais_read_prop_array(node, BITCLOCK_MASTER_STR, cmst, num_dai);
 	if (!ret)
-		format_mask |= SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK;
+		format_mask |= SND_SOC_DAIFMT_MASTER_MASK;
 	ret = mdais_read_prop_array(node, FRAME_MASTER_STR, fmst, num_dai);
 	if (!ret)
-		format_mask |= SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK;
+		format_mask |= SND_SOC_DAIFMT_MASTER_MASK;
 
 	for (i = 0; i < num_dai; i++) {
 		format = 0;
@@ -447,18 +430,18 @@ static void mdais_parse_daifmt(struct device_node *node, struct rk_dai *dais,
 			break;
 		}
 
-		switch ((cmst[i] << 4) + fmst[i]) {
+		switch ((!cmst[i] << 4) + !fmst[i]) {
 		case 0x11:
-			format |= SND_SOC_DAIFMT_BP_FP;
+			format |= SND_SOC_DAIFMT_CBM_CFM;
 			break;
 		case 0x10:
-			format |= SND_SOC_DAIFMT_BP_FC;
+			format |= SND_SOC_DAIFMT_CBM_CFS;
 			break;
 		case 0x01:
-			format |= SND_SOC_DAIFMT_BC_FP;
+			format |= SND_SOC_DAIFMT_CBS_CFM;
 			break;
 		default:
-			format |= SND_SOC_DAIFMT_BC_FC;
+			format |= SND_SOC_DAIFMT_CBS_CFS;
 			break;
 		}
 
@@ -581,15 +564,6 @@ static int rockchip_mdais_probe(struct platform_device *pdev)
 	if (ret)
 		return -EINVAL;
 	mdais->playback_channel_maps = map;
-	map = devm_kcalloc(&pdev->dev, count,
-			   sizeof(*map), GFP_KERNEL);
-	if (!map)
-		return -ENOMEM;
-	ret = of_property_read_u32_array(np, "mclk-fs-mapping",
-					 map, count);
-	if (ret)
-		memset(map, 0x0, sizeof(*map) * count);
-	mdais->mclk_fs_maps = map;
 
 	for (i = 0; i < count; i++) {
 		node = of_parse_phandle(np, "dais", i);

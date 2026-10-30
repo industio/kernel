@@ -2,16 +2,6 @@
 #ifndef _NET_IP6_ROUTE_H
 #define _NET_IP6_ROUTE_H
 
-#include <net/addrconf.h>
-#include <net/flow.h>
-#include <net/ip6_fib.h>
-#include <net/sock.h>
-#include <net/lwtunnel.h>
-#include <linux/ip.h>
-#include <linux/ipv6.h>
-#include <linux/route.h>
-#include <net/nexthop.h>
-
 struct route_info {
 	__u8			type;
 	__u8			length;
@@ -28,6 +18,16 @@ struct route_info {
 	__be32			lifetime;
 	__u8			prefix[];	/* 0,8 or 16 */
 };
+
+#include <net/addrconf.h>
+#include <net/flow.h>
+#include <net/ip6_fib.h>
+#include <net/sock.h>
+#include <net/lwtunnel.h>
+#include <linux/ip.h>
+#include <linux/ipv6.h>
+#include <linux/route.h>
+#include <net/nexthop.h>
 
 #define RT6_LOOKUP_F_IFACE		0x00000001
 #define RT6_LOOKUP_F_REACHABLE		0x00000002
@@ -132,26 +132,18 @@ void rt6_age_exceptions(struct fib6_info *f6i, struct fib6_gc_args *gc_args,
 
 static inline int ip6_route_get_saddr(struct net *net, struct fib6_info *f6i,
 				      const struct in6_addr *daddr,
-				      unsigned int prefs, int l3mdev_index,
+				      unsigned int prefs,
 				      struct in6_addr *saddr)
 {
-	struct net_device *l3mdev;
-	struct net_device *dev;
-	bool same_vrf;
 	int err = 0;
 
-	rcu_read_lock();
-
-	l3mdev = dev_get_by_index_rcu(net, l3mdev_index);
-	if (!f6i || !f6i->fib6_prefsrc.plen || l3mdev)
-		dev = f6i ? fib6_info_nh_dev(f6i) : NULL;
-	same_vrf = !l3mdev || l3mdev_master_dev_rcu(dev) == l3mdev;
-	if (f6i && f6i->fib6_prefsrc.plen && same_vrf)
+	if (f6i && f6i->fib6_prefsrc.plen) {
 		*saddr = f6i->fib6_prefsrc.addr;
-	else
-		err = ipv6_dev_get_saddr(net, same_vrf ? dev : l3mdev, daddr, prefs, saddr);
+	} else {
+		struct net_device *dev = f6i ? fib6_info_nh_dev(f6i) : NULL;
 
-	rcu_read_unlock();
+		err = ipv6_dev_get_saddr(net, dev, daddr, prefs, saddr);
+	}
 
 	return err;
 }
@@ -182,8 +174,7 @@ struct fib6_info *rt6_get_dflt_router(struct net *net,
 				     struct net_device *dev);
 struct fib6_info *rt6_add_dflt_router(struct net *net,
 				     const struct in6_addr *gwaddr,
-				     struct net_device *dev, unsigned int pref,
-				     u32 defrtr_usr_metric);
+				     struct net_device *dev, unsigned int pref);
 
 void rt6_purge_dflt_routers(struct net *net);
 
@@ -271,19 +262,19 @@ static inline bool ipv6_anycast_destination(const struct dst_entry *dst,
 int ip6_fragment(struct net *net, struct sock *sk, struct sk_buff *skb,
 		 int (*output)(struct net *, struct sock *, struct sk_buff *));
 
-static inline unsigned int ip6_skb_dst_mtu(const struct sk_buff *skb)
+static inline unsigned int ip6_skb_dst_mtu(struct sk_buff *skb)
 {
-	const struct ipv6_pinfo *np = skb->sk && !dev_recursion_level() ?
-				inet6_sk(skb->sk) : NULL;
-	const struct dst_entry *dst = skb_dst(skb);
 	unsigned int mtu;
 
+	struct ipv6_pinfo *np = skb->sk && !dev_recursion_level() ?
+				inet6_sk(skb->sk) : NULL;
+
 	if (np && np->pmtudisc >= IPV6_PMTUDISC_PROBE) {
-		mtu = READ_ONCE(dst->dev->mtu);
-		mtu -= lwtunnel_headroom(dst->lwtstate, mtu);
-	} else {
-		mtu = dst_mtu(dst);
-	}
+		mtu = READ_ONCE(skb_dst(skb)->dev->mtu);
+		mtu -= lwtunnel_headroom(skb_dst(skb)->lwtstate, mtu);
+	} else
+		mtu = dst_mtu(skb_dst(skb));
+
 	return mtu;
 }
 
@@ -324,13 +315,12 @@ static inline bool rt6_duplicate_nexthop(struct fib6_info *a, struct fib6_info *
 	       !lwtunnel_cmp_encap(nha->fib_nh_lws, nhb->fib_nh_lws);
 }
 
-static inline unsigned int ip6_dst_mtu_maybe_forward(const struct dst_entry *dst,
-						     bool forwarding)
+static inline unsigned int ip6_dst_mtu_forward(const struct dst_entry *dst)
 {
 	struct inet6_dev *idev;
 	unsigned int mtu;
 
-	if (!forwarding || dst_metric_locked(dst, RTAX_MTU)) {
+	if (dst_metric_locked(dst, RTAX_MTU)) {
 		mtu = dst_metric_raw(dst, RTAX_MTU);
 		if (mtu)
 			goto out;

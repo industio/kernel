@@ -431,7 +431,7 @@ static int skcipher_copy_iv(struct skcipher_walk *walk)
 
 static int skcipher_walk_first(struct skcipher_walk *walk)
 {
-	if (WARN_ON_ONCE(in_hardirq()))
+	if (WARN_ON_ONCE(in_irq()))
 		return -EDEADLK;
 
 	walk->buffer = NULL;
@@ -490,6 +490,12 @@ int skcipher_walk_virt(struct skcipher_walk *walk,
 	return err;
 }
 EXPORT_SYMBOL_GPL(skcipher_walk_virt);
+
+void skcipher_walk_atomise(struct skcipher_walk *walk)
+{
+	walk->flags &= ~SKCIPHER_WALK_SLEEP;
+}
+EXPORT_SYMBOL_GPL(skcipher_walk_atomise);
 
 int skcipher_walk_async(struct skcipher_walk *walk,
 			struct skcipher_request *req)

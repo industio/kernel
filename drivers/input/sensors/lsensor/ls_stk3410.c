@@ -1,7 +1,7 @@
 /*
  * drivers/input/sensors/lsensor/ls_stk3410.c
  *
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  *
  * Authors: Bin Yang <yangbin@rock-chips.com>
  *
@@ -344,9 +344,9 @@ static int light_stk3410_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &light_stk3410_ops);
 }
 
-static void light_stk3410_remove(struct i2c_client *client)
+static int light_stk3410_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &light_stk3410_ops);
+	return sensor_unregister_device(client, NULL, &light_stk3410_ops);
 }
 
 static const struct i2c_device_id light_stk3410_id[] = {

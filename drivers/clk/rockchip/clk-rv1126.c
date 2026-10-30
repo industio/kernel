@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2019 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2019 Rockchip Electronics Co. Ltd.
  * Author: Finley Xiao <finley.xiao@rock-chips.com>
  */
 
@@ -10,7 +10,7 @@
 #include <linux/of_address.h>
 #include <linux/of_device.h>
 #include <linux/syscore_ops.h>
-#include <dt-bindings/clock/rockchip,rv1126-cru.h>
+#include <dt-bindings/clock/rv1126-cru.h>
 #include "clk.h"
 
 #define RV1126_GMAC_CON			0x460
@@ -1402,7 +1402,7 @@ static struct rockchip_clk_branch rv1126_clk_branches[] __initdata = {
 static void __iomem *rv1126_cru_base;
 static void __iomem *rv1126_pmucru_base;
 
-static void rv1126_dump_cru(void)
+void rv1126_dump_cru(void)
 {
 	if (rv1126_pmucru_base) {
 		pr_warn("PMU CRU:\n");
@@ -1417,6 +1417,18 @@ static void rv1126_dump_cru(void)
 			       0x588, false);
 	}
 }
+EXPORT_SYMBOL_GPL(rv1126_dump_cru);
+
+static int rv1126_clk_panic(struct notifier_block *this,
+			  unsigned long ev, void *ptr)
+{
+	rv1126_dump_cru();
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block rv1126_clk_panic_block = {
+	.notifier_call = rv1126_clk_panic,
+};
 
 static struct rockchip_clk_provider *pmucru_ctx;
 static void __init rv1126_pmu_clk_init(struct device_node *np)
@@ -1497,8 +1509,8 @@ static void __init rv1126_clk_init(struct device_node *np)
 
 	rockchip_clk_of_add_provider(np, ctx);
 
-	if (!rk_dump_cru)
-		rk_dump_cru = rv1126_dump_cru;
+	atomic_notifier_chain_register(&panic_notifier_list,
+				       &rv1126_clk_panic_block);
 }
 
 CLK_OF_DECLARE(rv1126_cru, "rockchip,rv1126-cru", rv1126_clk_init);
@@ -1507,21 +1519,21 @@ struct clk_rv1126_inits {
 	void (*inits)(struct device_node *np);
 };
 
-static const struct clk_rv1126_inits clk_rv1126_pmucru_init = {
+static const struct clk_rv1126_inits clk_rv1126_pmu_init = {
 	.inits = rv1126_pmu_clk_init,
 };
 
-static const struct clk_rv1126_inits clk_rv1126_cru_init = {
+static const struct clk_rv1126_inits clk_rv1126_init = {
 	.inits = rv1126_clk_init,
 };
 
 static const struct of_device_id clk_rv1126_match_table[] = {
 	{
 		.compatible = "rockchip,rv1126-cru",
-		.data = &clk_rv1126_cru_init,
-	},  {
+		.data = &clk_rv1126_init,
+	}, {
 		.compatible = "rockchip,rv1126-pmucru",
-		.data = &clk_rv1126_pmucru_init,
+		.data = &clk_rv1126_pmu_init,
 	},
 	{ }
 };
@@ -1530,12 +1542,14 @@ MODULE_DEVICE_TABLE(of, clk_rv1126_match_table);
 static int __init clk_rv1126_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
+	const struct of_device_id *match;
 	const struct clk_rv1126_inits *init_data;
 
-	init_data = (struct clk_rv1126_inits *)of_device_get_match_data(&pdev->dev);
-	if (!init_data)
+	match = of_match_device(clk_rv1126_match_table, &pdev->dev);
+	if (!match || !match->data)
 		return -EINVAL;
 
+	init_data = match->data;
 	if (init_data->inits)
 		init_data->inits(np);
 

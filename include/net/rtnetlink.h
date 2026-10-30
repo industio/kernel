@@ -10,30 +10,7 @@ typedef int (*rtnl_doit_func)(struct sk_buff *, struct nlmsghdr *,
 typedef int (*rtnl_dumpit_func)(struct sk_buff *, struct netlink_callback *);
 
 enum rtnl_link_flags {
-	RTNL_FLAG_DOIT_UNLOCKED		= BIT(0),
-	RTNL_FLAG_BULK_DEL_SUPPORTED	= BIT(1),
-};
-
-enum rtnl_kinds {
-	RTNL_KIND_NEW,
-	RTNL_KIND_DEL,
-	RTNL_KIND_GET,
-	RTNL_KIND_SET
-};
-#define RTNL_KIND_MASK 0x3
-
-static inline enum rtnl_kinds rtnl_msgtype_kind(int msgtype)
-{
-	return msgtype & RTNL_KIND_MASK;
-}
-
-struct rtnl_msg_handler {
-	struct module *owner;
-	int protocol;
-	int msgtype;
-	rtnl_doit_func doit;
-	rtnl_dumpit_func dumpit;
-	int flags;
+	RTNL_FLAG_DOIT_UNLOCKED = 1,
 };
 
 void rtnl_register(int protocol, int msgtype,
@@ -42,14 +19,6 @@ int rtnl_register_module(struct module *owner, int protocol, int msgtype,
 			 rtnl_doit_func, rtnl_dumpit_func, unsigned int flags);
 int rtnl_unregister(int protocol, int msgtype);
 void rtnl_unregister_all(int protocol);
-
-int __rtnl_register_many(const struct rtnl_msg_handler *handlers, int n);
-void __rtnl_unregister_many(const struct rtnl_msg_handler *handlers, int n);
-
-#define rtnl_register_many(handlers)				\
-	__rtnl_register_many(handlers, ARRAY_SIZE(handlers))
-#define rtnl_unregister_many(handlers)				\
-	__rtnl_unregister_many(handlers, ARRAY_SIZE(handlers))
 
 static inline int rtnl_msg_family(const struct nlmsghdr *nlh)
 {
@@ -68,9 +37,6 @@ static inline int rtnl_msg_family(const struct nlmsghdr *nlh)
  *	@maxtype: Highest device specific netlink attribute number
  *	@policy: Netlink policy for device specific attribute validation
  *	@validate: Optional validation function for netlink/changelink parameters
- *	@alloc: netdev allocation function, can be %NULL and is then used
- *		in place of alloc_netdev_mqs(), in this case @priv_size
- *		and @setup are unused. Returns a netdev or ERR_PTR().
  *	@priv_size: sizeof net_device private space
  *	@setup: net_device setup function
  *	@newlink: Function for configuring and registering a new device
@@ -97,11 +63,6 @@ struct rtnl_link_ops {
 	const char		*kind;
 
 	size_t			priv_size;
-	struct net_device	*(*alloc)(struct nlattr *tb[],
-					  const char *ifname,
-					  unsigned char name_assign_type,
-					  unsigned int num_tx_queues,
-					  unsigned int num_rx_queues);
 	void			(*setup)(struct net_device *dev);
 
 	bool			netns_refund;
@@ -184,11 +145,10 @@ struct rtnl_af_ops {
 						    u32 ext_filter_mask);
 
 	int			(*validate_link_af)(const struct net_device *dev,
-						    const struct nlattr *attr,
-						    struct netlink_ext_ack *extack);
+						    const struct nlattr *attr);
 	int			(*set_link_af)(struct net_device *dev,
-					       const struct nlattr *attr,
-					       struct netlink_ext_ack *extack);
+					       const struct nlattr *attr);
+
 	int			(*fill_stats_af)(struct sk_buff *skb,
 						 const struct net_device *dev);
 	size_t			(*get_stats_af_size)(const struct net_device *dev);

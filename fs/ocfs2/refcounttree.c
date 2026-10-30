@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * refcounttree.c
  *
  * Copyright (C) 2009 Oracle.  All rights reserved.
@@ -25,7 +27,6 @@
 #include "namei.h"
 #include "ocfs2_trace.h"
 #include "file.h"
-#include "symlink.h"
 
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -977,7 +978,7 @@ static int ocfs2_get_refcount_cpos_end(struct ocfs2_caching_info *ci,
 		return 0;
 	}
 
-	if (!eb || !eb->h_next_leaf_blk) {
+	if (!eb || (eb && !eb->h_next_leaf_blk)) {
 		/*
 		 * We are the last extent rec, so any high cpos should
 		 * be stored in this leaf refcount block.
@@ -2615,7 +2616,7 @@ static inline unsigned int ocfs2_cow_align_length(struct super_block *sb,
 }
 
 /*
- * Calculate out the start and number of virtual clusters we need to CoW.
+ * Calculate out the start and number of virtual clusters we need to to CoW.
  *
  * cpos is vitual start cluster position we want to do CoW in a
  * file and write_len is the cluster length.
@@ -2962,14 +2963,12 @@ retry:
 		}
 
 		if (!PageUptodate(page)) {
-			struct folio *folio = page_folio(page);
-
-			ret = block_read_full_folio(folio, ocfs2_get_block);
+			ret = block_read_full_page(page, ocfs2_get_block);
 			if (ret) {
 				mlog_errno(ret);
 				goto unlock;
 			}
-			folio_lock(folio);
+			lock_page(page);
 		}
 
 		if (page_has_buffers(page)) {
@@ -3147,18 +3146,48 @@ int ocfs2_cow_sync_writeback(struct super_block *sb,
 			     struct inode *inode,
 			     u32 cpos, u32 num_clusters)
 {
-	int ret;
-	loff_t start, end;
+	int ret = 0;
+	loff_t offset, end, map_end;
+	pgoff_t page_index;
+	struct page *page;
 
 	if (ocfs2_should_order_data(inode))
 		return 0;
 
-	start = ((loff_t)cpos) << OCFS2_SB(sb)->s_clustersize_bits;
-	end = start + (num_clusters << OCFS2_SB(sb)->s_clustersize_bits) - 1;
+	offset = ((loff_t)cpos) << OCFS2_SB(sb)->s_clustersize_bits;
+	end = offset + (num_clusters << OCFS2_SB(sb)->s_clustersize_bits);
 
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (ret < 0)
+	ret = filemap_fdatawrite_range(inode->i_mapping,
+				       offset, end - 1);
+	if (ret < 0) {
 		mlog_errno(ret);
+		return ret;
+	}
+
+	while (offset < end) {
+		page_index = offset >> PAGE_SHIFT;
+		map_end = ((loff_t)page_index + 1) << PAGE_SHIFT;
+		if (map_end > end)
+			map_end = end;
+
+		page = find_or_create_page(inode->i_mapping,
+					   page_index, GFP_NOFS);
+		BUG_ON(!page);
+
+		wait_on_page_writeback(page);
+		if (PageError(page)) {
+			ret = -EIO;
+			mlog_errno(ret);
+		} else
+			mark_page_accessed(page);
+
+		unlock_page(page);
+		put_page(page);
+		page = NULL;
+		offset = map_end;
+		if (ret)
+			break;
+	}
 
 	return ret;
 }
@@ -4155,9 +4184,8 @@ static int __ocfs2_reflink(struct dentry *old_dentry,
 	int ret;
 	struct inode *inode = d_inode(old_dentry);
 	struct buffer_head *new_bh = NULL;
-	struct ocfs2_inode_info *oi = OCFS2_I(inode);
 
-	if (oi->ip_flags & OCFS2_INODE_SYSTEM_FILE) {
+	if (OCFS2_I(inode)->ip_flags & OCFS2_INODE_SYSTEM_FILE) {
 		ret = -EINVAL;
 		mlog_errno(ret);
 		goto out;
@@ -4183,26 +4211,6 @@ static int __ocfs2_reflink(struct dentry *old_dentry,
 		goto out_unlock;
 	}
 
-	if ((oi->ip_dyn_features & OCFS2_HAS_XATTR_FL) &&
-	    (oi->ip_dyn_features & OCFS2_INLINE_XATTR_FL)) {
-		/*
-		 * Adjust extent record count to reserve space for extended attribute.
-		 * Inline data count had been adjusted in ocfs2_duplicate_inline_data().
-		 */
-		struct ocfs2_inode_info *new_oi = OCFS2_I(new_inode);
-
-		if (!(new_oi->ip_dyn_features & OCFS2_INLINE_DATA_FL) &&
-		    !(ocfs2_inode_is_fast_symlink(new_inode))) {
-			struct ocfs2_dinode *new_di = (struct ocfs2_dinode *)new_bh->b_data;
-			struct ocfs2_dinode *old_di = (struct ocfs2_dinode *)old_bh->b_data;
-			struct ocfs2_extent_list *el = &new_di->id2.i_list;
-			int inline_size = le16_to_cpu(old_di->i_xattr_inline_size);
-
-			le16_add_cpu(&el->l_count, -(inline_size /
-					sizeof(struct ocfs2_extent_rec)));
-		}
-	}
-
 	ret = ocfs2_create_reflink_node(inode, old_bh,
 					new_inode, new_bh, preserve);
 	if (ret) {
@@ -4210,7 +4218,7 @@ static int __ocfs2_reflink(struct dentry *old_dentry,
 		goto inode_unlock;
 	}
 
-	if (oi->ip_dyn_features & OCFS2_HAS_XATTR_FL) {
+	if (OCFS2_I(inode)->ip_dyn_features & OCFS2_HAS_XATTR_FL) {
 		ret = ocfs2_reflink_xattrs(inode, old_bh,
 					   new_inode, new_bh,
 					   preserve);
@@ -4338,7 +4346,7 @@ static inline int ocfs2_may_create(struct inode *dir, struct dentry *child)
 		return -EEXIST;
 	if (IS_DEADDIR(dir))
 		return -ENOENT;
-	return inode_permission(&init_user_ns, dir, MAY_WRITE | MAY_EXEC);
+	return inode_permission(dir, MAY_WRITE | MAY_EXEC);
 }
 
 /**
@@ -4392,7 +4400,7 @@ static int ocfs2_vfs_reflink(struct dentry *old_dentry, struct inode *dir,
 	 * file.
 	 */
 	if (!preserve) {
-		error = inode_permission(&init_user_ns, inode, MAY_READ);
+		error = inode_permission(inode, MAY_READ);
 		if (error)
 			return error;
 	}

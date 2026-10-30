@@ -125,8 +125,6 @@ struct rkisp_buffer {
 };
 
 struct rkisp_dummy_buffer {
-	struct vb2_buffer vb;
-	struct vb2_queue vb2_queue;
 	struct list_head queue;
 	struct dma_buf *dbuf;
 	dma_addr_t dma_addr;
@@ -135,7 +133,6 @@ struct rkisp_dummy_buffer {
 	void *vaddr;
 	u32 size;
 	int dma_fd;
-	int index;
 	bool is_need_vaddr;
 	bool is_need_dbuf;
 	bool is_need_dmafd;

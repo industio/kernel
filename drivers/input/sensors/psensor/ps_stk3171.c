@@ -1,6 +1,6 @@
 /* drivers/input/sensors/access/kxtik.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -238,9 +238,9 @@ static int proximity_stk3171_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &proximity_stk3171_ops);
 }
 
-static void proximity_stk3171_remove(struct i2c_client *client)
+static int proximity_stk3171_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &proximity_stk3171_ops);
+	return sensor_unregister_device(client, NULL, &proximity_stk3171_ops);
 }
 
 static const struct i2c_device_id proximity_stk3171_id[] = {

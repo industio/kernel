@@ -965,10 +965,9 @@ rkisp_stats_send_meas_v3x(struct rkisp_isp_stats_vdev *stats_vdev,
 	struct rkisp_stats_ops_v3x *ops = stats_vdev->priv_ops;
 	struct rkisp_isp_params_vdev *params_vdev = &stats_vdev->dev->params_vdev;
 	u32 size = sizeof(struct rkisp3x_isp_stat_buffer);
-	unsigned long flags = 0;
 
 	cur_frame_id = meas_work->frame_id;
-	spin_lock_irqsave(&stats_vdev->rd_lock, flags);
+	spin_lock(&stats_vdev->rd_lock);
 	/* get one empty buffer */
 	if (!stats_vdev->rdbk_drop) {
 		if (!list_empty(&stats_vdev->stat)) {
@@ -977,7 +976,7 @@ rkisp_stats_send_meas_v3x(struct rkisp_isp_stats_vdev *stats_vdev,
 			list_del(&cur_buf->queue);
 		}
 	}
-	spin_unlock_irqrestore(&stats_vdev->rd_lock, flags);
+	spin_unlock(&stats_vdev->rd_lock);
 
 	if (cur_buf) {
 		cur_stat_buf = cur_buf->vaddr[0];
@@ -1086,14 +1085,13 @@ rkisp_stats_isr_v3x(struct rkisp_isp_stats_vdev *stats_vdev,
 		ISP3X_EXP_END | ISP3X_SIHST_RDY | ISP3X_AFM_SUM_OF | ISP3X_AFM_LUM_OF;
 	u32 cur_frame_id, isp_mis_tmp = 0, iq_3a_mask = 0;
 	u32 i, wr_buf_idx, temp_isp_ris, temp_isp3a_ris;
-	unsigned long flags = 0;
 
 	rkisp_dmarx_get_frame(stats_vdev->dev, &cur_frame_id, NULL, NULL, true);
 
 	if (IS_HDR_RDBK(dev->hdr.op_mode))
 		iq_3a_mask = ISP3X_3A_RAWAE_BIG;
 
-	spin_lock_irqsave(&stats_vdev->irq_lock, flags);
+	spin_lock(&stats_vdev->irq_lock);
 
 	temp_isp_ris = readl(base + ISP3X_ISP_RIS);
 	temp_isp3a_ris = readl(base + ISP3X_ISP_3A_RIS);
@@ -1147,7 +1145,7 @@ rkisp_stats_isr_v3x(struct rkisp_isp_stats_vdev *stats_vdev,
 	}
 
 unlock:
-	spin_unlock_irqrestore(&stats_vdev->irq_lock, flags);
+	spin_unlock(&stats_vdev->irq_lock);
 }
 
 static void

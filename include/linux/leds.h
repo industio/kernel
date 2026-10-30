@@ -33,12 +33,6 @@ enum led_brightness {
 	LED_FULL	= 255,
 };
 
-enum led_default_state {
-	LEDS_DEFSTATE_OFF	= 0,
-	LEDS_DEFSTATE_ON	= 1,
-	LEDS_DEFSTATE_KEEP	= 2,
-};
-
 struct led_init_data {
 	/* device fwnode handle */
 	struct fwnode_handle *fwnode;
@@ -69,8 +63,8 @@ struct led_hw_trigger_type {
 
 struct led_classdev {
 	const char		*name;
-	unsigned int brightness;
-	unsigned int max_brightness;
+	enum led_brightness	 brightness;
+	enum led_brightness	 max_brightness;
 	int			 flags;
 
 	/* Lower 16 bits reflect status */
@@ -259,7 +253,8 @@ void led_blink_set_oneshot(struct led_classdev *led_cdev,
  * software blink timer that implements blinking when the
  * hardware doesn't. This function is guaranteed not to sleep.
  */
-void led_set_brightness(struct led_classdev *led_cdev, unsigned int brightness);
+void led_set_brightness(struct led_classdev *led_cdev,
+			enum led_brightness brightness);
 
 /**
  * led_set_brightness_sync - set LED brightness synchronously
@@ -272,7 +267,8 @@ void led_set_brightness(struct led_classdev *led_cdev, unsigned int brightness);
  *
  * Returns: 0 on success or negative error value on failure
  */
-int led_set_brightness_sync(struct led_classdev *led_cdev, unsigned int value);
+int led_set_brightness_sync(struct led_classdev *led_cdev,
+			    enum led_brightness value);
 
 /**
  * led_update_brightness - update LED brightness
@@ -356,14 +352,11 @@ struct led_trigger {
 	int		(*activate)(struct led_classdev *led_cdev);
 	void		(*deactivate)(struct led_classdev *led_cdev);
 
-	/* Brightness set by led_trigger_event */
-	enum led_brightness brightness;
-
 	/* LED-private triggers have this set */
 	struct led_hw_trigger_type *trigger_type;
 
 	/* LEDs under control by this trigger (for simple triggers) */
-	spinlock_t	  leddev_list_lock;
+	rwlock_t	  leddev_list_lock;
 	struct list_head  led_cdevs;
 
 	/* Link to next registered trigger */
@@ -412,11 +405,22 @@ static inline void *led_get_trigger_data(struct led_classdev *led_cdev)
 	return led_cdev->trigger_data;
 }
 
-static inline enum led_brightness
-led_trigger_get_brightness(const struct led_trigger *trigger)
-{
-	return trigger ? trigger->brightness : LED_OFF;
-}
+/**
+ * led_trigger_rename_static - rename a trigger
+ * @name: the new trigger name
+ * @trig: the LED trigger to rename
+ *
+ * Change a LED trigger name by copying the string passed in
+ * name into current trigger name, which MUST be large
+ * enough for the new string.
+ *
+ * Note that name must NOT point to the same string used
+ * during LED registration, as that could lead to races.
+ *
+ * This is meant to be used on triggers with statically
+ * allocated name.
+ */
+void led_trigger_rename_static(const char *name, struct led_trigger *trig);
 
 #define module_led_trigger(__led_trigger) \
 	module_driver(__led_trigger, led_trigger_register, \
@@ -452,12 +456,6 @@ static inline void led_set_trigger_data(struct led_classdev *led_cdev) {}
 static inline void *led_get_trigger_data(struct led_classdev *led_cdev)
 {
 	return NULL;
-}
-
-static inline enum led_brightness
-led_trigger_get_brightness(const struct led_trigger *trigger)
-{
-	return LED_OFF;
 }
 
 #endif /* CONFIG_LEDS_TRIGGERS */
@@ -524,9 +522,9 @@ struct gpio_led {
 	/* default_state should be one of LEDS_GPIO_DEFSTATE_(ON|OFF|KEEP) */
 	struct gpio_desc *gpiod;
 };
-#define LEDS_GPIO_DEFSTATE_OFF		LEDS_DEFSTATE_OFF
-#define LEDS_GPIO_DEFSTATE_ON		LEDS_DEFSTATE_ON
-#define LEDS_GPIO_DEFSTATE_KEEP		LEDS_DEFSTATE_KEEP
+#define LEDS_GPIO_DEFSTATE_OFF		0
+#define LEDS_GPIO_DEFSTATE_ON		1
+#define LEDS_GPIO_DEFSTATE_KEEP		2
 
 struct gpio_led_platform_data {
 	int 		num_leds;
@@ -567,7 +565,7 @@ static inline void ledtrig_cpu(enum cpu_led_event evt)
 
 #ifdef CONFIG_LEDS_BRIGHTNESS_HW_CHANGED
 void led_classdev_notify_brightness_hw_changed(
-	struct led_classdev *led_cdev, unsigned int brightness);
+	struct led_classdev *led_cdev, enum led_brightness brightness);
 #else
 static inline void led_classdev_notify_brightness_hw_changed(
 	struct led_classdev *led_cdev, enum led_brightness brightness) { }

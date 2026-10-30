@@ -402,7 +402,7 @@
 };
 
 &dp0 {
-	rockchip,split-mode;
+	split-mode;
 	force-hpd;
 	status = "okay";
 
@@ -531,7 +531,7 @@
 };
 
 &edp0 {
-	rockchip,split-mode;
+	split-mode;
 	force-hpd;
 	status = "okay";
 
@@ -2560,7 +2560,6 @@
 };
 
 &vop {
-	vop-supply = <&vdd_log_s0>;
 	//assigned-clocks = <&cru PLL_V0PLL>;
 	//assigned-clock-rates = <1152000000>;
 };

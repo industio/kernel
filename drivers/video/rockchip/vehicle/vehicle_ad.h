@@ -9,7 +9,6 @@
 #include <linux/i2c.h>
 #include "vehicle_cfg.h"
 #include <linux/rk-camera-module.h>
-#include <linux/gpio/consumer.h>
 
 enum vehicle_ad_fix_format {
 	AD_FIX_FORMAT_AUTO_DETECT = 0,
@@ -47,9 +46,12 @@ struct vehicle_ad_dev {
 	int i2c_chl;
 	int i2c_add;
 //	int i2c_rate;
-	struct gpio_desc *powerdown_gpio;
-	struct gpio_desc *power_gpio;
-	struct gpio_desc *reset_gpio;
+	int powerdown;
+	int pwdn_active;
+	int power;
+	int pwr_active;
+	int reset;
+	int rst_active;
 	int cvstd;
 	int cvstd_irq_flag;
 	int irq;
@@ -62,7 +64,6 @@ struct vehicle_ad_dev {
 	u8 detect_status;
 	u8 last_detect_status;
 	int drop_frames;
-	struct clk	*xvclk;
 };
 
 int vehicle_generic_sensor_write(struct vehicle_ad_dev *ad, char reg, char *pval);
@@ -73,7 +74,7 @@ int vehicle_parse_sensor(struct vehicle_ad_dev *ad);
 void vehicle_ad_channel_set(struct vehicle_ad_dev *ad, int channel);
 
 int vehicle_ad_init(struct vehicle_ad_dev *ad);
-int vehicle_ad_deinit(struct vehicle_ad_dev *ad);
+int vehicle_ad_deinit(void);
 int vehicle_ad_stream(struct vehicle_ad_dev *ad, int val);
 struct vehicle_cfg *vehicle_ad_get_vehicle_cfg(void);
 void vehicle_ad_check_cif_error(struct vehicle_ad_dev *ad, int last_line);

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2020 Rockchip Electronics Co. Ltd.
  *
  * Author: Shunqing Chen <csq@rock-chips.com>
  */
@@ -311,7 +311,6 @@ struct rk628 {
 	struct dentry *debug_dir;
 	struct gpio_desc *hdmirx_det_gpio;
 	bool last_mipi_status;
-	bool is_suspend;
 };
 
 #define rk628_dbg(rk628, format, ...)	\

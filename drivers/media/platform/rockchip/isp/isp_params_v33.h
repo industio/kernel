@@ -4,6 +4,8 @@
 #ifndef _RKISP_ISP_PARAM_V33_H
 #define _RKISP_ISP_PARAM_V33_H
 
+#include <linux/rk-isp1-config.h>
+#include <linux/rk-preisp.h>
 #include "common.h"
 #include "isp_params.h"
 

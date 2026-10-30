@@ -18,7 +18,6 @@
 #include <linux/klist.h>
 #include <linux/pm.h>
 #include <linux/device/bus.h>
-#include <linux/module.h>
 
 /**
  * enum probe_type - device driver probe type to try
@@ -76,7 +75,7 @@ enum probe_type {
  * @resume:	Called to bring a device from sleep mode.
  * @groups:	Default attributes that get created by the driver core
  *		automatically.
- * @dev_groups:	Additional attributes attached to device instance once
+ * @dev_groups:	Additional attributes attached to device instance once the
  *		it is bound to the driver.
  * @pm:		Power management operations of the device which matched
  *		this driver.
@@ -119,6 +118,11 @@ struct device_driver {
 	void (*coredump) (struct device *dev);
 
 	struct driver_private *p;
+
+	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_RESERVE(2);
+	ANDROID_KABI_RESERVE(3);
+	ANDROID_KABI_RESERVE(4);
 };
 
 
@@ -129,7 +133,6 @@ extern struct device_driver *driver_find(const char *name,
 					 struct bus_type *bus);
 extern int driver_probe_done(void);
 extern void wait_for_device_probe(void);
-void __init wait_for_init_devices_probe(void);
 
 /* sysfs interface for exporting driver attributes */
 

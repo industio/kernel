@@ -62,7 +62,7 @@ struct ad7606_chip_info {
  * struct ad7606_state - driver instance specific data
  * @dev		pointer to kernel device
  * @chip_info		entry in the table of chips that describes this device
- * @reg		regulator info for the power supply of the device
+ * @reg		regulator info for the the power supply of the device
  * @bops		bus operations (SPI or parallel)
  * @range		voltage range selection, selects which scale to apply
  * @oversampling	oversampling selection
@@ -116,11 +116,11 @@ struct ad7606_state {
 	struct completion		completion;
 
 	/*
-	 * DMA (thus cache coherency maintenance) may require the
+	 * DMA (thus cache coherency maintenance) requires the
 	 * transfer buffers to live in their own cache lines.
 	 * 16 * 16-bit samples + 64-bit timestamp
 	 */
-	unsigned short			data[20] __aligned(IIO_DMA_MINALIGN);
+	unsigned short			data[20] ____cacheline_aligned;
 	__be16				d16[2];
 };
 
@@ -152,8 +152,6 @@ struct ad7606_bus_ops {
 int ad7606_probe(struct device *dev, int irq, void __iomem *base_address,
 		 const char *name, unsigned int id,
 		 const struct ad7606_bus_ops *bops);
-
-int ad7606_reset(struct ad7606_state *st);
 
 enum ad7606_supported_device_ids {
 	ID_AD7605_4,

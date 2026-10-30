@@ -18,7 +18,7 @@
 #include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <linux/fs.h>
-#include <kvm/arm_hypercalls.h>
+#include <kvm/arm_psci.h>
 #include <asm/cputype.h>
 #include <linux/uaccess.h>
 #include <asm/fpsimd.h>
@@ -28,37 +28,20 @@
 
 #include "trace.h"
 
-const struct _kvm_stats_desc kvm_vm_stats_desc[] = {
-	KVM_GENERIC_VM_STATS()
-};
-
-const struct kvm_stats_header kvm_vm_stats_header = {
-	.name_size = KVM_STATS_NAME_SIZE,
-	.num_desc = ARRAY_SIZE(kvm_vm_stats_desc),
-	.id_offset =  sizeof(struct kvm_stats_header),
-	.desc_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE,
-	.data_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE +
-		       sizeof(kvm_vm_stats_desc),
-};
-
-const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
-	KVM_GENERIC_VCPU_STATS(),
-	STATS_DESC_COUNTER(VCPU, hvc_exit_stat),
-	STATS_DESC_COUNTER(VCPU, wfe_exit_stat),
-	STATS_DESC_COUNTER(VCPU, wfi_exit_stat),
-	STATS_DESC_COUNTER(VCPU, mmio_exit_user),
-	STATS_DESC_COUNTER(VCPU, mmio_exit_kernel),
-	STATS_DESC_COUNTER(VCPU, signal_exits),
-	STATS_DESC_COUNTER(VCPU, exits)
-};
-
-const struct kvm_stats_header kvm_vcpu_stats_header = {
-	.name_size = KVM_STATS_NAME_SIZE,
-	.num_desc = ARRAY_SIZE(kvm_vcpu_stats_desc),
-	.id_offset = sizeof(struct kvm_stats_header),
-	.desc_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE,
-	.data_offset = sizeof(struct kvm_stats_header) + KVM_STATS_NAME_SIZE +
-		       sizeof(kvm_vcpu_stats_desc),
+struct kvm_stats_debugfs_item debugfs_entries[] = {
+	VCPU_STAT("halt_successful_poll", halt_successful_poll),
+	VCPU_STAT("halt_attempted_poll", halt_attempted_poll),
+	VCPU_STAT("halt_poll_invalid", halt_poll_invalid),
+	VCPU_STAT("halt_wakeup", halt_wakeup),
+	VCPU_STAT("hvc_exit_stat", hvc_exit_stat),
+	VCPU_STAT("wfe_exit_stat", wfe_exit_stat),
+	VCPU_STAT("wfi_exit_stat", wfi_exit_stat),
+	VCPU_STAT("mmio_exit_user", mmio_exit_user),
+	VCPU_STAT("mmio_exit_kernel", mmio_exit_kernel),
+	VCPU_STAT("exits", exits),
+	VCPU_STAT("halt_poll_success_ns", halt_poll_success_ns),
+	VCPU_STAT("halt_poll_fail_ns", halt_poll_fail_ns),
+	{ NULL }
 };
 
 static bool core_reg_offset_is_vreg(u64 off)
@@ -271,7 +254,7 @@ static int set_core_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 	if (*vcpu_cpsr(vcpu) & PSR_MODE32_BIT) {
 		int i, nr_reg;
 
-		switch (*vcpu_cpsr(vcpu) & PSR_AA32_MODE_MASK) {
+		switch (*vcpu_cpsr(vcpu)) {
 		/*
 		 * Either we are dealing with user mode, and only the
 		 * first 15 registers (+ PC) must be narrowed to 32bit.
@@ -283,7 +266,7 @@ static int set_core_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 			break;
 
 		/*
-		 * Otherwise, this is a privileged mode, and *all* the
+		 * Otherwide, this is a priviledged mode, and *all* the
 		 * registers must be narrowed to 32bit.
 		 */
 		default:
@@ -757,9 +740,7 @@ int kvm_arm_get_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 
 	switch (reg->id & KVM_REG_ARM_COPROC_MASK) {
 	case KVM_REG_ARM_CORE:	return get_core_reg(vcpu, reg);
-	case KVM_REG_ARM_FW:
-	case KVM_REG_ARM_FW_FEAT_BMAP:
-		return kvm_arm_get_fw_reg(vcpu, reg);
+	case KVM_REG_ARM_FW:	return kvm_arm_get_fw_reg(vcpu, reg);
 	case KVM_REG_ARM64_SVE:	return get_sve_reg(vcpu, reg);
 	}
 
@@ -777,9 +758,7 @@ int kvm_arm_set_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 
 	switch (reg->id & KVM_REG_ARM_COPROC_MASK) {
 	case KVM_REG_ARM_CORE:	return set_core_reg(vcpu, reg);
-	case KVM_REG_ARM_FW:
-	case KVM_REG_ARM_FW_FEAT_BMAP:
-		return kvm_arm_set_fw_reg(vcpu, reg);
+	case KVM_REG_ARM_FW:	return kvm_arm_set_fw_reg(vcpu, reg);
 	case KVM_REG_ARM64_SVE:	return set_sve_reg(vcpu, reg);
 	}
 
@@ -844,7 +823,7 @@ int __kvm_arm_vcpu_set_events(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-u32 __attribute_const__ kvm_target_cpu(void)
+int __attribute_const__ kvm_target_cpu(void)
 {
 	unsigned long implementor = read_cpuid_implementor();
 	unsigned long part_number = read_cpuid_part_number();
@@ -864,7 +843,7 @@ u32 __attribute_const__ kvm_target_cpu(void)
 		break;
 	case ARM_CPU_IMP_APM:
 		switch (part_number) {
-		case APM_CPU_PART_XGENE:
+		case APM_CPU_PART_POTENZA:
 			return KVM_ARM_TARGET_XGENE_POTENZA;
 		}
 		break;
@@ -874,9 +853,12 @@ u32 __attribute_const__ kvm_target_cpu(void)
 	return KVM_ARM_TARGET_GENERIC_V8;
 }
 
-void kvm_vcpu_preferred_target(struct kvm_vcpu_init *init)
+int kvm_vcpu_preferred_target(struct kvm_vcpu_init *init)
 {
-	u32 target = kvm_target_cpu();
+	int target = kvm_target_cpu();
+
+	if (target < 0)
+		return -ENODEV;
 
 	memset(init, 0, sizeof(*init));
 
@@ -887,6 +869,8 @@ void kvm_vcpu_preferred_target(struct kvm_vcpu_init *init)
 	 * target type.
 	 */
 	init->target = (__u32)target;
+
+	return 0;
 }
 
 int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
@@ -904,6 +888,11 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 {
 	return -EINVAL;
 }
+
+#define KVM_GUESTDBG_VALID_MASK (KVM_GUESTDBG_ENABLE |    \
+			    KVM_GUESTDBG_USE_SW_BP | \
+			    KVM_GUESTDBG_USE_HW | \
+			    KVM_GUESTDBG_SINGLESTEP)
 
 /**
  * kvm_arch_vcpu_ioctl_set_guest_debug - set up guest debugging
@@ -938,7 +927,6 @@ int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 	} else {
 		/* If not enabled clear all flags */
 		vcpu->guest_debug = 0;
-		vcpu_clear_flag(vcpu, DBG_SS_ACTIVE_PENDING);
 	}
 
 out:
@@ -952,9 +940,7 @@ int kvm_arm_vcpu_arch_set_attr(struct kvm_vcpu *vcpu,
 
 	switch (attr->group) {
 	case KVM_ARM_VCPU_PMU_V3_CTRL:
-		mutex_lock(&vcpu->kvm->arch.config_lock);
 		ret = kvm_arm_pmu_v3_set_attr(vcpu, attr);
-		mutex_unlock(&vcpu->kvm->arch.config_lock);
 		break;
 	case KVM_ARM_VCPU_TIMER_CTRL:
 		ret = kvm_arm_timer_set_attr(vcpu, attr);
@@ -1013,91 +999,5 @@ int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
 		break;
 	}
 
-	return ret;
-}
-
-long kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
-				struct kvm_arm_copy_mte_tags *copy_tags)
-{
-	gpa_t guest_ipa = copy_tags->guest_ipa;
-	size_t length = copy_tags->length;
-	void __user *tags = copy_tags->addr;
-	gpa_t gfn;
-	bool write = !(copy_tags->flags & KVM_ARM_TAGS_FROM_GUEST);
-	int ret = 0;
-
-	if (!kvm_has_mte(kvm))
-		return -EINVAL;
-
-	if (copy_tags->reserved[0] || copy_tags->reserved[1])
-		return -EINVAL;
-
-	if (copy_tags->flags & ~KVM_ARM_TAGS_FROM_GUEST)
-		return -EINVAL;
-
-	if (length & ~PAGE_MASK || guest_ipa & ~PAGE_MASK)
-		return -EINVAL;
-
-	gfn = gpa_to_gfn(guest_ipa);
-
-	mutex_lock(&kvm->slots_lock);
-
-	while (length > 0) {
-		kvm_pfn_t pfn = gfn_to_pfn_prot(kvm, gfn, write, NULL);
-		void *maddr;
-		unsigned long num_tags;
-		struct page *page;
-
-		if (is_error_noslot_pfn(pfn)) {
-			ret = -EFAULT;
-			goto out;
-		}
-
-		page = pfn_to_online_page(pfn);
-		if (!page) {
-			/* Reject ZONE_DEVICE memory */
-			ret = -EFAULT;
-			goto out;
-		}
-		maddr = page_address(page);
-
-		if (!write) {
-			if (page_mte_tagged(page))
-				num_tags = mte_copy_tags_to_user(tags, maddr,
-							MTE_GRANULES_PER_PAGE);
-			else
-				/* No tags in memory, so write zeros */
-				num_tags = MTE_GRANULES_PER_PAGE -
-					clear_user(tags, MTE_GRANULES_PER_PAGE);
-			kvm_release_pfn_clean(pfn);
-		} else {
-			num_tags = mte_copy_tags_from_user(maddr, tags,
-							MTE_GRANULES_PER_PAGE);
-
-			/*
-			 * Set the flag after checking the write
-			 * completed fully
-			 */
-			if (num_tags == MTE_GRANULES_PER_PAGE)
-				set_page_mte_tagged(page);
-
-			kvm_release_pfn_dirty(pfn);
-		}
-
-		if (num_tags != MTE_GRANULES_PER_PAGE) {
-			ret = -EFAULT;
-			goto out;
-		}
-
-		gfn++;
-		tags += num_tags;
-		length -= PAGE_SIZE;
-	}
-
-out:
-	mutex_unlock(&kvm->slots_lock);
-	/* If some data has been copied report the number of bytes copied */
-	if (length != copy_tags->length)
-		return copy_tags->length - length;
 	return ret;
 }

@@ -156,14 +156,14 @@ static struct snd_soc_dai_driver rk_spdifrx_dai = {
 			  SNDRV_PCM_RATE_192000),
 		.formats = (SNDRV_PCM_FMTBIT_S16_LE |
 			    SNDRV_PCM_FMTBIT_S20_3LE |
-			    SNDRV_PCM_FMTBIT_S24_LE),
+			    SNDRV_PCM_FMTBIT_S24_LE |
+			    SNDRV_PCM_FMTBIT_S32_LE),
 	},
 	.ops = &rk_spdifrx_dai_ops,
 };
 
 static const struct snd_soc_component_driver rk_spdifrx_component = {
 	.name = "rockchip-spdifrx",
-	.legacy_dai_naming = 1,
 };
 
 static bool rk_spdifrx_wr_reg(struct device *dev, unsigned int reg)

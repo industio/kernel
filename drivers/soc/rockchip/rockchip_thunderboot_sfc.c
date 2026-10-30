@@ -10,7 +10,6 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_device.h>
-#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/soc/rockchip/rockchip_decompress.h>
 #include <linux/soc/rockchip/rockchip_thunderboot_crypto.h>
@@ -57,9 +56,10 @@ static int rk_tb_sfc_thread(void *p)
 		goto out;
 	} else {
 		if (likely(readl(regs + SFC_RAWISR) & DMA_INT))
-			dev_err(dev, "DMA finished!\n");
+			dev_info(dev, "DMA finished!\n");
 		else
-			dev_err(dev, "Last transfer non DMA!\n");
+			dev_info(dev, "Last transfer non DMA!\n");
+		writel(DMA_INT, regs + SFC_ICLR);
 	}
 
 	/* Parse ramdisk addr and help start decompressing */

@@ -4,7 +4,7 @@
  *
  * Arm debug driver
  *
- * Copyright (C) 2019 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2019 ROCKCHIP, Inc.
  */
 
 /*	RK3399
@@ -55,7 +55,6 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/panic_notifier.h>
 #include <linux/kernel_stat.h>
 #include <linux/irq.h>
 #include <linux/delay.h>
@@ -551,7 +550,7 @@ static int rockchip_hardlock_notify(struct notifier_block *nb,
 		else
 			pmpcsr &= 0x0fffffffffffffff;
 		/* NOTE: no offset on ARMv8; see DBGDEVID1.PCSROffset */
-		pc = (void *)(uintptr_t)(pmpcsr & ~1);
+		pc = (void *)(pmpcsr & ~1);
 	}
 
 	rockchip_debug_serror_enable();

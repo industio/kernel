@@ -68,6 +68,7 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 #define DEFAULT_GMAC_RXQ_ORDER		9
 #define DEFAULT_GMAC_TXQ_ORDER		8
 #define DEFAULT_RX_BUF_ORDER		11
+#define DEFAULT_NAPI_WEIGHT		64
 #define TX_MAX_FRAGS			16
 #define TX_QUEUE_NUM			1	/* max: 6 */
 #define RX_MAX_ALLOC_ORDER		2
@@ -79,8 +80,8 @@ MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
 #define GMAC0_IRQ4_8 (GMAC0_MIB_INT_BIT | GMAC0_RX_OVERRUN_INT_BIT)
 
 #define GMAC_OFFLOAD_FEATURES (NETIF_F_SG | NETIF_F_IP_CSUM | \
-			       NETIF_F_IPV6_CSUM | NETIF_F_RXCSUM | \
-			       NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6)
+		NETIF_F_IPV6_CSUM | NETIF_F_RXCSUM | \
+		NETIF_F_TSO | NETIF_F_TSO_ECN | NETIF_F_TSO6)
 
 /**
  * struct gmac_queue_page - page buffer per-page info
@@ -1148,26 +1149,24 @@ static int gmac_map_tx_bufs(struct net_device *netdev, struct sk_buff *skb,
 	struct gmac_txdesc *txd;
 	skb_frag_t *skb_frag;
 	dma_addr_t mapping;
+	unsigned short mtu;
 	void *buffer;
-	u16 mss;
 	int ret;
+
+	mtu  = ETH_HLEN;
+	mtu += netdev->mtu;
+	if (skb->protocol == htons(ETH_P_8021Q))
+		mtu += VLAN_HLEN;
 
 	word1 = skb->len;
 	word3 = SOF_BIT;
 
-	mss = skb_shinfo(skb)->gso_size;
-	if (mss) {
-		/* This means we are dealing with TCP and skb->len is the
-		 * sum total of all the segments. The TSO will deal with
-		 * chopping this up for us.
-		 */
-		/* The accelerator needs the full frame size here */
-		mss += skb_tcp_all_headers(skb);
-		netdev_dbg(netdev, "segment offloading mss = %04x len=%04x\n",
-			   mss, skb->len);
+	if (word1 > mtu) {
 		word1 |= TSS_MTU_ENABLE_BIT;
-		word3 |= mss;
-	} else if (skb->len >= ETH_FRAME_LEN) {
+		word3 |= mtu;
+	}
+
+	if (skb->len >= ETH_FRAME_LEN) {
 		/* Hardware offloaded checksumming isn't working on frames
 		 * bigger than 1514 bytes. A hypothesis about this is that the
 		 * checksum buffer is only 1518 bytes, so when the frames get
@@ -1182,9 +1181,7 @@ static int gmac_map_tx_bufs(struct net_device *netdev, struct sk_buff *skb,
 				return ret;
 		}
 		word1 |= TSS_BYPASS_BIT;
-	}
-
-	if (skb->ip_summed == CHECKSUM_PARTIAL) {
+	} else if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		int tcp = 0;
 
 		/* We do not switch off the checksumming on non TCP/UDP
@@ -1925,7 +1922,7 @@ static int gmac_set_mac_address(struct net_device *netdev, void *addr)
 {
 	struct sockaddr *sa = addr;
 
-	eth_hw_addr_set(netdev, sa->sa_data);
+	memcpy(netdev->dev_addr, sa->sa_data, ETH_ALEN);
 	gmac_write_mac_address(netdev);
 
 	return 0;
@@ -2132,9 +2129,7 @@ static void gmac_get_pauseparam(struct net_device *netdev,
 }
 
 static void gmac_get_ringparam(struct net_device *netdev,
-			       struct ethtool_ringparam *rp,
-			       struct kernel_ethtool_ringparam *kernel_rp,
-			       struct netlink_ext_ack *extack)
+			       struct ethtool_ringparam *rp)
 {
 	struct gemini_ethernet_port *port = netdev_priv(netdev);
 
@@ -2152,9 +2147,7 @@ static void gmac_get_ringparam(struct net_device *netdev,
 }
 
 static int gmac_set_ringparam(struct net_device *netdev,
-			      struct ethtool_ringparam *rp,
-			      struct kernel_ethtool_ringparam *kernel_rp,
-			      struct netlink_ext_ack *extack)
+			      struct ethtool_ringparam *rp)
 {
 	struct gemini_ethernet_port *port = netdev_priv(netdev);
 	int err = 0;
@@ -2175,9 +2168,7 @@ static int gmac_set_ringparam(struct net_device *netdev,
 }
 
 static int gmac_get_coalesce(struct net_device *netdev,
-			     struct ethtool_coalesce *ecmd,
-			     struct kernel_ethtool_coalesce *kernel_coal,
-			     struct netlink_ext_ack *extack)
+			     struct ethtool_coalesce *ecmd)
 {
 	struct gemini_ethernet_port *port = netdev_priv(netdev);
 
@@ -2189,9 +2180,7 @@ static int gmac_get_coalesce(struct net_device *netdev,
 }
 
 static int gmac_set_coalesce(struct net_device *netdev,
-			     struct ethtool_coalesce *ecmd,
-			     struct kernel_ethtool_coalesce *kernel_coal,
-			     struct netlink_ext_ack *extack)
+			     struct ethtool_coalesce *ecmd)
 {
 	struct gemini_ethernet_port *port = netdev_priv(netdev);
 
@@ -2386,13 +2375,13 @@ static void gemini_port_save_mac_addr(struct gemini_ethernet_port *port)
 static int gemini_ethernet_port_probe(struct platform_device *pdev)
 {
 	char *port_names[2] = { "ethernet0", "ethernet1" };
-	struct device_node *np = pdev->dev.of_node;
 	struct gemini_ethernet_port *port;
 	struct device *dev = &pdev->dev;
 	struct gemini_ethernet *geth;
 	struct net_device *netdev;
+	struct resource *gmacres;
+	struct resource *dmares;
 	struct device *parent;
-	u8 mac[ETH_ALEN];
 	unsigned int id;
 	int irq;
 	int ret;
@@ -2424,18 +2413,24 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	port->msg_enable = netif_msg_init(debug, DEFAULT_MSG_ENABLE);
 
 	/* DMA memory */
-	port->dma_base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
-	if (IS_ERR(port->dma_base)) {
-		dev_err(dev, "get DMA address failed\n");
-		return PTR_ERR(port->dma_base);
+	dmares = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!dmares) {
+		dev_err(dev, "no DMA resource\n");
+		return -ENODEV;
 	}
+	port->dma_base = devm_ioremap_resource(dev, dmares);
+	if (IS_ERR(port->dma_base))
+		return PTR_ERR(port->dma_base);
 
 	/* GMAC config memory */
-	port->gmac_base = devm_platform_get_and_ioremap_resource(pdev, 1, NULL);
-	if (IS_ERR(port->gmac_base)) {
-		dev_err(dev, "get GMAC address failed\n");
-		return PTR_ERR(port->gmac_base);
+	gmacres = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	if (!gmacres) {
+		dev_err(dev, "no GMAC resource\n");
+		return -ENODEV;
 	}
+	port->gmac_base = devm_ioremap_resource(dev, gmacres);
+	if (IS_ERR(port->gmac_base))
+		return PTR_ERR(port->gmac_base);
 
 	/* Interrupt */
 	irq = platform_get_irq(pdev, 0);
@@ -2496,22 +2491,17 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	netdev->max_mtu = MTU_SIZE_BIT_MASK - VLAN_ETH_HLEN;
 
 	port->freeq_refill = 0;
-	netif_napi_add(netdev, &port->napi, gmac_napi_poll);
-
-	ret = of_get_mac_address(np, mac);
-	if (!ret) {
-		dev_info(dev, "Setting macaddr from DT %pM\n", mac);
-		memcpy(port->mac_addr, mac, ETH_ALEN);
-	}
+	netif_napi_add(netdev, &port->napi, gmac_napi_poll,
+		       DEFAULT_NAPI_WEIGHT);
 
 	if (is_valid_ether_addr((void *)port->mac_addr)) {
-		eth_hw_addr_set(netdev, (u8 *)port->mac_addr);
+		memcpy(netdev->dev_addr, port->mac_addr, ETH_ALEN);
 	} else {
 		dev_dbg(dev, "ethernet address 0x%08x%08x%08x invalid\n",
 			port->mac_addr[0], port->mac_addr[1],
 			port->mac_addr[2]);
 		dev_info(dev, "using a random ethernet address\n");
-		eth_hw_addr_random(netdev);
+		eth_random_addr(netdev->dev_addr);
 	}
 	gmac_write_mac_address(netdev);
 
@@ -2536,6 +2526,10 @@ static int gemini_ethernet_port_probe(struct platform_device *pdev)
 	if (ret)
 		goto unprepare;
 
+	netdev_info(netdev,
+		    "irq %d, DMA @ 0x%pap, GMAC @ 0x%pap\n",
+		    port->irq, &dmares->start,
+		    &gmacres->start);
 	return 0;
 
 unprepare:
@@ -2574,13 +2568,17 @@ static int gemini_ethernet_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct gemini_ethernet *geth;
 	unsigned int retry = 5;
+	struct resource *res;
 	u32 val;
 
 	/* Global registers */
 	geth = devm_kzalloc(dev, sizeof(*geth), GFP_KERNEL);
 	if (!geth)
 		return -ENOMEM;
-	geth->base = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -ENODEV;
+	geth->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(geth->base))
 		return PTR_ERR(geth->base);
 	geth->dev = dev;

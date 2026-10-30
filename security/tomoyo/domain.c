@@ -473,7 +473,9 @@ struct tomoyo_policy_namespace *tomoyo_assign_namespace(const char *domainname)
 		return ptr;
 	if (len >= TOMOYO_EXEC_TMPSIZE - 10 || !tomoyo_domain_def(domainname))
 		return NULL;
-	entry = kzalloc(sizeof(*entry) + len + 1, GFP_NOFS | __GFP_NOWARN);
+	entry = kzalloc(sizeof(*entry) + len + 1, GFP_NOFS);
+	if (!entry)
+		return NULL;
 	if (mutex_lock_interruptible(&tomoyo_policy_lock))
 		goto out;
 	ptr = tomoyo_find_namespace(domainname, len);
@@ -723,13 +725,10 @@ int tomoyo_find_next_domain(struct linux_binprm *bprm)
 	ee->r.obj = &ee->obj;
 	ee->obj.path1 = bprm->file->f_path;
 	/* Get symlink's pathname of program. */
+	retval = -ENOENT;
 	exename.name = tomoyo_realpath_nofollow(original_name);
-	if (!exename.name) {
-		/* Fallback to realpath if symlink's pathname does not exist. */
-		exename.name = tomoyo_realpath_from_path(&bprm->file->f_path);
-		if (!exename.name)
-			goto out;
-	}
+	if (!exename.name)
+		goto out;
 	tomoyo_fill_path_info(&exename);
 retry:
 	/* Check 'aggregator' directive. */
@@ -892,7 +891,7 @@ force_jump_domain:
  *
  * @bprm: Pointer to "struct linux_binprm".
  * @pos:  Location to dump.
- * @dump: Pointer to "struct tomoyo_page_dump".
+ * @dump: Poiner to "struct tomoyo_page_dump".
  *
  * Returns true on success, false otherwise.
  */
@@ -900,9 +899,6 @@ bool tomoyo_dump_page(struct linux_binprm *bprm, unsigned long pos,
 		      struct tomoyo_page_dump *dump)
 {
 	struct page *page;
-#ifdef CONFIG_MMU
-	int ret;
-#endif
 
 	/* dump->data is released by tomoyo_find_next_domain(). */
 	if (!dump->data) {
@@ -915,13 +911,11 @@ bool tomoyo_dump_page(struct linux_binprm *bprm, unsigned long pos,
 	/*
 	 * This is called at execve() time in order to dig around
 	 * in the argv/environment of the new proceess
-	 * (represented by bprm).
+	 * (represented by bprm).  'current' is the process doing
+	 * the execve().
 	 */
-	mmap_read_lock(bprm->mm);
-	ret = get_user_pages_remote(bprm->mm, pos, 1,
-				    FOLL_FORCE, &page, NULL, NULL);
-	mmap_read_unlock(bprm->mm);
-	if (ret <= 0)
+	if (get_user_pages_remote(bprm->mm, pos, 1,
+				FOLL_FORCE, &page, NULL, NULL) <= 0)
 		return false;
 #else
 	page = bprm->page[pos / PAGE_SIZE];

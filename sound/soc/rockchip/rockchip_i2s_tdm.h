@@ -1,10 +1,14 @@
-/* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * ALSA SoC Audio Layer - Rockchip I2S/TDM Controller driver
+ * sound/soc/rockchip/rockchip_i2s_tdm.h
  *
- * Copyright (c) 2018 Rockchip Electronics Co., Ltd.
+ * ALSA SoC Audio Layer - Rockchip I2S_TDM Controller driver
+ *
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
  * Author: Sugar Zhang <sugar.zhang@rock-chips.com>
  *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
  */
 
 #ifndef _ROCKCHIP_I2S_TDM_H
@@ -430,7 +434,7 @@ enum {
 	RK3308_I2S1_8CH_CLK_IN_RX_SRC_FROM_RX | \
 	RK3308_I2S1_8CH_CLK_IN_TX_SRC_FROM_RX)
 
-/* RK3568 GRF CONFIGS */
+/* RK3568 GRF CONFIGS*/
 #define RK3568_I2S1_MCLK_OUT_SRC_FROM_TX	HIWORD_UPDATE(1, 5, 5)
 #define RK3568_I2S1_MCLK_OUT_SRC_FROM_RX	HIWORD_UPDATE(0, 5, 5)
 
@@ -461,7 +465,7 @@ enum {
 	(RK3568_I2S3_SCLK_SRC_FROM_RX | \
 	RK3568_I2S3_LRCK_SRC_FROM_RX)
 
-/* RV1126 GRF CONFIGS */
+/* RV1126 GRF CONFIGS*/
 #define RV1126_I2S0_MCLK_OUT_SRC_FROM_TX	HIWORD_UPDATE(0, 9, 9)
 #define RV1126_I2S0_MCLK_OUT_SRC_FROM_RX	HIWORD_UPDATE(1, 9, 9)
 

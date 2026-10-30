@@ -965,12 +965,12 @@ static int aw883xx_profile_info(struct snd_kcontrol *kcontrol,
 
 	prof_name = aw_dev_get_prof_name(aw883xx->aw_pa, count);
 	if (prof_name == NULL) {
-		strscpy(uinfo->value.enumerated.name, "null",
+		strlcpy(uinfo->value.enumerated.name, "null",
 						strlen("null") + 1);
 		return 0;
 	}
 
-	strscpy(name, prof_name, sizeof(uinfo->value.enumerated.name));
+	strlcpy(name, prof_name, sizeof(uinfo->value.enumerated.name));
 
 	return 0;
 }
@@ -1049,7 +1049,7 @@ static int aw883xx_switch_info(struct snd_kcontrol *kcontrol,
 	if (uinfo->value.enumerated.item >= count)
 		uinfo->value.enumerated.item = count - 1;
 
-	strscpy(uinfo->value.enumerated.name,
+	strlcpy(uinfo->value.enumerated.name,
 		aw883xx_switch[uinfo->value.enumerated.item],
 		strlen(aw883xx_switch[uinfo->value.enumerated.item]) + 1);
 
@@ -1124,7 +1124,7 @@ static int aw883xx_monitor_switch_info(struct snd_kcontrol *kcontrol,
 	if (uinfo->value.enumerated.item >= count)
 		uinfo->value.enumerated.item = count - 1;
 
-	strscpy(uinfo->value.enumerated.name,
+	strlcpy(uinfo->value.enumerated.name,
 		aw883xx_switch[uinfo->value.enumerated.item],
 		strlen(aw883xx_switch[uinfo->value.enumerated.item]) + 1);
 
@@ -2491,7 +2491,7 @@ err_sysfs:
 	return ret;
 }
 
-static void aw883xx_i2c_remove(struct i2c_client *i2c)
+static int aw883xx_i2c_remove(struct i2c_client *i2c)
 {
 	struct aw883xx *aw883xx = i2c_get_clientdata(i2c);
 
@@ -2501,6 +2501,11 @@ static void aw883xx_i2c_remove(struct i2c_client *i2c)
 		devm_free_irq(&i2c->dev,
 			gpio_to_irq(aw883xx->irq_gpio),
 			aw883xx);
+
+	if (gpio_is_valid(aw883xx->irq_gpio))
+		devm_gpio_free(&i2c->dev, aw883xx->irq_gpio);
+	if (gpio_is_valid(aw883xx->reset_gpio))
+		devm_gpio_free(&i2c->dev, aw883xx->reset_gpio);
 
 	sysfs_remove_group(&aw883xx->dev->kobj,
 			&aw883xx_attribute_group);
@@ -2517,6 +2522,8 @@ static void aw883xx_i2c_remove(struct i2c_client *i2c)
 		g_awinic_cfg = NULL;
 	}
 	mutex_unlock(&g_aw883xx_lock);
+
+	return 0;
 }
 
 static const struct i2c_device_id aw883xx_i2c_id[] = {

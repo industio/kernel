@@ -10,7 +10,7 @@
 #include "vehicle_cfg.h"
 
 struct gpio_detect {
-	struct gpio_desc *gpio;
+	int gpio;
 	int atv_val;
 	int val;
 	int irq;

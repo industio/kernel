@@ -759,7 +759,7 @@ _mali_osk_errcode_t mali_mem_os_init(void)
 		return _MALI_OSK_ERR_NOMEM;
 	}
 
-	register_shrinker(&mali_mem_os_allocator.shrinker, "mali-mem");
+	register_shrinker(&mali_mem_os_allocator.shrinker);
 
 	return _MALI_OSK_ERR_OK;
 }

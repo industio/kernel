@@ -118,7 +118,7 @@
 			50  254  2
 		>;
 		nvmem-cells = <&cpu_leakage>;
-		nvmem-cell-names = "leakage";
+		nvmem-cell-names = "cpu_leakage";
 
 		opp-216000000 {
 			opp-hz = /bits/ 64 <216000000>;
@@ -506,7 +506,7 @@
 		status = "disabled";
 	};
 
-	vepu: vepu@0x10106000 {
+	vepu: vepu@10106000 {
 		compatible = "rockchip,vpu-encoder-v1";
 		reg = <0x10106000 0x400>;
 		interrupts = <GIC_SPI 6 IRQ_TYPE_LEVEL_HIGH>;

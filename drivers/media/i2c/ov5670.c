@@ -129,6 +129,7 @@ struct regval {
 };
 
 struct ov5670_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -172,6 +173,8 @@ struct ov5670 {
 	const char		*module_name;
 	const char		*len_name;
 	struct rkmodule_awb_cfg	awb_cfg;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_ov5670(sd) container_of(sd, struct ov5670, subdev)
@@ -630,6 +633,7 @@ static const struct regval ov5670_1296x960_regs_2lane[] = {
 
 static const struct ov5670_mode supported_modes_2lane[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 2592,
 		.height = 1944,
 		.max_fps = {
@@ -642,6 +646,7 @@ static const struct ov5670_mode supported_modes_2lane[] = {
 		.reg_list = ov5670_2592x1944_regs_2lane,
 	},
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 1296,
 		.height = 960,
 		.max_fps = {
@@ -656,6 +661,10 @@ static const struct ov5670_mode supported_modes_2lane[] = {
 };
 
 static const struct ov5670_mode *supported_modes;
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+};
 
 static const s64 link_freq_menu_items[] = {
 	MIPI_FREQ
@@ -798,6 +807,10 @@ ov5670_find_best_fit(struct ov5670 *ov5670,
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -805,7 +818,7 @@ ov5670_find_best_fit(struct ov5670 *ov5670,
 }
 
 static int ov5670_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov5670 *ov5670 = to_ov5670(sd);
@@ -815,13 +828,13 @@ static int ov5670_set_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov5670->mutex);
 
 	mode = ov5670_find_best_fit(ov5670, fmt);
-	fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fmt->format.code = mode->bus_fmt;
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&ov5670->mutex);
 		return -ENOTTY;
@@ -835,6 +848,7 @@ static int ov5670_set_fmt(struct v4l2_subdev *sd,
 		__v4l2_ctrl_modify_range(ov5670->vblank, vblank_def,
 					 OV5670_VTS_MAX - mode->height,
 					 1, vblank_def);
+		ov5670->cur_fps = mode->max_fps;
 	}
 
 	mutex_unlock(&ov5670->mutex);
@@ -843,7 +857,7 @@ static int ov5670_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5670_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov5670 *ov5670 = to_ov5670(sd);
@@ -852,7 +866,7 @@ static int ov5670_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov5670->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&ov5670->mutex);
 		return -ENOTTY;
@@ -860,7 +874,7 @@ static int ov5670_get_fmt(struct v4l2_subdev *sd,
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
-		fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
 	}
 	mutex_unlock(&ov5670->mutex);
@@ -869,18 +883,18 @@ static int ov5670_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5670_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int ov5670_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct ov5670 *ov5670 = to_ov5670(sd);
@@ -888,7 +902,7 @@ static int ov5670_enum_frame_sizes(struct v4l2_subdev *sd,
 	if (fse->index >= ov5670->cfg_num)
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
+	if (fse->code != supported_modes[fse->index].bus_fmt)
 		return -EINVAL;
 
 	fse->min_width  = supported_modes[fse->index].width;
@@ -964,10 +978,72 @@ static int ov5670_g_frame_interval(struct v4l2_subdev *sd,
 	struct ov5670 *ov5670 = to_ov5670(sd);
 	const struct ov5670_mode *mode = ov5670->cur_mode;
 
-	mutex_lock(&ov5670->mutex);
-	fi->interval = mode->max_fps;
-	mutex_unlock(&ov5670->mutex);
+	if (ov5670->streaming)
+		fi->interval = ov5670->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct ov5670_mode *ov5670_find_mode(struct ov5670 *ov5670, int fps)
+{
+	const struct ov5670_mode *mode = NULL;
+	const struct ov5670_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ov5670->cfg_num; i++) {
+		mode = &supported_modes[i];
+		if (mode->width == ov5670->cur_mode->width &&
+		    mode->height == ov5670->cur_mode->height &&
+		    mode->bus_fmt == ov5670->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int ov5670_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct ov5670 *ov5670 = to_ov5670(sd);
+	const struct ov5670_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (ov5670->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = ov5670_find_mode(ov5670, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	ov5670->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(ov5670->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(ov5670->vblank, vblank_def,
+				 OV5670_VTS_MAX - mode->height,
+				 1, vblank_def);
+	ov5670->cur_fps = mode->max_fps;
 	return 0;
 }
 
@@ -1372,14 +1448,14 @@ static int ov5670_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov5670 *ov5670 = to_ov5670(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct ov5670_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&ov5670->mutex);
 	/* Initialize try_fmt */
 	try_fmt->width = def_mode->width;
 	try_fmt->height = def_mode->height;
-	try_fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	try_fmt->code = def_mode->bus_fmt;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	mutex_unlock(&ov5670->mutex);
@@ -1390,7 +1466,7 @@ static int ov5670_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int ov5670_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct ov5670 *ov5670 = to_ov5670(sd);
@@ -1398,7 +1474,7 @@ static int ov5670_enum_frame_interval(struct v4l2_subdev *sd,
 	if (fie->index >= ov5670->cfg_num)
 		return -EINVAL;
 
-	fie->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fie->code = supported_modes[fie->index].bus_fmt;
 	fie->width = supported_modes[fie->index].width;
 	fie->height = supported_modes[fie->index].height;
 	fie->interval = supported_modes[fie->index].max_fps;
@@ -1409,8 +1485,12 @@ static int ov5670_g_mbus_config(struct v4l2_subdev *sd,
 				unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	u32 val = 1 << (OV5670_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = OV5670_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -1437,6 +1517,7 @@ static const struct v4l2_subdev_core_ops ov5670_core_ops = {
 static const struct v4l2_subdev_video_ops ov5670_video_ops = {
 	.s_stream = ov5670_s_stream,
 	.g_frame_interval = ov5670_g_frame_interval,
+	.s_frame_interval = ov5670_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops ov5670_pad_ops = {
@@ -1453,6 +1534,14 @@ static const struct v4l2_subdev_ops ov5670_subdev_ops = {
 	.video	= &ov5670_video_ops,
 	.pad	= &ov5670_pad_ops,
 };
+
+static void ov5670_modify_fps_info(struct ov5670 *ov5670)
+{
+	const struct ov5670_mode *mode = ov5670->cur_mode;
+
+	ov5670->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      ov5670->cur_vts;
+}
 
 static int ov5670_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1513,6 +1602,8 @@ static int ov5670_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = ov5670_write_reg(ov5670->client, OV5670_REG_VTS,
 				       OV5670_REG_VALUE_16BIT,
 				       ctrl->val + ov5670->cur_mode->height);
+		ov5670->cur_vts = ctrl->val + ov5670->cur_mode->height;
+		ov5670_modify_fps_info(ov5670);
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		ret = ov5670_enable_test_pattern(ov5670, ctrl->val);
@@ -1923,7 +2014,7 @@ static int ov5670_probe(struct i2c_client *client,
 		 ov5670->module_index, facing,
 		 OV5670_NAME, dev_name(sd->dev));
 
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1949,7 +2040,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void ov5670_remove(struct i2c_client *client)
+static int ov5670_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov5670 *ov5670 = to_ov5670(sd);
@@ -1965,6 +2056,8 @@ static void ov5670_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov5670_power_off(ov5670);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

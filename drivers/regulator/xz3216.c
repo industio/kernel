@@ -1,7 +1,7 @@
 /*
  * Regulator driver for xz3216 DCDC chip for rk32xx
  *
- * Copyright (C) 2010, 2011 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2010, 2011 ROCKCHIP, Inc.
 
  * Based on xz3216.c that is work by zhangqing<zhangqing@rock-chips.com>
  *
@@ -354,13 +354,14 @@ err:
 	return ret;
 }
 
-static void xz3216_i2c_remove(struct i2c_client *i2c)
+static int xz3216_i2c_remove(struct i2c_client *i2c)
 {
 	struct xz3216 *xz3216 = i2c_get_clientdata(i2c);
 
 	if (xz3216->rdev)
 		regulator_unregister(xz3216->rdev);
 	i2c_set_clientdata(i2c, NULL);
+	return 0;
 }
 
 static const struct i2c_device_id xz3216_i2c_id[] = {

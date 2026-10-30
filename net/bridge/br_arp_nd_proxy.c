@@ -84,7 +84,7 @@ static void br_arp_send(struct net_bridge *br, struct net_bridge_port *p,
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		skb->pkt_type = PACKET_HOST;
 
-		netif_rx(skb);
+		netif_rx_ni(skb);
 	}
 }
 
@@ -192,7 +192,7 @@ void br_do_proxy_suppress_arp(struct sk_buff *skb, struct net_bridge *br,
 	if (n) {
 		struct net_bridge_fdb_entry *f;
 
-		if (!(READ_ONCE(n->nud_state) & NUD_VALID)) {
+		if (!(n->nud_state & NUD_VALID)) {
 			neigh_release(n);
 			return;
 		}
@@ -364,7 +364,7 @@ static void br_nd_send(struct net_bridge *br, struct net_bridge_port *p,
 		reply->ip_summed = CHECKSUM_UNNECESSARY;
 		reply->pkt_type = PACKET_HOST;
 
-		netif_rx(reply);
+		netif_rx_ni(reply);
 	}
 }
 
@@ -452,7 +452,7 @@ void br_do_suppress_nd(struct sk_buff *skb, struct net_bridge *br,
 	if (n) {
 		struct net_bridge_fdb_entry *f;
 
-		if (!(READ_ONCE(n->nud_state) & NUD_VALID)) {
+		if (!(n->nud_state & NUD_VALID)) {
 			neigh_release(n);
 			return;
 		}

@@ -46,10 +46,8 @@ struct vlan_hdr {
  *	@h_vlan_encapsulated_proto: packet type ID or len
  */
 struct vlan_ethhdr {
-	struct_group(addrs,
-		unsigned char	h_dest[ETH_ALEN];
-		unsigned char	h_source[ETH_ALEN];
-	);
+	unsigned char	h_dest[ETH_ALEN];
+	unsigned char	h_source[ETH_ALEN];
 	__be16		h_vlan_proto;
 	__be16		h_vlan_TCI;
 	__be16		h_vlan_encapsulated_proto;
@@ -126,11 +124,11 @@ static inline void vlan_drop_rx_stag_filter_info(struct net_device *dev)
  *	@tx_dropped: number of tx drops
  */
 struct vlan_pcpu_stats {
-	u64_stats_t		rx_packets;
-	u64_stats_t		rx_bytes;
-	u64_stats_t		rx_multicast;
-	u64_stats_t		tx_packets;
-	u64_stats_t		tx_bytes;
+	u64			rx_packets;
+	u64			rx_bytes;
+	u64			rx_multicast;
+	u64			tx_packets;
+	u64			tx_bytes;
 	struct u64_stats_sync	syncp;
 	u32			rx_errors;
 	u32			tx_dropped;
@@ -172,7 +170,6 @@ struct netpoll;
  *	@vlan_id: VLAN identifier
  *	@flags: device flags
  *	@real_dev: underlying netdevice
- *	@dev_tracker: refcount tracker for @real_dev reference
  *	@real_dev_addr: address of underlying netdevice
  *	@dent: proc dir entry
  *	@vlan_pcpu_stats: ptr to percpu rx stats
@@ -188,8 +185,6 @@ struct vlan_dev_priv {
 	u16					flags;
 
 	struct net_device			*real_dev;
-	netdevice_tracker			dev_tracker;
-
 	unsigned char				real_dev_addr[ETH_ALEN];
 
 	struct proc_dir_entry			*dent;
@@ -702,27 +697,6 @@ static inline void vlan_set_encap_proto(struct sk_buff *skb,
 		 * Real 802.2 LLC
 		 */
 		skb->protocol = htons(ETH_P_802_2);
-}
-
-/**
- * vlan_remove_tag - remove outer VLAN tag from payload
- * @skb: skbuff to remove tag from
- * @vlan_tci: buffer to store value
- *
- * Expects the skb to contain a VLAN tag in the payload, and to have skb->data
- * pointing at the MAC header.
- *
- * Returns a new pointer to skb->data, or NULL on failure to pull.
- */
-static inline void *vlan_remove_tag(struct sk_buff *skb, u16 *vlan_tci)
-{
-	struct vlan_hdr *vhdr = (struct vlan_hdr *)(skb->data + ETH_HLEN);
-
-	*vlan_tci = ntohs(vhdr->h_vlan_TCI);
-
-	memmove(skb->data + VLAN_HLEN, skb->data, 2 * ETH_ALEN);
-	vlan_set_encap_proto(skb, vhdr);
-	return __skb_pull(skb, VLAN_HLEN);
 }
 
 /**

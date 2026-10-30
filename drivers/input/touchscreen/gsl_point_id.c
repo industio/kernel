@@ -9,7 +9,6 @@
  *  published by the Free Software Foundation.
  */
 
-#include "gsl_point_id.h"
 //#include "linux/module.h"
 //#include <wdm.h>
 /*
@@ -351,27 +350,26 @@ typedef struct
 static int  gesture_num,gesture_num_last;//gesture_num
 static int  gesture_dis_min;
 static int  gesture_deal;
-//static int  gesture_last;
+static int  gesture_last;
 static int  gesture_threshold[2];
 static  int x_scale;
 static  int y_scale;
 static int double_down,double_up;
-//static const GESTURE_MODEL_TYPE * model_extern = NULL;
-//static int  model_extern_len = 0;
+static const GESTURE_MODEL_TYPE * model_extern = NULL;
+static int  model_extern_len = 0;
 static int  GestureSqrt(int d);
 static int  GestureDistance(GESTURE_POINT_TYPE* d1,GESTURE_POINT_TYPE* d2,int sqrt_able);
 static int  GesturePush(GESTURE_POINT_TYPE* data);
-//static int  GestureStretch(void);
-//static int  GestureLength(void);
-//static int  GestureDeal(void);
-//static int  GestureModel(const GESTURE_MODEL_TYPE * model,int len,int threshold,int *out);
+static int  GestureStretch(void);
+static int  GestureLength(void);
+static int  GestureDeal(void);
+static int  GestureModel(const GESTURE_MODEL_TYPE * model,int len,int threshold,int *out);
 static int  GestureMain(unsigned int data[],unsigned int pn);
-//static void GestureStandard(void);
+static void GestureStandard(void);
 static void GestureInit(void);
-//static void ChangeXY(void);
-//static int  GestureLRUD(void);
+static void ChangeXY(void);
+static int  GestureLRUD(void);
 static void GestureSet(unsigned int conf[]);
-#if 0
 static const GESTURE_MODEL_TYPE model_default[]
 ={
 	{0x10,'3',{
@@ -530,7 +528,6 @@ static const GESTURE_MODEL_TYPE model_default[]
 	0x010bfced,0x2513ffff,0x4937fdff,0x6d5bf9fa,0x9280f4f7,0xb6a4f0f1,0xdac8eeef,0xffececed,}},
 };
 #endif
-#endif
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++
 static void SortBubble(int t[],int size)
 {
@@ -549,13 +546,11 @@ static void SortBubble(int t[],int size)
 		}
 	}
 }
-#if 0
-static int abs(int i){
+int abs(int i){
  	if(i<0)
 		return ~(--i);
 	return i;
 }
-#endif
 static int Sqrt(int d)
 {
 	int ret = 0;
@@ -2189,8 +2184,7 @@ static void PointPressure(void)
 	}
 }
 
-#if 0
-static void gsl_ReportPressure(unsigned int *p)
+void gsl_ReportPressure(unsigned int *p)
 {
 	int i;
 	for(i=0;i<POINT_MAX;i++)
@@ -2212,12 +2206,11 @@ static void gsl_ReportPressure(unsigned int *p)
 }
 //EXPORT_SYMBOL(gsl_ReportPressure);
 
-static int  gsl_TouchNear(void)
+int  gsl_TouchNear(void)
 {
 		return 0;
 }
 //EXPORT_SYMBOL(gsl_TouchNear);
-#endif
 
 static void DoubleClick(void)
 {
@@ -2701,13 +2694,11 @@ void gsl_alg_id_main(struct gsl_touch_info *cinfo)
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #ifdef GESTURE_LICH
 
-#if 0
-static int gsl_obtain_gesture(void)
+int gsl_obtain_gesture(void)
 {
 	return GestureDeal();
 }
 //EXPORT_SYMBOL(gsl_obtain_gesture);
-#endif
 
 static int GestureMain(unsigned int data_coor[],unsigned int num)
 {
@@ -2793,7 +2784,6 @@ static void GestureInit(void)
 		gesture_dis_min = 2;
 }
 
-#if 0
 static int GestureStretch(void)
 {
 	unsigned int x_max=0,x_min=0xffff,y_max=0,y_min=0xffff;
@@ -2933,7 +2923,6 @@ static void ChangeXY(void)
 		gesture_buf[i].all = ((gesture_buf[i].all & 0xfff) << 16) +
 		((gesture_buf[i].all>>16) & 0xffff);
 }
-#endif
 
 static void GestureSet(unsigned int conf[])
 {
@@ -2963,7 +2952,6 @@ static void GestureSet(unsigned int conf[])
 	}
 }
 
-#if 0
 static int GestureDeal(void)
 {
 	int i;
@@ -3010,7 +2998,7 @@ static int GestureDeal(void)
 	return gesture_last;
 }
 
-static void gsl_GestureExtern(const GESTURE_MODEL_TYPE *model,int len)
+void gsl_GestureExtern(const GESTURE_MODEL_TYPE *model,int len)
 {
 	model_extern = model;
 	model_extern_len = len;
@@ -3085,7 +3073,7 @@ static int GestureLRUD(void)
 	return FALSE;
 }
 
-static unsigned int gsl_GestureBuffer(unsigned int **buf)
+unsigned int gsl_GestureBuffer(unsigned int **buf)
 {
 	int i;
 	if(gesture_num_last >= GESTURE_BUF_SIZE)
@@ -3098,7 +3086,6 @@ static unsigned int gsl_GestureBuffer(unsigned int **buf)
 	return gesture_num_last;
 }
 //EXPORT_SYMBOL(gsl_GestureBuffer);
-#endif
 #endif
 /*
 // The DLL must have an entry point, but it is never called.

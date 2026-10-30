@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co., Ltd
  */
 #ifndef __SOC_ROCKCHIP_ROCKIT_H
 #define __SOC_ROCKCHIP_ROCKIT_H
@@ -8,7 +8,7 @@
 #include <linux/dma-buf.h>
 #include <linux/rk-isp2-config.h>
 
-#define ROCKIT_BUF_NUM_MAX	5
+#define ROCKIT_BUF_NUM_MAX	20
 #define ROCKIT_ISP_NUM_MAX	3
 #define ROCKIT_STREAM_NUM_MAX	12
 

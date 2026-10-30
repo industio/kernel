@@ -119,7 +119,7 @@ struct rockchip_pcie {
 	void __iomem			*apb_base;
 	struct phy			*phy;
 	struct clk_bulk_data		*clks;
-	int				clk_cnt;
+	unsigned int			clk_cnt;
 	struct reset_control		*rst;
 	struct gpio_desc		*rst_gpio;
 	unsigned long			*ib_window_map;
@@ -423,6 +423,11 @@ static void rockchip_pcie_resize_bar_nsticky(struct rockchip_pcie *rockchip)
 	dw_pcie_writel_dbi(pci, resbar_base + 0x8 + bar * 0x8, 0x2c0);
 	rockchip_pcie_ep_set_bar_flag(rockchip, bar, PCI_BASE_ADDRESS_MEM_TYPE_32);
 
+	bar = BAR_1;
+	dw_pcie_writel_dbi(pci, resbar_base + 0x4 + bar * 0x8, 0x10);
+	dw_pcie_writel_dbi(pci, resbar_base + 0x8 + bar * 0x8, 0xc0);
+	rockchip_pcie_ep_set_bar_flag(rockchip, bar, PCI_BASE_ADDRESS_MEM_TYPE_32);
+
 	bar = BAR_2;
 	dw_pcie_writel_dbi(pci, resbar_base + 0x4 + bar * 0x8, 0x400);
 	dw_pcie_writel_dbi(pci, resbar_base + 0x8 + bar * 0x8, 0x6c0);
@@ -434,11 +439,18 @@ static void rockchip_pcie_resize_bar_nsticky(struct rockchip_pcie *rockchip)
 	dw_pcie_writel_dbi(pci, resbar_base + 0x8 + bar * 0x8, 0xc0);
 	rockchip_pcie_ep_set_bar_flag(rockchip, bar, PCI_BASE_ADDRESS_MEM_TYPE_32);
 
+	bar = BAR_5;
+	dw_pcie_writel_dbi(pci, resbar_base + 0x4 + bar * 0x8, 0x10);
+	dw_pcie_writel_dbi(pci, resbar_base + 0x8 + bar * 0x8, 0xc0);
+	rockchip_pcie_ep_set_bar_flag(rockchip, bar, PCI_BASE_ADDRESS_MEM_TYPE_32);
+
 	/* Disable BAR1 BAR5*/
 	bar = BAR_1;
-	dw_pcie_writel_dbi(pci, PCIE_TYPE0_HDR_DBI2_OFFSET + 0x10 + bar * 4, 0);
+	if (!rockchip->ib_target_size[bar])
+		dw_pcie_writel_dbi(pci, PCIE_TYPE0_HDR_DBI2_OFFSET + 0x10 + bar * 4, 0);
 	bar = BAR_5;
-	dw_pcie_writel_dbi(pci, PCIE_TYPE0_HDR_DBI2_OFFSET + 0x10 + bar * 4, 0);
+	if (!rockchip->ib_target_size[bar])
+		dw_pcie_writel_dbi(pci, PCIE_TYPE0_HDR_DBI2_OFFSET + 0x10 + bar * 4, 0);
 	dw_pcie_dbi_ro_wr_dis(&rockchip->pci);
 }
 
@@ -456,7 +468,7 @@ static int rockchip_pcie_ep_set_bar(struct rockchip_pcie *rockchip, enum pci_bar
 		return -EINVAL;
 	}
 
-	ret = dw_pcie_prog_inbound_atu(pci, 0, free_win, PCIE_ATU_TYPE_MEM, cpu_addr, bar);
+	ret = dw_pcie_prog_inbound_atu(pci, 0, free_win, bar, cpu_addr, DW_PCIE_AS_MEM);
 	if (ret < 0) {
 		dev_err(pci->dev, "Failed to program IB window\n");
 		return ret;
@@ -682,6 +694,7 @@ static int rockchip_pcie_init_host(struct rockchip_pcie *rockchip)
 
 disable_controller:
 	reset_control_assert(rockchip->rst);
+
 disable_phy:
 	phy_exit(rockchip->phy);
 	phy_power_off(rockchip->phy);
@@ -700,54 +713,12 @@ static int rockchip_pcie_deinit_host(struct rockchip_pcie *rockchip)
 	return 0;
 }
 
-/*
- * ATS does not work on platform like rk3588 when running in EP mode.
- * After a host has enabled ATS on the EP side, it will send an IOTLB
- * invalidation request to the EP side. The rk3588 will never send a completion
- * back and eventually the host will print an IOTLB_INV_TIMEOUT error, and the
- * EP will not be operational. If we hide the ATS cap, things work as expected.
- */
-static void rockchip_pcie_hide_broken_ats_cap(struct dw_pcie *pci)
-{
-	struct device *dev = pci->dev;
-	unsigned int spcie_cap_offset, next_cap_offset;
-	u32 spcie_cap_header, next_cap_header;
-
-	/* only hide the ATS cap for rk3588 running in EP mode */
-	if (!of_device_is_compatible(dev->of_node, "rockchip,rk3588-pcie-std-ep"))
-		return;
-
-	spcie_cap_offset = dw_pcie_find_ext_capability(pci, PCI_EXT_CAP_ID_SECPCI);
-	if (!spcie_cap_offset)
-		return;
-
-	spcie_cap_header = dw_pcie_readl_dbi(pci, spcie_cap_offset);
-	next_cap_offset = PCI_EXT_CAP_NEXT(spcie_cap_header);
-
-	next_cap_header = dw_pcie_readl_dbi(pci, next_cap_offset);
-	if (PCI_EXT_CAP_ID(next_cap_header) != PCI_EXT_CAP_ID_ATS)
-		return;
-
-	/* clear next ptr */
-	spcie_cap_header &= ~GENMASK(31, 20);
-
-	/* set next ptr to next ptr of ATS_CAP */
-	spcie_cap_header |= next_cap_header & GENMASK(31, 20);
-
-	dw_pcie_dbi_ro_wr_en(pci);
-	dw_pcie_writel_dbi(pci, spcie_cap_offset, spcie_cap_header);
-	dw_pcie_dbi_ro_wr_dis(pci);
-}
-
 static int rockchip_pcie_config_host(struct rockchip_pcie *rockchip)
 {
 	struct device *dev = rockchip->pci.dev;
 	struct dw_pcie *pci = &rockchip->pci;
 	u32 reg, val;
-	int ret, retry, i;
-
-	/* Detecting ATU features to achieve DWC ATU interface development */
-	dw_pcie_iatu_detect(&rockchip->pci);
+	int ret, retries, i;
 
 	if (dw_pcie_link_up(&rockchip->pci))
 		goto already_linkup;
@@ -755,8 +726,6 @@ static int rockchip_pcie_config_host(struct rockchip_pcie *rockchip)
 		dev_info(dev, "Configure complete registers\n");
 
 	dw_pcie_setup(&rockchip->pci);
-
-	rockchip_pcie_hide_broken_ats_cap(pci);
 
 	dw_pcie_dbi_ro_wr_en(&rockchip->pci);
 	/* Enable bus master and memory space */
@@ -811,7 +780,8 @@ static int rockchip_pcie_config_host(struct rockchip_pcie *rockchip)
 	}
 	rockchip_pcie_writel_apb(rockchip, reg, PCIE_CLIENT_INTR_STATUS_MISC);
 
-	for (retry = 0; retry < 1000; retry++) {
+	retries = 1000;
+	for (i = 0; i < retries; i++) {
 		if (dw_pcie_link_up(&rockchip->pci)) {
 			/*
 			 * We may be here in case of L0 in Gen1. But if EP is capable
@@ -820,10 +790,13 @@ static int rockchip_pcie_config_host(struct rockchip_pcie *rockchip)
 			 * that LTSSM max timeout is 24ms per period, we can wait a bit
 			 * more for Gen switch.
 			 */
-			msleep(2000);
-			dev_info(dev, "PCIe Link up, LTSSM is 0x%x\n",
-				 rockchip_pcie_readl_apb(rockchip, PCIE_CLIENT_LTSSM_STATUS));
-			break;
+			msleep(50);
+			/* In case link drop after linkup, double check it */
+			if (dw_pcie_link_up(pci)) {
+				dev_info(pci->dev, "PCIe Link up, LTSSM is 0x%x\n",
+					 rockchip_pcie_readl_apb(rockchip, PCIE_CLIENT_LTSSM_STATUS));
+				break;
+			}
 		}
 
 		dev_info_ratelimited(dev, "PCIe Linking... LTSSM is 0x%x\n",
@@ -831,7 +804,7 @@ static int rockchip_pcie_config_host(struct rockchip_pcie *rockchip)
 		msleep(20);
 	}
 
-	if (retry >= 10000) {
+	if (i >= retries) {
 		ret = -ENODEV;
 		return ret;
 	}
@@ -1153,12 +1126,26 @@ static int pcie_ep_mmap(struct file *file, struct vm_area_struct *vma)
 		}
 		addr = rockchip->ib_target_address[0];
 		break;
+	case PCIE_EP_MMAP_RESOURCE_BAR1:
+		if (size > rockchip->ib_target_size[1]) {
+			dev_warn(rockchip->pci.dev, "bar1 mmap size is out of limitation\n");
+			return -EINVAL;
+		}
+		addr = rockchip->ib_target_address[1];
+		break;
 	case PCIE_EP_MMAP_RESOURCE_BAR2:
 		if (size > rockchip->ib_target_size[2]) {
 			dev_warn(rockchip->pci.dev, "bar2 mmap size is out of limitation\n");
 			return -EINVAL;
 		}
 		addr = rockchip->ib_target_address[2];
+		break;
+	case PCIE_EP_MMAP_RESOURCE_BAR5:
+		if (size > rockchip->ib_target_size[5]) {
+			dev_warn(rockchip->pci.dev, "bar5 mmap size is out of limitation\n");
+			return -EINVAL;
+		}
+		addr = rockchip->ib_target_address[5];
 		break;
 	default:
 		dev_err(rockchip->pci.dev, "cur mmap_res %d is unsurreport\n", rockchip->cur_mmap_res);

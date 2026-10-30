@@ -5,13 +5,14 @@
  * Author: Huang Lee <Putin.li@rock-chips.com>
  */
 
+#define pr_fmt(fmt) "rga_fence: " fmt
+
 #include <linux/dma-fence.h>
 #include <linux/sync_file.h>
 #include <linux/slab.h>
 
 #include "rga_drv.h"
 #include "rga_fence.h"
-#include "rga_common.h"
 
 static const char *rga_fence_get_name(struct dma_fence *fence)
 {
@@ -56,7 +57,7 @@ struct dma_fence *rga_dma_fence_alloc(void)
 	struct dma_fence *fence = NULL;
 
 	if (fence_ctx == NULL) {
-		rga_err("fence_context is NULL!\n");
+		pr_err("fence_context is NULL!\n");
 		return ERR_PTR(-EINVAL);
 	}
 
@@ -99,7 +100,7 @@ struct dma_fence *rga_get_dma_fence_from_fd(int fence_fd)
 
 	fence = sync_file_get_fence(fence_fd);
 	if (!fence)
-		rga_err("can not get fence from fd\n");
+		pr_err("can not get fence from fd\n");
 
 	return fence;
 }
@@ -122,7 +123,7 @@ int rga_dma_fence_add_callback(struct dma_fence *fence, dma_fence_func_t func, v
 
 	waiter = kmalloc(sizeof(*waiter), GFP_KERNEL);
 	if (!waiter) {
-		rga_err("%s: Failed to allocate waiter\n", __func__);
+		pr_err("%s: Failed to allocate waiter\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -130,10 +131,10 @@ int rga_dma_fence_add_callback(struct dma_fence *fence, dma_fence_func_t func, v
 
 	ret = dma_fence_add_callback(fence, &waiter->waiter, func);
 	if (ret == -ENOENT) {
-		rga_err("'input fence' has been already signaled.");
+		pr_err("'input fence' has been already signaled.");
 		goto err_free_waiter;
 	} else if (ret == -EINVAL) {
-		rga_err("%s: failed to add callback to dma_fence, err: %d\n", __func__, ret);
+		pr_err("%s: failed to add callback to dma_fence, err: %d\n", __func__, ret);
 		goto err_free_waiter;
 	}
 

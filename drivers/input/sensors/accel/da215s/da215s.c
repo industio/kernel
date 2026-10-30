@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Kay Guo <kay.guo@rock-chips.com>
  */
@@ -313,9 +313,9 @@ static int gsensor_da215s_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gsensor_da215s_ops);
 }
 
-static void gsensor_da215s_remove(struct i2c_client *client)
+static int gsensor_da215s_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gsensor_da215s_ops);
+	return sensor_unregister_device(client, NULL, &gsensor_da215s_ops);
 }
 
 static const struct i2c_device_id gsensor_da215s_id[] = {

@@ -54,12 +54,10 @@ static inline u16 nvmet_req_to_ctrl_id(struct nvmet_req *req)
 
 static inline void __assign_req_name(char *name, struct nvmet_req *req)
 {
-	if (!req->ns) {
+	if (req->ns)
+		strncpy(name, req->ns->device_path, DISK_NAME_LEN);
+	else
 		memset(name, 0, DISK_NAME_LEN);
-		return;
-	}
-
-	strscpy_pad(name, req->ns->device_path, DISK_NAME_LEN);
 }
 #endif
 
@@ -90,7 +88,7 @@ TRACE_EVENT(nvmet_req_init,
 		__entry->flags = cmd->common.flags;
 		__entry->nsid = le32_to_cpu(cmd->common.nsid);
 		__entry->metadata = le64_to_cpu(cmd->common.metadata);
-		memcpy(__entry->cdw10, &cmd->common.cdws,
+		memcpy(__entry->cdw10, &cmd->common.cdw10,
 			sizeof(__entry->cdw10));
 	),
 	TP_printk("nvmet%s: %sqid=%d, cmdid=%u, nsid=%u, flags=%#x, "

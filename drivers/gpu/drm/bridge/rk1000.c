@@ -1,6 +1,6 @@
 /*
  * Driver for rockchip rk1000 tv encoder
- *  Copyright (C) 2017 Rockchip Electronics Co., Ltd.
+ *  Copyright (C) 2017 Fuzhou Rockchip Electronics Co.Ltd
  *  Author:
  *      Algea Cao <algea.cao@rock-chips.com>
  *  This program is free software; you can redistribute  it and/or modify it
@@ -408,11 +408,13 @@ static int rk1000_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void rk1000_remove(struct i2c_client *client)
+static int rk1000_remove(struct i2c_client *client)
 {
 	struct rk1000_tve *rk1000 = i2c_get_clientdata(client);
 
 	drm_bridge_remove(&rk1000->bridge);
+
+	return 0;
 }
 
 static const struct i2c_device_id rk1000_i2c_id[] = {

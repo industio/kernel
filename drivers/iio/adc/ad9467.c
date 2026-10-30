@@ -473,6 +473,8 @@ static int ad9467_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
+	spi_set_drvdata(spi, st);
+
 	conv->chip_info = &info->axi_adc_info;
 
 	ret = ad9467_scale_fill(conv);
@@ -518,4 +520,3 @@ module_spi_driver(ad9467_driver);
 MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("Analog Devices AD9467 ADC driver");
 MODULE_LICENSE("GPL v2");
-MODULE_IMPORT_NS(IIO_ADI_AXI);

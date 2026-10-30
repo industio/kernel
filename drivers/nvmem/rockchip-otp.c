@@ -2,7 +2,7 @@
 /*
  * Rockchip OTP Driver
  *
- * Copyright (c) 2018 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
  * Author: Finley Xiao <finley.xiao@rock-chips.com>
  */
 
@@ -79,8 +79,6 @@
 #define OTPC_TIMEOUT			10000
 #define OTPC_TIMEOUT_PROG		100000
 #define RK3568_NBYTES			2
-
-#define RK3576_NO_SECURE_OFFSET		0x1C0
 
 #define RK3588_OTPC_AUTO_CTRL		0x04
 #define RK3588_OTPC_AUTO_EN		0x08
@@ -172,7 +170,6 @@ struct rockchip_otp {
 
 struct rockchip_data {
 	int size;
-	int ns_offset;
 	const char * const *clocks;
 	int num_clks;
 	nvmem_reg_read_t reg_read;
@@ -538,7 +535,7 @@ static int rk3588_otp_read(void *context, unsigned int offset, void *val,
 	addr_end = roundup(offset + bytes, RK3588_NBYTES) / RK3588_NBYTES;
 	addr_offset = offset % RK3588_NBYTES;
 	addr_len = addr_end - addr_start;
-	addr_start += otp->data->ns_offset;
+	addr_start += RK3588_NO_SECURE_OFFSET;
 
 	buf = kzalloc(array3_size(addr_len, RK3588_NBYTES, sizeof(*buf)),
 		      GFP_KERNEL);
@@ -769,13 +766,6 @@ static const char * const rk3528_otp_clocks[] = {
 	"usr", "sbpi", "apb",
 };
 
-static const struct rockchip_data rk3506_data = {
-	.size = 0x78,
-	.clocks = rk3528_otp_clocks,
-	.num_clks = ARRAY_SIZE(rk3528_otp_clocks),
-	.reg_read = rk3568_otp_read,
-};
-
 static const struct rockchip_data rk3528_data = {
 	.size = 0x80,
 	.clocks = rk3528_otp_clocks,
@@ -783,15 +773,19 @@ static const struct rockchip_data rk3528_data = {
 	.reg_read = rk3568_otp_read,
 };
 
-static const char * const rk3568_otp_clocks[] = {
+static const char * const rk3562_otp_clocks[] = {
 	"usr", "sbpi", "apb", "phy",
 };
 
 static const struct rockchip_data rk3562_data = {
 	.size = 0x80,
-	.clocks = rk3568_otp_clocks,
-	.num_clks = ARRAY_SIZE(rk3568_otp_clocks),
+	.clocks = rk3562_otp_clocks,
+	.num_clks = ARRAY_SIZE(rk3562_otp_clocks),
 	.reg_read = rk3568_otp_read,
+};
+
+static const char * const rk3568_otp_clocks[] = {
+	"usr", "sbpi", "apb", "phy",
 };
 
 static const struct rockchip_data rk3568_data = {
@@ -801,34 +795,36 @@ static const struct rockchip_data rk3568_data = {
 	.reg_read = rk3568_otp_read,
 };
 
-static const char * const rk3576_otp_clocks[] = {
-	"otpc", "apb",
-};
-
-static const struct rockchip_data rk3576_data = {
-	.size = 0x100,
-	.ns_offset = RK3576_NO_SECURE_OFFSET,
-	.clocks = rk3576_otp_clocks,
-	.num_clks = ARRAY_SIZE(rk3576_otp_clocks),
-	.reg_read = rk3588_otp_read,
-};
-
 static const char * const rk3588_otp_clocks[] = {
 	"otpc", "apb", "phy",
 };
 
 static const struct rockchip_data rk3588_data = {
 	.size = 0x400,
-	.ns_offset = RK3588_NO_SECURE_OFFSET,
 	.clocks = rk3588_otp_clocks,
 	.num_clks = ARRAY_SIZE(rk3588_otp_clocks),
 	.reg_read = rk3588_otp_read,
 };
 
+static const char * const rv1103b_otp_clocks[] = {
+	"usr", "sbpi", "apb", "phy",
+};
+
+static const struct rockchip_data rv1103b_data = {
+	.size = 0x80,
+	.clocks = rv1103b_otp_clocks,
+	.num_clks = ARRAY_SIZE(rv1103b_otp_clocks),
+	.reg_read = rk3568_otp_read,
+};
+
+static const char * const rv1106_otp_clocks[] = {
+	"usr", "sbpi", "apb", "phy",
+};
+
 static const struct rockchip_data rv1106_data = {
 	.size = 0x80,
-	.clocks = rk3568_otp_clocks,
-	.num_clks = ARRAY_SIZE(rk3568_otp_clocks),
+	.clocks = rv1106_otp_clocks,
+	.num_clks = ARRAY_SIZE(rv1106_otp_clocks),
 	.reg_read = rk3568_otp_read,
 };
 
@@ -866,12 +862,6 @@ static const struct of_device_id rockchip_otp_match[] = {
 		.data = (void *)&px30s_data,
 	},
 #endif
-#ifdef CONFIG_CPU_RK3506
-	{
-		.compatible = "rockchip,rk3506-otp",
-		.data = (void *)&rk3506_data,
-	},
-#endif
 #ifdef CONFIG_CPU_RK3528
 	{
 		.compatible = "rockchip,rk3528-otp",
@@ -890,16 +880,16 @@ static const struct of_device_id rockchip_otp_match[] = {
 		.data = (void *)&rk3568_data,
 	},
 #endif
-#ifdef CONFIG_CPU_RK3576
-	{
-		.compatible = "rockchip,rk3576-otp",
-		.data = (void *)&rk3576_data,
-	},
-#endif
 #ifdef CONFIG_CPU_RK3588
 	{
 		.compatible = "rockchip,rk3588-otp",
 		.data = (void *)&rk3588_data,
+	},
+#endif
+#ifdef CONFIG_CPU_RV1103B
+	{
+		.compatible = "rockchip,rv1103b-otp",
+		.data = (void *)&rv1103b_data,
 	},
 #endif
 #ifdef CONFIG_CPU_RV1106

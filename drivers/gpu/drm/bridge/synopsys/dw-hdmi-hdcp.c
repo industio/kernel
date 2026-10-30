@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author Huicong Xu <xhc@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -24,7 +24,7 @@
 #include <linux/of_device.h>
 #include <linux/spinlock.h>
 #include <linux/soc/rockchip/rk_vendor_storage.h>
-#include <crypto/sha1.h>
+#include <crypto/sha.h>
 #include <drm/bridge/dw_hdmi.h>
 
 #include "dw-hdmi.h"

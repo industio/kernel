@@ -14,6 +14,7 @@
  *
  */
 #include <drm/drm_device.h>
+#include <linux/dma-iommu.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>

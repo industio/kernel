@@ -514,18 +514,6 @@ struct rkcif_toisp_buf_state {
 	bool is_early_update;
 };
 
-struct rkcif_fence_context {
-	u64 context;
-	u64 seqno;
-	spinlock_t spinlock;
-};
-
-struct rkcif_fence {
-	struct list_head fence_list;
-	struct dma_fence *fence;
-	int fence_fd;
-};
-
 struct rkcif_sensor_exp {
 	int sequence;
 	u32 exp[3];
@@ -631,13 +619,7 @@ struct rkcif_stream {
 	int				thunderboot_skip_interval;
 	int				sequence;
 	atomic_t			sub_stream_buf_cnt;
-	struct rkcif_fence_context	fence_ctx;
-	struct rkcif_fence		*rkcif_fence;
-	struct list_head		qbuf_fence_list_head;
-	struct list_head		done_fence_list_head;
-	spinlock_t			fence_lock;
 	u32				rounding_bit;
-	int				frame_loss;
 	struct kfifo			exp_kfifo;
 	struct kfifo			gain_kfifo;
 	struct kfifo			vts_kfifo;
@@ -664,7 +646,6 @@ struct rkcif_stream {
 	bool				is_single_cap;
 	bool				is_wait_stop_complete;
 	bool				interlaced_bad_frame;
-	bool				low_latency;
 	bool				is_finish_single_cap;
 	bool				is_wait_single_cap;
 	bool				is_m_online_fb_res;
@@ -1174,6 +1155,4 @@ void rkcif_reinit_right_half_config(struct rkcif_stream *stream);
 void rkcif_modify_line_int(struct rkcif_stream *stream, bool en);
 
 void rkcif_set_sof(struct rkcif_device *cif_dev, u32 seq);
-
-void rkcif_set_sensor_streamon_in_sync_mode(struct rkcif_device *cif_dev);
 #endif

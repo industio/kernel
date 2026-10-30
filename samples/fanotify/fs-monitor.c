@@ -12,6 +12,7 @@
 #include <sys/fanotify.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/types.h>
 
 #ifndef FAN_FS_ERROR
 #define FAN_FS_ERROR		0x00008000
@@ -64,8 +65,7 @@ static void handle_notifications(char *buffer, int len)
 	for (; FAN_EVENT_OK(event, len); event = FAN_EVENT_NEXT(event, len)) {
 
 		if (event->mask != FAN_FS_ERROR) {
-			printf("unexpected FAN MARK: %llx\n",
-							(unsigned long long)event->mask);
+			printf("unexpected FAN MARK: %llx\n", event->mask);
 			goto next_event;
 		}
 

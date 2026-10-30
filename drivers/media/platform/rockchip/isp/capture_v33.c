@@ -245,26 +245,26 @@ static struct stream_config rkisp_mp_stream_cfg = {
 	.frame_end_id = CIF_MI_MP_FRAME,
 	/* registers */
 	.rsz = {
-		.ctrl = ISP39_MAIN_SCALE_CTRL,
-		.update = ISP39_MAIN_SCALE_UPDATE,
-		.src_size = ISP39_MAIN_SCALE_SRC_SIZE,
-		.dst_size = ISP39_MAIN_SCALE_DST_SIZE,
-		.scale_hy_offs_mi = ISP39_MAIN_SCALE_HY_OFFS_MI,
-		.scale_hc_offs_mi = ISP39_MAIN_SCALE_HC_OFFS_MI,
-		.scale_in_crop_offs = ISP39_MAIN_SCALE_IN_CROP_OFFSET,
-		.scale_hy_offs = ISP39_MAIN_SCALE_HY_OFFS,
-		.scale_hc_offs = ISP39_MAIN_SCALE_HC_OFFS,
-		.scale_hy_size = ISP39_MAIN_SCALE_HY_SIZE,
-		.scale_hc_size = ISP39_MAIN_SCALE_HC_SIZE,
-		.scale_hy = ISP39_MAIN_SCALE_HY_FAC,
-		.scale_hcr = ISP39_MAIN_SCALE_HC_FAC,
-		.scale_vy = ISP39_MAIN_SCALE_VY_FAC,
-		.scale_vc = ISP39_MAIN_SCALE_VC_FAC,
-		.scale_hy_shd = ISP39_MAIN_SCALE_HY_FAC_SHD,
-		.scale_hcr_shd = ISP39_MAIN_SCALE_HC_FAC_SHD,
-		.scale_vy_shd = ISP39_MAIN_SCALE_VY_FAC_SHD,
-		.scale_vc_shd = ISP39_MAIN_SCALE_VC_FAC_SHD,
-		.ctrl_shd = ISP39_MAIN_SCALE_CTRL_SHD,
+		.ctrl = ISP33_MAIN_SCALE_CTRL,
+		.update = ISP33_MAIN_SCALE_UPDATE,
+		.src_size = ISP33_MAIN_SCALE_SRC_SIZE,
+		.dst_size = ISP33_MAIN_SCALE_DST_SIZE,
+		.scale_hy_offs_mi = ISP33_MAIN_SCALE_HY_OFFS_MI,
+		.scale_hc_offs_mi = ISP33_MAIN_SCALE_HC_OFFS_MI,
+		.scale_in_crop_offs = ISP33_MAIN_SCALE_IN_CROP_OFFSET,
+		.scale_hy_offs = ISP33_MAIN_SCALE_HY_OFFS,
+		.scale_hc_offs = ISP33_MAIN_SCALE_HC_OFFS,
+		.scale_hy_size = ISP33_MAIN_SCALE_HY_SIZE,
+		.scale_hc_size = ISP33_MAIN_SCALE_HC_SIZE,
+		.scale_hy = ISP33_MAIN_SCALE_HY_FAC,
+		.scale_hcr = ISP33_MAIN_SCALE_HC_FAC,
+		.scale_vy = ISP33_MAIN_SCALE_VY_FAC,
+		.scale_vc = ISP33_MAIN_SCALE_VC_FAC,
+		.scale_hy_shd = ISP33_MAIN_SCALE_HY_FAC_SHD,
+		.scale_hcr_shd = ISP33_MAIN_SCALE_HC_FAC_SHD,
+		.scale_vy_shd = ISP33_MAIN_SCALE_VY_FAC_SHD,
+		.scale_vc_shd = ISP33_MAIN_SCALE_VC_FAC_SHD,
+		.ctrl_shd = ISP33_MAIN_SCALE_CTRL_SHD,
 	},
 	.dual_crop = {
 		.ctrl = CIF_DUAL_CROP_CTRL,
@@ -1245,10 +1245,10 @@ static int mi_frame_end(struct rkisp_stream *stream, u32 state)
 		if (!ns)
 			ns = rkisp_time_get_ns(dev);
 		buf->vb.sequence = i;
-		vb2_buf->timestamp = ns;
+		buf->vb.vb2_buf.timestamp = ns;
 		ns = rkisp_time_get_ns(dev);
 		stream->dbg.interval = ns - stream->dbg.timestamp;
-		stream->dbg.delay = ns - vb2_buf->timestamp;
+		stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 		stream->dbg.timestamp = ns;
 		stream->dbg.id = i;
 
@@ -1575,7 +1575,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 
 	rkisp_stream_stop(stream);
 	/* call to the other devices */
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 	ret = dev->pipe.set_stream(&dev->pipe, false);
 	if (ret < 0)
 		v4l2_err(v4l2_dev, "pipeline stream-off failed:%d\n", ret);
@@ -1716,7 +1716,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 	if (ret < 0)
 		goto stop_stream;
 
-	ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+	ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(v4l2_dev, "start pipeline failed %d\n", ret);
 		goto pipe_stream_off;
@@ -1940,10 +1940,10 @@ void rkisp_mi_v33_isr(u32 mis_val, struct rkisp_device *dev)
 			}
 		} else if (stream->id == RKISP_STREAM_MP && dev->cap_dev.wrap_line) {
 			ns = rkisp_time_get_ns(dev);
+			rkisp_dmarx_get_frame(dev, &seq, NULL, NULL, true);
 			stream->dbg.interval = ns - stream->dbg.timestamp;
+			stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 			stream->dbg.timestamp = ns;
-			rkisp_dmarx_get_frame(dev, &seq, NULL, &ns, true);
-			stream->dbg.delay = stream->dbg.timestamp - ns;
 			stream->dbg.id = seq;
 			set_mirror_flip(stream);
 		} else {

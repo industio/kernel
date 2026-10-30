@@ -2,7 +2,7 @@
 //
 // es8323.c -- es8323 ALSA SoC audio driver
 //
-// Copyright (c) 2016 Rockchip Electronics Co., Ltd.
+// Copyright (c) 2016 Rockchip Electronics Co. Ltd.
 //
 // Author: Mark Brown <will@everset-semi.com>
 // Author: Jianqun Xu <jay.xu@rock-chips.com>
@@ -237,12 +237,6 @@ static const struct snd_kcontrol_new es8323_right_mixer_controls[] = {
 	SOC_DAPM_SINGLE("Right Bypass Switch", ES8323_DACCONTROL20, 6, 1, 0),
 };
 
-static const struct snd_kcontrol_new es8323_out1_switch =
-	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
-
-static const struct snd_kcontrol_new es8323_out2_switch =
-	SOC_DAPM_SINGLE("Switch", SND_SOC_NOPM, 0, 1, 0);
-
 static const struct snd_soc_dapm_widget es8323_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("LINPUT1"),
 	SND_SOC_DAPM_INPUT("LINPUT2"),
@@ -292,8 +286,6 @@ static const struct snd_soc_dapm_widget es8323_dapm_widgets[] = {
 	SND_SOC_DAPM_PGA("LAMP", ES8323_ADCCONTROL1, 4, 0, NULL, 0),
 	SND_SOC_DAPM_PGA("RAMP", ES8323_ADCCONTROL1, 0, 0, NULL, 0),
 
-	SND_SOC_DAPM_SWITCH("OUT1", SND_SOC_NOPM, 0, 0, &es8323_out1_switch),
-	SND_SOC_DAPM_SWITCH("OUT2", SND_SOC_NOPM, 0, 0, &es8323_out2_switch),
 	SND_SOC_DAPM_OUTPUT("LOUT1"),
 	SND_SOC_DAPM_OUTPUT("ROUT1"),
 	SND_SOC_DAPM_OUTPUT("LOUT2"),
@@ -349,20 +341,14 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"Right Mixer", "Right Bypass Switch", "Right Line Mux"},
 
 	{"Left Out 1", NULL, "Left Mixer"},
-	{"OUT1", "Switch", "Left Out 1"},
-	{"LOUT1", NULL, "OUT1"},
-
+	{"LOUT1", NULL, "Left Out 1"},
 	{"Right Out 1", NULL, "Right Mixer"},
-	{"OUT1", "Switch", "Right Out 1"},
-	{"ROUT1", NULL, "OUT1"},
+	{"ROUT1", NULL, "Right Out 1"},
 
 	{"Left Out 2", NULL, "Left Mixer"},
-	{"OUT2", "Switch", "Left Out 2"},
-	{"LOUT2", NULL, "OUT2"},
-
+	{"LOUT2", NULL, "Left Out 2"},
 	{"Right Out 2", NULL, "Right Mixer"},
-	{"OUT2", "Switch", "Right Out 2"},
-	{"ROUT2", NULL, "OUT2"},
+	{"ROUT2", NULL, "Right Out 2"},
 };
 
 struct _coeff_div {
@@ -718,7 +704,7 @@ static struct snd_soc_dai_driver es8323_dai = {
 		    .formats = es8323_FORMATS,
 		    },
 	.ops = &es8323_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 
 static int es8323_suspend(struct snd_soc_component *component)
@@ -755,9 +741,6 @@ static int es8323_resume(struct snd_soc_component *component)
 	snd_soc_component_write(component, 0x31, es8323_DEF_VOL);
 	snd_soc_component_write(component, 0x30, es8323_DEF_VOL);
 	snd_soc_component_write(component, 0x19, 0x02);
-
-	es8323_set_bias_level(component, SND_SOC_BIAS_OFF);
-
 	return 0;
 }
 
@@ -811,6 +794,7 @@ static int es8323_probe(struct snd_soc_component *component)
 	snd_soc_component_write(component, 0x1B, 0x00);
 	snd_soc_component_write(component, 0x27, 0xB8);
 	snd_soc_component_write(component, 0x2A, 0xB8);
+	snd_soc_component_write(component, 0x35, 0xA0);
 	usleep_range(18000, 20000);
 	snd_soc_component_write(component, 0x2E, 0x1E);
 	snd_soc_component_write(component, 0x2F, 0x1E);
@@ -821,7 +805,7 @@ static int es8323_probe(struct snd_soc_component *component)
 	usleep_range(18000, 20000);
 	snd_soc_component_write(component, 0x04, 0x3C);
 
-	es8323_set_bias_level(component, SND_SOC_BIAS_OFF);
+	es8323_set_bias_level(component, SND_SOC_BIAS_STANDBY);
 	return 0;
 }
 
@@ -892,9 +876,10 @@ static int es8323_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static void es8323_i2c_remove(struct i2c_client *client)
+static int es8323_i2c_remove(struct i2c_client *client)
 {
 	snd_soc_unregister_component(&client->dev);
+	return 0;
 }
 
 static const struct i2c_device_id es8323_i2c_id[] = {

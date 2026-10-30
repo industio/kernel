@@ -22,19 +22,14 @@ struct btrfs_inode;
 
 /* Maximum length of compressed data stored on disk */
 #define BTRFS_MAX_COMPRESSED		(SZ_128K)
-static_assert((BTRFS_MAX_COMPRESSED % PAGE_SIZE) == 0);
-
 /* Maximum size of data before compression */
 #define BTRFS_MAX_UNCOMPRESSED		(SZ_128K)
 
 #define	BTRFS_ZLIB_DEFAULT_LEVEL		3
 
 struct compressed_bio {
-	/* Number of outstanding bios */
-	refcount_t pending_ios;
-
-	/* Number of compressed pages in the array */
-	unsigned int nr_pages;
+	/* number of bios pending for this compressed extent */
+	refcount_t pending_bios;
 
 	/* the pages with the compressed data on them */
 	struct page **compressed_pages;
@@ -45,26 +40,30 @@ struct compressed_bio {
 	/* starting offset in the inode for our pages */
 	u64 start;
 
-	/* Number of bytes in the inode we're working on */
-	unsigned int len;
+	/* number of bytes in the inode we're working on */
+	unsigned long len;
 
-	/* Number of bytes on disk */
-	unsigned int compressed_len;
+	/* number of bytes on disk */
+	unsigned long compressed_len;
 
-	/* The compression algorithm for this bio */
-	u8 compress_type;
+	/* the compression algorithm for this bio */
+	int compress_type;
 
-	/* Whether this is a write for writeback. */
-	bool writeback;
+	/* number of compressed pages in the array */
+	unsigned long nr_pages;
 
 	/* IO errors */
-	blk_status_t status;
+	int errors;
+	int mirror_num;
 
-	union {
-		/* For reads, this is the bio we are copying the data into */
-		struct bio *orig_bio;
-		struct work_struct write_end_work;
-	};
+	/* for reads, this is the bio we are copying the data into */
+	struct bio *orig_bio;
+
+	/*
+	 * the start of a variable length array of checksums only
+	 * used by reads
+	 */
+	u8 sums[];
 };
 
 static inline unsigned int btrfs_compress_type(unsigned int type_level)
@@ -87,19 +86,19 @@ int btrfs_compress_pages(unsigned int type_level, struct address_space *mapping,
 			 unsigned long *total_out);
 int btrfs_decompress(int type, unsigned char *data_in, struct page *dest_page,
 		     unsigned long start_byte, size_t srclen, size_t destlen);
-int btrfs_decompress_buf2page(const char *buf, u32 buf_len,
-			      struct compressed_bio *cb, u32 decompressed);
+int btrfs_decompress_buf2page(const char *buf, unsigned long buf_start,
+			      unsigned long total_out, u64 disk_start,
+			      struct bio *bio);
 
 blk_status_t btrfs_submit_compressed_write(struct btrfs_inode *inode, u64 start,
-				  unsigned int len, u64 disk_start,
-				  unsigned int compressed_len,
+				  unsigned long len, u64 disk_start,
+				  unsigned long compressed_len,
 				  struct page **compressed_pages,
-				  unsigned int nr_pages,
-				  blk_opf_t write_flags,
-				  struct cgroup_subsys_state *blkcg_css,
-				  bool writeback);
-void btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
-				  int mirror_num);
+				  unsigned long nr_pages,
+				  unsigned int write_flags,
+				  struct cgroup_subsys_state *blkcg_css);
+blk_status_t btrfs_submit_compressed_read(struct inode *inode, struct bio *bio,
+				 int mirror_num, unsigned long bio_flags);
 
 unsigned int btrfs_compress_str2level(unsigned int type, const char *str);
 

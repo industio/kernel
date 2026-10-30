@@ -127,7 +127,7 @@ static int __isp_pipeline_prepare(struct rkisp1_pipeline *p,
 
 			if (!(spad->flags & MEDIA_PAD_FL_SINK))
 				continue;
-			pad = media_pad_remote_pad_first(spad);
+			pad = media_entity_remote_pad(spad);
 			if (pad)
 				break;
 		}
@@ -377,7 +377,7 @@ static int _set_pipeline_default_fmt(struct rkisp1_device *dev)
 	struct v4l2_subdev *isp;
 	struct v4l2_subdev_format fmt;
 	struct v4l2_subdev_selection sel;
-	struct v4l2_subdev_state state;
+	struct v4l2_subdev_pad_config cfg;
 	u32 width, height;
 	u32 ori_width, ori_height, ori_code;
 
@@ -420,13 +420,13 @@ static int _set_pipeline_default_fmt(struct rkisp1_device *dev)
 	sel.target = V4L2_SEL_TGT_CROP;
 	sel.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
-	memset(&state, 0, sizeof(state));
+	memset(&cfg, 0, sizeof(cfg));
 
 	/* change fmt&size for RKISP1_ISP_PAD_SINK */
 	fmt.pad = RKISP1_ISP_PAD_SINK;
 	sel.pad = RKISP1_ISP_PAD_SINK;
-	v4l2_subdev_call(isp, pad, set_fmt, &state, &fmt);
-	v4l2_subdev_call(isp, pad, set_selection, &state, &sel);
+	v4l2_subdev_call(isp, pad, set_fmt, &cfg, &fmt);
+	v4l2_subdev_call(isp, pad, set_selection, &cfg, &sel);
 
 	/* change fmt&size for RKISP1_ISP_PAD_SOURCE_PATH */
 	if ((fmt.format.code & RKISP1_MEDIA_BUS_FMT_MASK) ==
@@ -435,8 +435,8 @@ static int _set_pipeline_default_fmt(struct rkisp1_device *dev)
 
 	fmt.pad = RKISP1_ISP_PAD_SOURCE_PATH;
 	sel.pad = RKISP1_ISP_PAD_SOURCE_PATH;
-	v4l2_subdev_call(isp, pad, set_fmt, &state, &fmt);
-	v4l2_subdev_call(isp, pad, set_selection, &state, &sel);
+	v4l2_subdev_call(isp, pad, set_fmt, &cfg, &fmt);
+	v4l2_subdev_call(isp, pad, set_selection, &cfg, &sel);
 
 	/* change fmt&size of MP/SP */
 	rkisp1_set_stream_def_fmt(dev, RKISP1_STREAM_MP,
@@ -515,6 +515,7 @@ static int rkisp1_fwnode_parse(struct device *dev,
 {
 	struct rkisp1_async_subdev *rk_asd =
 			container_of(asd, struct rkisp1_async_subdev, asd);
+	struct v4l2_fwnode_bus_parallel *bus = &vep->bus.parallel;
 
 	/*
 	 * MIPI sensor is linked with a mipi dphy and its media bus config can
@@ -524,6 +525,7 @@ static int rkisp1_fwnode_parse(struct device *dev,
 	    vep->bus_type != V4L2_MBUS_PARALLEL)
 		return 0;
 
+	rk_asd->mbus.flags = bus->flags;
 	rk_asd->mbus.type = vep->bus_type;
 
 	return 0;
@@ -540,9 +542,9 @@ static int isp_subdev_notifier(struct rkisp1_device *isp_dev)
 	struct device *dev = isp_dev->dev;
 	int ret;
 
-	v4l2_async_nf_init(ntf);
+	v4l2_async_notifier_init(ntf);
 
-	ret = v4l2_async_nf_parse_fwnode_endpoints(
+	ret = v4l2_async_notifier_parse_fwnode_endpoints(
 		dev, ntf, sizeof(struct rkisp1_async_subdev),
 		rkisp1_fwnode_parse);
 	if (ret < 0)
@@ -550,7 +552,7 @@ static int isp_subdev_notifier(struct rkisp1_device *isp_dev)
 
 	ntf->ops = &subdev_notifier_ops;
 
-	return v4l2_async_nf_register(&isp_dev->v4l2_dev, ntf);
+	return v4l2_async_notifier_register(&isp_dev->v4l2_dev, ntf);
 }
 
 /***************************** platform deive *******************************/
@@ -981,32 +983,54 @@ static int rkisp1_plat_probe(struct platform_device *pdev)
 
 	match_data = match->data;
 	isp_dev->mipi_irq = -1;
-	/* there are irq names in dts */
-	for (i = 0; i < match_data->num_irqs; i++) {
-		irq = platform_get_irq_byname(pdev, match_data->irqs[i].name);
+	res = platform_get_resource_byname(pdev, IORESOURCE_IRQ,
+					   match_data->irqs[0].name);
+	if (res) {
+		/* there are irq names in dts */
+		for (i = 0; i < match_data->num_irqs; i++) {
+			irq = platform_get_irq_byname(pdev,
+						      match_data->irqs[i].name);
+			if (irq < 0) {
+				dev_err(dev, "no irq %s in dts\n",
+					match_data->irqs[i].name);
+				return irq;
+			}
+
+			if (!strcmp(match_data->irqs[i].name, "mipi_irq"))
+				isp_dev->mipi_irq = irq;
+
+			ret = devm_request_irq(dev, irq,
+					       match_data->irqs[i].irq_hdl,
+					       IRQF_SHARED,
+					       dev_driver_string(dev),
+					       dev);
+			if (ret < 0) {
+				dev_err(dev, "request %s failed: %d\n",
+					match_data->irqs[i].name,
+					ret);
+				return ret;
+			}
+
+			if (isp_dev->mipi_irq == irq)
+				disable_irq(isp_dev->mipi_irq);
+		}
+	} else {
+		/* no irq names in dts */
+		irq = platform_get_irq(pdev, 0);
 		if (irq < 0) {
-			dev_err(dev, "no irq %s in dts\n",
-				match_data->irqs[i].name);
+			dev_err(dev, "no isp irq in dts\n");
 			return irq;
 		}
 
-		if (!strcmp(match_data->irqs[i].name, "mipi_irq"))
-			isp_dev->mipi_irq = irq;
-
 		ret = devm_request_irq(dev, irq,
-				       match_data->irqs[i].irq_hdl,
+				       rkisp1_irq_handler,
 				       IRQF_SHARED,
 				       dev_driver_string(dev),
 				       dev);
 		if (ret < 0) {
-			dev_err(dev, "request %s failed: %d\n",
-				match_data->irqs[i].name,
-				ret);
+			dev_err(dev, "request irq failed: %d\n", ret);
 			return ret;
 		}
-
-		if (isp_dev->mipi_irq == irq)
-			disable_irq(isp_dev->mipi_irq);
 	}
 
 	for (i = 0; i < match_data->num_clks; i++) {
@@ -1035,13 +1059,13 @@ static int rkisp1_plat_probe(struct platform_device *pdev)
 	rkisp1_stream_init(isp_dev, RKISP1_STREAM_MP);
 	rkisp1_stream_init(isp_dev, RKISP1_STREAM_RAW);
 
-	strscpy(isp_dev->media_dev.model, "rkisp1",
+	strlcpy(isp_dev->media_dev.model, "rkisp1",
 		sizeof(isp_dev->media_dev.model));
 	isp_dev->media_dev.dev = &pdev->dev;
 	isp_dev->media_dev.ops = &rkisp1_media_ops;
 	v4l2_dev = &isp_dev->v4l2_dev;
 	v4l2_dev->mdev = &isp_dev->media_dev;
-	strscpy(v4l2_dev->name, "rkisp1", sizeof(v4l2_dev->name));
+	strlcpy(v4l2_dev->name, "rkisp1", sizeof(v4l2_dev->name));
 	v4l2_ctrl_handler_init(&isp_dev->ctrl_handler, 5);
 	v4l2_dev->ctrl_handler = &isp_dev->ctrl_handler;
 

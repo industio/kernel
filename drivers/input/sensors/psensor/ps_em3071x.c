@@ -2,7 +2,7 @@
 /*
  * kernel/drivers/input/sensors/psensor/ps_em3071x.c
  *
- * Copyright (C) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2020 Rockchip Co.,Ltd.
  * Author: Wang Jie <dave.wang@rock-chips.com>
  */
 
@@ -250,9 +250,9 @@ static int proximity_em3071x_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &psensor_em3071x_ops);
 }
 
-static void proximity_em3071x_remove(struct i2c_client *client)
+static int proximity_em3071x_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &psensor_em3071x_ops);
+	return sensor_unregister_device(client, NULL, &psensor_em3071x_ops);
 }
 
 static const struct i2c_device_id proximity_em3071x_id[] = {

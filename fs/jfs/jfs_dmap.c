@@ -187,7 +187,7 @@ int dbMount(struct inode *ipbmap)
 	}
 
 	bmp->db_numag = le32_to_cpu(dbmp_le->dn_numag);
-	if (!bmp->db_numag || bmp->db_numag > MAXAG) {
+	if (!bmp->db_numag) {
 		err = -EINVAL;
 		goto err_release_metapage;
 	}
@@ -652,7 +652,7 @@ int dbNextAG(struct inode *ipbmap)
 	 * average free space.
 	 */
 	for (i = 0 ; i < bmp->db_numag; i++, agpref++) {
-		if (agpref >= bmp->db_numag)
+		if (agpref == bmp->db_numag)
 			agpref = 0;
 
 		if (atomic_read(&bmp->db_active[agpref]))
@@ -706,7 +706,7 @@ unlock:
  *		this does not succeed, we finally try to allocate anywhere
  *		within the aggregate.
  *
- *		we also try to allocate anywhere within the aggregate
+ *		we also try to allocate anywhere within the aggregate for
  *		for allocation requests larger than the allocation group
  *		size or requests that specify no hint value.
  *
@@ -898,6 +898,74 @@ int dbAlloc(struct inode *ip, s64 hint, s64 nblocks, s64 * results)
 
 	return (rc);
 }
+
+#ifdef _NOTYET
+/*
+ * NAME:	dbAllocExact()
+ *
+ * FUNCTION:	try to allocate the requested extent;
+ *
+ * PARAMETERS:
+ *	ip	- pointer to in-core inode;
+ *	blkno	- extent address;
+ *	nblocks	- extent length;
+ *
+ * RETURN VALUES:
+ *	0	- success
+ *	-ENOSPC	- insufficient disk resources
+ *	-EIO	- i/o error
+ */
+int dbAllocExact(struct inode *ip, s64 blkno, int nblocks)
+{
+	int rc;
+	struct inode *ipbmap = JFS_SBI(ip->i_sb)->ipbmap;
+	struct bmap *bmp = JFS_SBI(ip->i_sb)->bmap;
+	struct dmap *dp;
+	s64 lblkno;
+	struct metapage *mp;
+
+	IREAD_LOCK(ipbmap, RDWRLOCK_DMAP);
+
+	/*
+	 * validate extent request:
+	 *
+	 * note: defragfs policy:
+	 *  max 64 blocks will be moved.
+	 *  allocation request size must be satisfied from a single dmap.
+	 */
+	if (nblocks <= 0 || nblocks > BPERDMAP || blkno >= bmp->db_mapsize) {
+		IREAD_UNLOCK(ipbmap);
+		return -EINVAL;
+	}
+
+	if (nblocks > ((s64) 1 << bmp->db_maxfreebud)) {
+		/* the free space is no longer available */
+		IREAD_UNLOCK(ipbmap);
+		return -ENOSPC;
+	}
+
+	/* read in the dmap covering the extent */
+	lblkno = BLKTODMAP(blkno, bmp->db_l2nbperpage);
+	mp = read_metapage(ipbmap, lblkno, PSIZE, 0);
+	if (mp == NULL) {
+		IREAD_UNLOCK(ipbmap);
+		return -EIO;
+	}
+	dp = (struct dmap *) mp->data;
+
+	/* try to allocate the requested extent */
+	rc = dbAllocNext(bmp, dp, blkno, nblocks);
+
+	IREAD_UNLOCK(ipbmap);
+
+	if (rc == 0)
+		mark_metapage_dirty(mp);
+
+	release_metapage(mp);
+
+	return (rc);
+}
+#endif /* _NOTYET */
 
 /*
  * NAME:	dbReAlloc()
@@ -1626,8 +1694,6 @@ s64 dbDiscardAG(struct inode *ip, int agno, s64 minlen)
 		} else if (rc == -ENOSPC) {
 			/* search for next smaller log2 block */
 			l2nb = BLKSTOL2(nblocks) - 1;
-			if (unlikely(l2nb < 0))
-				break;
 			nblocks = 1LL << l2nb;
 		} else {
 			/* Trim any already allocated blocks */
@@ -2524,19 +2590,15 @@ dbAdjCtl(struct bmap * bmp, s64 blkno, int newval, int alloc, int level)
 		 */
 		if (oldval == NOFREE) {
 			rc = dbBackSplit((dmtree_t *)dcp, leafno, true);
-			if (rc) {
-				release_metapage(mp);
+			if (rc)
 				return rc;
-			}
 			oldval = dcp->stree[ti];
 		}
 		dbSplit((dmtree_t *) dcp, leafno, dcp->budmin, newval, true);
 	} else {
 		rc = dbJoin((dmtree_t *) dcp, leafno, newval, true);
-		if (rc) {
-			release_metapage(mp);
+		if (rc)
 			return rc;
-		}
 	}
 
 	/* check if the root of the current dmap control page changed due
@@ -2944,10 +3006,9 @@ static void dbAdjTree(dmtree_t *tp, int leafno, int newval, bool is_ctl)
 static int dbFindLeaf(dmtree_t *tp, int l2nb, int *leafidx, bool is_ctl)
 {
 	int ti, n = 0, k, x = 0;
-	int max_size, max_idx;
+	int max_size;
 
 	max_size = is_ctl ? CTLTREESIZE : TREESIZE;
-	max_idx = is_ctl ? LPERCTL : LPERDMAP;
 
 	/* first check the root of the tree to see if there is
 	 * sufficient free space.
@@ -2979,8 +3040,6 @@ static int dbFindLeaf(dmtree_t *tp, int l2nb, int *leafidx, bool is_ctl)
 		 */
 		assert(n < 4);
 	}
-	if (le32_to_cpu(tp->dmt_leafidx) >= max_idx)
-		return -ENOSPC;
 
 	/* set the return to the leftmost leaf describing sufficient
 	 * free space.
@@ -3025,7 +3084,7 @@ static int dbFindBits(u32 word, int l2nb)
 
 	/* scan the word for nb free bits at nb alignments.
 	 */
-	for (bitno = 0; mask != 0; bitno += nb, mask = (mask >> nb)) {
+	for (bitno = 0; mask != 0; bitno += nb, mask >>= nb) {
 		if ((mask & word) == mask)
 			break;
 	}
@@ -3649,7 +3708,7 @@ void dbFinalizeBmap(struct inode *ipbmap)
 	 * (the leftmost ag with average free space in it);
 	 */
 //agpref:
-	/* get the number of active ags and inactive ags */
+	/* get the number of active ags and inacitve ags */
 	actags = bmp->db_maxag + 1;
 	inactags = bmp->db_numag - actags;
 	ag_rem = bmp->db_mapsize & (bmp->db_agsize - 1);	/* ??? */

@@ -9,13 +9,13 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <net/genetlink.h>
-#include <net/gro.h>
 #include <net/gue.h>
 #include <net/fou.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/udp.h>
 #include <net/udp_tunnel.h>
+#include <net/xfrm.h>
 #include <uapi/linux/fou.h>
 #include <uapi/linux/genetlink.h>
 
@@ -334,17 +334,20 @@ static struct sk_buff *gue_gro_receive(struct sock *sk,
 	struct gro_remcsum grc;
 	u8 proto;
 
-	skb_gro_remcsum_init(&grc);
-
 	if (!fou)
 		goto out;
+
+	skb_gro_remcsum_init(&grc);
 
 	off = skb_gro_offset(skb);
 	len = off + sizeof(*guehdr);
 
-	guehdr = skb_gro_header(skb, len, off);
-	if (unlikely(!guehdr))
-		goto out;
+	guehdr = skb_gro_header_fast(skb, off);
+	if (skb_gro_header_hard(skb, len)) {
+		guehdr = skb_gro_header_slow(skb, len, off);
+		if (unlikely(!guehdr))
+			goto out;
+	}
 
 	switch (guehdr->version) {
 	case 0:
@@ -450,7 +453,7 @@ next_proto:
 
 	offloads = NAPI_GRO_CB(skb)->is_ipv6 ? inet6_offloads : inet_offloads;
 	ops = rcu_dereference(offloads[proto]);
-	if (!ops || !ops->callbacks.gro_receive)
+	if (WARN_ON_ONCE(!ops || !ops->callbacks.gro_receive))
 		goto out;
 
 	pp = call_gro_receive(ops->callbacks.gro_receive, head, skb);
@@ -947,7 +950,6 @@ static struct genl_family fou_nl_family __ro_after_init = {
 	.module		= THIS_MODULE,
 	.small_ops	= fou_nl_ops,
 	.n_small_ops	= ARRAY_SIZE(fou_nl_ops),
-	.resv_start_op	= FOU_CMD_GET + 1,
 };
 
 size_t fou_encap_hlen(struct ip_tunnel_encap *e)

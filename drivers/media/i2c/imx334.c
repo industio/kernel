@@ -194,6 +194,7 @@ struct imx334 {
 	struct preisp_hdrae_exp_s init_hdrae_exp;
 	u32			cur_vclk_freq;
 	u32			cur_mipi_freq_idx;
+	struct v4l2_fract	cur_fps;
 };
 
 #define to_imx334(sd) container_of(sd, struct imx334, subdev)
@@ -535,7 +536,7 @@ static const struct imx334_mode supported_modes[] = {
 		.vclk_freq = IMX334_XVCLK_FREQ_37,
 		.bpp = 10,
 		.mipi_freq_idx = 0,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}, {
 		.width = 3864,
 		.height = 2180,
@@ -553,10 +554,10 @@ static const struct imx334_mode supported_modes[] = {
 		.vclk_freq = IMX334_XVCLK_FREQ_37,
 		.bpp = 10,
 		.mipi_freq_idx = 2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 	}, {
 		.width = 3864,
 		.height = 2180,
@@ -574,7 +575,7 @@ static const struct imx334_mode supported_modes[] = {
 		.vclk_freq = IMX334_XVCLK_FREQ_37,
 		.bpp = 12,
 		.mipi_freq_idx = 1,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}, {
 		.width = 3864,
 		.height = 2180,
@@ -592,11 +593,16 @@ static const struct imx334_mode supported_modes[] = {
 		.vclk_freq = IMX334_XVCLK_FREQ_74,
 		.bpp = 12,
 		.mipi_freq_idx = 2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SRGGB10_1X10,
+	MEDIA_BUS_FMT_SRGGB12_1X12,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -699,7 +705,7 @@ static int imx334_read_reg(struct i2c_client *client, u16 reg, unsigned int len,
 }
 
 static int imx334_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct imx334 *imx334 = to_imx334(sd);
@@ -720,7 +726,7 @@ static int imx334_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&imx334->mutex);
 		return -ENOTTY;
@@ -755,13 +761,14 @@ static int imx334_set_fmt(struct v4l2_subdev *sd,
 					   mode->mipi_freq_idx);
 			imx334->cur_mipi_freq_idx = mode->mipi_freq_idx;
 		}
+		imx334->cur_fps = mode->max_fps;
 	}
 	mutex_unlock(&imx334->mutex);
 	return 0;
 }
 
 static int imx334_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct imx334 *imx334 = to_imx334(sd);
@@ -770,7 +777,7 @@ static int imx334_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&imx334->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&imx334->mutex);
 		return -ENOTTY;
@@ -792,20 +799,18 @@ static int imx334_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int imx334_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct imx334 *imx334 = to_imx334(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = imx334->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int imx334_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -843,7 +848,95 @@ static int imx334_g_frame_interval(struct v4l2_subdev *sd,
 	struct imx334 *imx334 = to_imx334(sd);
 	const struct imx334_mode *mode = imx334->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (imx334->streaming)
+		fi->interval = imx334->cur_fps;
+	else
+		fi->interval = mode->max_fps;
+
+	return 0;
+}
+
+static const struct imx334_mode *imx334_find_mode(struct imx334 *imx334, int fps)
+{
+	const struct imx334_mode *mode = NULL;
+	const struct imx334_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == imx334->cur_mode->width &&
+		    mode->height == imx334->cur_mode->height &&
+		    mode->bus_fmt == imx334->cur_mode->bus_fmt &&
+		    mode->hdr_mode == imx334->cur_mode->hdr_mode) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int imx334_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct imx334 *imx334 = to_imx334(sd);
+	const struct imx334_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	u64 pixel_rate = 0;
+	int fps;
+	int ret = 0;
+
+	if (imx334->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = imx334_find_mode(imx334, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	imx334->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(imx334->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(imx334->vblank, vblank_def,
+				 IMX334_VTS_MAX - mode->height,
+				 1, vblank_def);
+	if (imx334->cur_vclk_freq != mode->vclk_freq) {
+		clk_disable_unprepare(imx334->xvclk);
+		ret = clk_set_rate(imx334->xvclk, mode->vclk_freq);
+		ret |= clk_prepare_enable(imx334->xvclk);
+		if (ret < 0) {
+			dev_err(&imx334->client->dev, "Failed to enable xvclk\n");
+			mutex_unlock(&imx334->mutex);
+			return ret;
+		}
+		imx334->cur_vclk_freq = mode->vclk_freq;
+	}
+	if (imx334->cur_mipi_freq_idx != mode->mipi_freq_idx) {
+		pixel_rate = ((u32)link_freq_menu_items[mode->mipi_freq_idx]) /
+			mode->bpp * 2 * IMX334_LANES;
+		__v4l2_ctrl_s_ctrl_int64(imx334->pixel_rate,
+					 pixel_rate);
+		__v4l2_ctrl_s_ctrl(imx334->link_freq,
+				   mode->mipi_freq_idx);
+		imx334->cur_mipi_freq_idx = mode->mipi_freq_idx;
+	}
+	imx334->cur_fps = mode->max_fps;
 
 	return 0;
 }
@@ -851,7 +944,15 @@ static int imx334_g_frame_interval(struct v4l2_subdev *sd,
 static int imx334_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
-	config->bus.mipi_csi2.num_data_lanes = IMX334_LANES;
+	struct imx334 *imx334 = to_imx334(sd);
+	const struct imx334_mode *mode = imx334->cur_mode;
+	u32 val = 0;
+
+	val = 1 << (IMX334_LANES - 1) |
+	      V4L2_MBUS_CSI2_CHANNEL_0 |
+	      V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	config->flags = (mode->hdr_mode == NO_HDR) ? val : (val | V4L2_MBUS_CSI2_CHANNEL_1);
 	config->type = V4L2_MBUS_CSI2_DPHY;
 	return 0;
 }
@@ -860,10 +961,10 @@ static void imx334_get_module_inf(struct imx334 *imx334,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, IMX334_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, imx334->module_name,
+	strlcpy(inf->base.sensor, IMX334_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, imx334->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, imx334->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, imx334->len_name, sizeof(inf->base.lens));
 }
 
 static int imx334_set_hdrae(struct imx334 *imx334,
@@ -998,15 +1099,30 @@ static int imx334_set_hdrae(struct imx334 *imx334,
 	return ret;
 }
 
+static int imx334_get_channel_info(struct imx334 *imx334, struct rkmodule_channel_info *ch_info)
+{
+	if (ch_info->index < PAD0 || ch_info->index >= PAD_MAX)
+		return -EINVAL;
+	ch_info->vc = imx334->cur_mode->vc[ch_info->index];
+	ch_info->width = imx334->cur_mode->width;
+	ch_info->height = imx334->cur_mode->height;
+	ch_info->bus_fmt = imx334->cur_mode->bus_fmt;
+	return 0;
+}
+
 static long imx334_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	struct imx334 *imx334 = to_imx334(sd);
 	struct rkmodule_hdr_cfg *hdr;
+	struct rkmodule_channel_info *ch_info;
 	long ret = 0;
 	u32 i, h, w;
 	s64 dst_pixel_rate = 0;
 	const struct imx334_mode *mode;
 	u32 stream = 0;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case PREISP_CMD_SET_HDRAE_EXP:
@@ -1021,22 +1137,36 @@ static long imx334_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		break;
 	case RKMODULE_SET_HDR_CFG:
 		hdr = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr->hdr_mode == imx334->cur_mode->hdr_mode)
+			return 0;
 		w = imx334->cur_mode->width;
 		h = imx334->cur_mode->height;
+		dst_fps = DIV_ROUND_CLOSEST(imx334->cur_mode->max_fps.denominator,
+			imx334->cur_mode->max_fps.numerator);
 		for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
 			if (w == supported_modes[i].width &&
 			    h == supported_modes[i].height &&
+			    supported_modes[i].bus_fmt == imx334->cur_mode->bus_fmt &&
 			    supported_modes[i].hdr_mode == hdr->hdr_mode) {
-				imx334->cur_mode = &supported_modes[i];
-				break;
+				cur_fps = DIV_ROUND_CLOSEST(supported_modes[i].max_fps.denominator,
+					supported_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == ARRAY_SIZE(supported_modes)) {
+		if (cur_best_fit == -1) {
 			dev_err(&imx334->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			imx334->cur_mode = &supported_modes[cur_best_fit];
 			mode = imx334->cur_mode;
 			imx334->cur_vts = mode->vts_def;
 			w = mode->hts_def - mode->width;
@@ -1065,6 +1195,7 @@ static long imx334_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 						   mode->mipi_freq_idx);
 				imx334->cur_mipi_freq_idx = mode->mipi_freq_idx;
 			}
+			imx334->cur_fps = mode->max_fps;
 		}
 		break;
 	case RKMODULE_SET_QUICK_STREAM:
@@ -1077,6 +1208,10 @@ static long imx334_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		else
 			ret = imx334_write_reg(imx334->client, IMX334_REG_CTRL_MODE,
 				IMX334_REG_VALUE_08BIT, 1);
+		break;
+	case RKMODULE_GET_CHANNEL_INFO:
+		ch_info = (struct rkmodule_channel_info *)arg;
+		ret = imx334_get_channel_info(imx334, ch_info);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -1095,6 +1230,7 @@ static long imx334_compat_ioctl32(struct v4l2_subdev *sd,
 	struct rkmodule_awb_cfg *cfg;
 	struct rkmodule_hdr_cfg *hdr;
 	struct preisp_hdrae_exp_s *hdrae;
+	struct rkmodule_channel_info *ch_info;
 	long ret;
 	u32 stream = 0;
 
@@ -1163,6 +1299,21 @@ static long imx334_compat_ioctl32(struct v4l2_subdev *sd,
 		ret = copy_from_user(&stream, up, sizeof(u32));
 		if (!ret)
 			ret = imx334_ioctl(sd, cmd, &stream);
+		break;
+	case RKMODULE_GET_CHANNEL_INFO:
+		ch_info = kzalloc(sizeof(*ch_info), GFP_KERNEL);
+		if (!ch_info) {
+			ret = -ENOMEM;
+			return ret;
+		}
+
+		ret = imx334_ioctl(sd, cmd, ch_info);
+		if (!ret) {
+			ret = copy_to_user(up, ch_info, sizeof(*ch_info));
+			if (ret)
+				return -EFAULT;
+		}
+		kfree(ch_info);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -1381,7 +1532,7 @@ static int imx334_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct imx334 *imx334 = to_imx334(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct imx334_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&imx334->mutex);
@@ -1399,7 +1550,7 @@ static int imx334_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int imx334_enum_frame_interval(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_state *sd_state,
+				      struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -1419,7 +1570,7 @@ static int imx334_enum_frame_interval(struct v4l2_subdev *sd,
 #define DST_HEIGHT 2160
 
 static int imx334_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
 	struct imx334 *imx334 = to_imx334(sd);
@@ -1456,6 +1607,7 @@ static const struct v4l2_subdev_core_ops imx334_core_ops = {
 static const struct v4l2_subdev_video_ops imx334_video_ops = {
 	.s_stream = imx334_s_stream,
 	.g_frame_interval = imx334_g_frame_interval,
+	.s_frame_interval = imx334_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops imx334_pad_ops = {
@@ -1473,6 +1625,14 @@ static const struct v4l2_subdev_ops imx334_subdev_ops = {
 	.video	= &imx334_video_ops,
 	.pad	= &imx334_pad_ops,
 };
+
+static void imx334_modify_fps_info(struct imx334 *imx334)
+{
+	const struct imx334_mode *mode = imx334->cur_mode;
+
+	imx334->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      imx334->cur_vts;
+}
 
 static int imx334_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1547,6 +1707,7 @@ static int imx334_set_ctrl(struct v4l2_ctrl *ctrl)
 					IMX334_REG_VTS_L,
 					IMX334_REG_VALUE_08BIT,
 					IMX334_FETCH_VTS_L(vts));
+		imx334_modify_fps_info(imx334);
 		break;
 	case V4L2_CID_TEST_PATTERN:
 		ret = imx334_enable_test_pattern(imx334, ctrl->val);
@@ -1829,7 +1990,7 @@ static int imx334_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 imx334->module_index, facing,
 		 IMX334_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1855,7 +2016,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void imx334_remove(struct i2c_client *client)
+static int imx334_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx334 *imx334 = to_imx334(sd);
@@ -1871,6 +2032,8 @@ static void imx334_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__imx334_power_off(imx334);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

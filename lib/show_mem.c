@@ -7,14 +7,14 @@
 
 #include <linux/mm.h>
 #include <linux/cma.h>
-
-void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
+#include <trace/hooks/mm.h>
+void show_mem(unsigned int filter, nodemask_t *nodemask)
 {
 	pg_data_t *pgdat;
 	unsigned long total = 0, reserved = 0, highmem = 0;
 
 	printk("Mem-Info:\n");
-	__show_free_areas(filter, nodemask, max_zone_idx);
+	show_free_areas(filter, nodemask);
 
 	for_each_online_pgdat(pgdat) {
 		int zoneid;
@@ -41,4 +41,6 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 #ifdef CONFIG_MEMORY_FAILURE
 	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
 #endif
+	trace_android_vh_show_mem(filter, nodemask);
 }
+EXPORT_SYMBOL_GPL(show_mem);

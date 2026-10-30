@@ -1,6 +1,6 @@
 /* drivers/input/sensors/access/mxc6225.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -254,9 +254,9 @@ static int gsensor_mxc6225_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gsensor_mxc6225_ops);
 }
 
-static void gsensor_mxc6225_remove(struct i2c_client *client)
+static int gsensor_mxc6225_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gsensor_mxc6225_ops);
+	return sensor_unregister_device(client, NULL, &gsensor_mxc6225_ops);
 }
 
 static const struct i2c_device_id gsensor_mxc6225_id[] = {

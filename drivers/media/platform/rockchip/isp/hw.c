@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2020 Rockchip Electronics Co., Ltd. */
+/* Copyright (C) 2020 Rockchip Electronics Co., Ltd */
 
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -111,27 +111,10 @@ static void default_sw_reg_flag(struct rkisp_device *dev)
 		ISP3X_RAWHIST_BIG1_BASE, ISP3X_RAWHIST_BIG2_BASE, ISP3X_RAWHIST_BIG3_BASE,
 		ISP3X_RAWAF_CTRL, ISP3X_RAWAWB_CTRL,
 	};
-	u32 v39_reg[] = {
-		ISP3X_VI_ISP_PATH, ISP3X_IMG_EFF_CTRL, ISP3X_CMSK_CTRL0,
-		ISP3X_CCM_CTRL, ISP3X_CPROC_CTRL, ISP3X_DUAL_CROP_CTRL,
-		ISP3X_GAMMA_OUT_CTRL, ISP39_MAIN_SCALE_CTRL, ISP32_SELF_SCALE_CTRL,
-		ISP39_LDCV_CTRL, ISP39_YUVME_CTRL, ISP39_RGBIR_CTRL,
-		ISP39_EXPD_CTRL, ISP39_W3A_CTRL0, ISP39_W3A_CTRL1,
-		ISP3X_LSC_CTRL, ISP3X_DEBAYER_CONTROL, ISP3X_CAC_CTRL,
-		ISP3X_YNR_GLOBAL_CTRL, ISP3X_CNR_CTRL, ISP3X_SHARP_EN,
-		ISP3X_BAY3D_CTRL, ISP3X_GIC_CONTROL, ISP3X_BLS_CTRL,
-		ISP3X_DPCC0_MODE, ISP3X_DPCC1_MODE, ISP3X_DPCC2_MODE,
-		ISP3X_HDRMGE_CTRL, ISP3X_DRC_CTRL0, ISP3X_BAYNR_CTRL,
-		ISP3X_LDCH_STS, ISP3X_DHAZ_CTRL, ISP3X_3DLUT_CTRL,
-		ISP3X_GAIN_CTRL, ISP3X_RAWAE_LITE_CTRL, ISP3X_RAWAE_BIG1_BASE,
-		ISP3X_RAWAE_BIG2_BASE, ISP3X_RAWAE_BIG3_BASE, ISP3X_RAWHIST_LITE_CTRL,
-		ISP3X_RAWHIST_BIG1_BASE, ISP3X_RAWHIST_BIG2_BASE, ISP3X_RAWHIST_BIG3_BASE,
-		ISP3X_RAWAF_CTRL, ISP3X_RAWAWB_CTRL,
-	};
 	u32 v33_reg[] = {
 		ISP3X_VI_ISP_PATH, ISP3X_IMG_EFF_CTRL, ISP3X_CMSK_CTRL0,
 		ISP3X_CCM_CTRL, ISP3X_CPROC_CTRL, ISP3X_DUAL_CROP_CTRL,
-		ISP3X_GAMMA_OUT_CTRL, ISP39_MAIN_SCALE_CTRL, ISP33_BP_SCALE_CTRL,
+		ISP3X_GAMMA_OUT_CTRL, ISP33_MAIN_SCALE_CTRL, ISP33_BP_SCALE_CTRL,
 		ISP32_SELF_SCALE_CTRL, ISP3X_MI_WR_CTRL, ISP3X_MI_BP_WR_CTRL,
 		ISP32_MI_WR_WRAP_CTRL, ISP3X_LSC_CTRL, ISP3X_DEBAYER_CONTROL,
 		ISP3X_CAC_CTRL, ISP3X_YNR_GLOBAL_CTRL, ISP3X_CNR_CTRL,
@@ -139,7 +122,7 @@ static void default_sw_reg_flag(struct rkisp_device *dev)
 		ISP3X_BLS_CTRL, ISP3X_DPCC0_MODE, ISP3X_DPCC1_MODE,
 		ISP3X_DPCC2_MODE, ISP3X_HDRMGE_CTRL, ISP3X_DRC_CTRL0,
 		ISP33_ENH_CTRL, ISP3X_LDCH_STS, ISP33_HIST_CTRL,
-		ISP33_HSV_CTRL, ISP3X_GAIN_CTRL, ISP39_W3A_CTRL0,
+		ISP33_HSV_CTRL, ISP3X_GAIN_CTRL, ISP33_W3A_CTRL0,
 		ISP3X_RAWAE_LITE_CTRL, ISP3X_RAWAE_BIG1_BASE,
 		ISP3X_RAWHIST_LITE_CTRL, ISP3X_RAWHIST_BIG1_BASE,
 		ISP3X_RAWAWB_CTRL,
@@ -163,10 +146,6 @@ static void default_sw_reg_flag(struct rkisp_device *dev)
 	case ISP_V32_L:
 		reg = v32_reg;
 		size = ARRAY_SIZE(v32_reg);
-		break;
-	case ISP_V39:
-		reg = v39_reg;
-		size = ARRAY_SIZE(v39_reg);
 		break;
 	case ISP_V33:
 		reg = v33_reg;
@@ -308,40 +287,86 @@ static irqreturn_t isp_irq_hdl(int irq, void *ctx)
 	return IRQ_HANDLED;
 }
 
+static irqreturn_t irq_handler(int irq, void *ctx)
+{
+	struct device *dev = ctx;
+	struct rkisp_hw_dev *hw_dev = dev_get_drvdata(dev);
+	struct rkisp_device *isp = hw_dev->isp[hw_dev->cur_dev_id];
+	unsigned int mis_val, mis_3a = 0;
+
+	mis_val = readl(hw_dev->base_addr + CIF_ISP_MIS);
+	if (hw_dev->isp_ver >= ISP_V20)
+		mis_3a = readl(hw_dev->base_addr + ISP_ISP3A_MIS);
+	if (mis_val || mis_3a)
+		rkisp_isp_isr(mis_val, mis_3a, isp);
+
+	mis_val = readl(hw_dev->base_addr + CIF_MIPI_MIS);
+	if (mis_val)
+		rkisp_mipi_isr(mis_val, isp);
+
+	mis_val = readl(hw_dev->base_addr + CIF_MI_MIS);
+	if (mis_val)
+		rkisp_mi_isr(mis_val, isp);
+
+	return IRQ_HANDLED;
+}
+
 int rkisp_register_irq(struct rkisp_hw_dev *hw_dev)
 {
 	const struct isp_match_data *match_data = hw_dev->match_data;
 	struct platform_device *pdev = hw_dev->pdev;
 	struct device *dev = &pdev->dev;
+	struct resource *res;
 	int i, ret, irq;
 
-	/* there are irq names in dts */
-	for (i = 0; i < match_data->num_irqs; i++) {
-		irq = platform_get_irq_byname(pdev, match_data->irqs[i].name);
+	res = platform_get_resource_byname(pdev, IORESOURCE_IRQ,
+					   match_data->irqs[0].name);
+	if (res) {
+		/* there are irq names in dts */
+		for (i = 0; i < match_data->num_irqs; i++) {
+			irq = platform_get_irq_byname(pdev, match_data->irqs[i].name);
+			if (irq < 0) {
+				dev_err(dev, "no irq %s in dts\n",
+					match_data->irqs[i].name);
+				return irq;
+			}
+
+			if (!strcmp(match_data->irqs[i].name, "mipi_irq"))
+				hw_dev->mipi_irq = irq;
+
+			ret = devm_request_irq(dev, irq,
+					       match_data->irqs[i].irq_hdl,
+					       IRQF_SHARED,
+					       dev_driver_string(dev),
+					       dev);
+			if (ret < 0) {
+				dev_err(dev, "request %s failed: %d\n",
+					match_data->irqs[i].name, ret);
+				return ret;
+			}
+
+			if (hw_dev->mipi_irq == irq &&
+			    (hw_dev->isp_ver == ISP_V12 ||
+			     hw_dev->isp_ver == ISP_V13))
+				disable_irq(hw_dev->mipi_irq);
+		}
+	} else {
+		/* no irq names in dts */
+		irq = platform_get_irq(pdev, 0);
 		if (irq < 0) {
-			dev_err(dev, "no irq %s in dts\n",
-				match_data->irqs[i].name);
+			dev_err(dev, "no isp irq in dts\n");
 			return irq;
 		}
 
-		if (!strcmp(match_data->irqs[i].name, "mipi_irq"))
-			hw_dev->mipi_irq = irq;
-
 		ret = devm_request_irq(dev, irq,
-				       match_data->irqs[i].irq_hdl,
+				       irq_handler,
 				       IRQF_SHARED,
 				       dev_driver_string(dev),
 				       dev);
 		if (ret < 0) {
-			dev_err(dev, "request %s failed: %d\n",
-				match_data->irqs[i].name, ret);
+			dev_err(dev, "request irq failed: %d\n", ret);
 			return ret;
 		}
-
-		if (hw_dev->mipi_irq == irq &&
-		    (hw_dev->isp_ver == ISP_V12 ||
-		     hw_dev->isp_ver == ISP_V13))
-			disable_irq(hw_dev->mipi_irq);
 	}
 
 	return 0;
@@ -458,11 +483,6 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 				*reg = 1;
 			}
 		}
-		if (dev->isp_ver == ISP_V39) {
-			reg = reg_buf + ISP39_VI3A_CTRL0;
-			if (*reg)
-				*reg |= ISP39_W3A_FORCE_UPD;
-		}
 		reg = reg_buf + ISP_CTRL;
 		*reg &= ~(CIF_ISP_CTRL_ISP_ENABLE |
 			  CIF_ISP_CTRL_ISP_INFORM_ENABLE |
@@ -477,8 +497,6 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 			    (j > ISP32_CAC_OFFSET && j < ISP3X_CAC_RO_CNT && dev->isp_ver != ISP_V33) ||
 			    (j > ISP3X_3DLUT_UPDATE && j < ISP3X_GAIN_BASE) ||
 			    (j == 0x4840 || j == 0x4a80 || j == 0x4b40 || j == 0x5660) ||
-			    (dev->isp_ver == ISP_V39 &&
-			     (j > ISP39_DHAZ_HIST_IIR0 && j < ISP39_DHAZ_LINE_CNT)) ||
 			    (dev->isp_ver == ISP_V33 &&
 			     ((j > ISP33_ENH_IIR0 && j < ISP33_ENH_ERR_FLAG) ||
 			      (j > ISP33_HIST_IIR0 && j < ISP33_HIST_STAB) ||
@@ -546,7 +564,7 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 			writel(*reg | CIF_DUAL_CROP_CFG_UPD, base + DUAL_CROP_CTRL);
 		reg = reg_buf + SELF_RESIZE_CTRL;
 		if (*reg & 0xf) {
-			if (dev->isp_ver == ISP_V32_L || dev->isp_ver == ISP_V39 || dev->isp_ver == ISP_V33)
+			if (dev->isp_ver == ISP_V32_L || dev->isp_ver == ISP_V33)
 				writel(ISP32_SCALE_FORCE_UPD | ISP32_SCALE_GEN_UPD,
 				       base + ISP32_SELF_SCALE_UPDATE);
 			else
@@ -554,9 +572,9 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 		}
 		reg = reg_buf + MAIN_RESIZE_CTRL;
 		if (*reg & 0xf) {
-			if (dev->isp_ver == ISP_V39 || dev->isp_ver == ISP_V33)
+			if (dev->isp_ver == ISP_V33)
 				writel(ISP32_SCALE_FORCE_UPD | ISP32_SCALE_GEN_UPD,
-				       base + ISP39_MAIN_SCALE_UPDATE);
+				       base + ISP33_MAIN_SCALE_UPDATE);
 			else
 				writel(*reg | CIF_RSZ_CTRL_CFG_UPD, base + MAIN_RESIZE_CTRL);
 		}
@@ -589,45 +607,22 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 		writel(val, base + ISP_MPFBC_HEAD_PTR);
 		val = rkisp_read_reg_cache(isp, MI_SWS_3A_WR_BASE);
 		writel(val, base + MI_SWS_3A_WR_BASE);
-		/* force for cac to read lut */
-		if (dev->isp_ver == ISP_V39) {
-			val = rkisp_read_reg_cache(isp, ISP3X_CAC_BASE);
-			writel(val, base + ISP3X_CAC_BASE);
-		}
 	}
 
 	if (dev->is_single) {
 		rkisp_params_cfgsram(&isp->params_vdev, false, true);
 
-		if (dev->isp_ver == ISP_V39) {
-			reg = reg_buf + ISP3X_ISP_CTRL1;
-			*reg |= ISP3X_DHAZ_FST_FRAME;
-			writel(*reg, dev->base_addr + ISP3X_ISP_CTRL1);
-			reg = reg_buf + ISP3X_BAY3D_CTRL;
-			if (*reg & 1)
-				writel(*reg | BIT(31), dev->base_addr + ISP3X_BAY3D_CTRL);
-			/* w3a addr will update by ISP_CFG_UPD */
-			reg = reg_buf + ISP39_W3A_AEBIG_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AEBIG_ADDR);
-			reg = reg_buf + ISP39_W3A_AE0_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AE0_ADDR);
-			reg = reg_buf + ISP39_W3A_AF_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AF_ADDR);
-			reg = reg_buf + ISP39_W3A_AWB_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AWB_ADDR);
-			reg = reg_buf + ISP39_W3A_PDAF_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_PDAF_ADDR);
-		} else if (dev->isp_ver == ISP_V33) {
+		if (dev->isp_ver == ISP_V33) {
 			reg = reg_buf + ISP33_BAY3D_CTRL0;
 			if (*reg & 1)
 				writel(*reg | BIT(31), dev->base_addr + ISP33_BAY3D_CTRL0);
 			/* w3a addr will update by ISP_CFG_UPD */
-			reg = reg_buf + ISP39_W3A_AEBIG_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AEBIG_ADDR);
-			reg = reg_buf + ISP39_W3A_AE0_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AE0_ADDR);
-			reg = reg_buf + ISP39_W3A_AWB_ADDR_SHD;
-			writel(*reg, dev->base_addr + ISP39_W3A_AWB_ADDR);
+			reg = reg_buf + ISP33_W3A_AEBIG_ADDR_SHD;
+			writel(*reg, dev->base_addr + ISP33_W3A_AEBIG_ADDR);
+			reg = reg_buf + ISP33_W3A_AE0_ADDR_SHD;
+			writel(*reg, dev->base_addr + ISP33_W3A_AE0_ADDR);
+			reg = reg_buf + ISP33_W3A_AWB_ADDR_SHD;
+			writel(*reg, dev->base_addr + ISP33_W3A_AWB_ADDR);
 		}
 
 		reg = reg_buf + ISP_CTRL;
@@ -638,19 +633,13 @@ void rkisp_hw_reg_restore(struct rkisp_hw_dev *dev)
 		if (dev->unite == ISP_UNITE_TWO)
 			writel(*reg, dev->base_next_addr + ISP_CTRL);
 
-		if (dev->isp_ver == ISP_V39 || dev->isp_ver == ISP_V33) {
-			reg = reg_buf + ISP39_W3A_AEBIG_ADDR;
-			writel(*reg, dev->base_addr + ISP39_W3A_AEBIG_ADDR);
-			reg = reg_buf + ISP39_W3A_AE0_ADDR;
-			writel(*reg, dev->base_addr + ISP39_W3A_AE0_ADDR);
-			reg = reg_buf + ISP39_W3A_AWB_ADDR;
-			writel(*reg, dev->base_addr + ISP39_W3A_AWB_ADDR);
-			if (dev->isp_ver == ISP_V39) {
-				reg = reg_buf + ISP39_W3A_AF_ADDR;
-				writel(*reg, dev->base_addr + ISP39_W3A_AF_ADDR);
-				reg = reg_buf + ISP39_W3A_PDAF_ADDR;
-				writel(*reg, dev->base_addr + ISP39_W3A_PDAF_ADDR);
-			}
+		if (dev->isp_ver == ISP_V33) {
+			reg = reg_buf + ISP33_W3A_AEBIG_ADDR;
+			writel(*reg, dev->base_addr + ISP33_W3A_AEBIG_ADDR);
+			reg = reg_buf + ISP33_W3A_AE0_ADDR;
+			writel(*reg, dev->base_addr + ISP33_W3A_AE0_ADDR);
+			reg = reg_buf + ISP33_W3A_AWB_ADDR;
+			writel(*reg, dev->base_addr + ISP33_W3A_AWB_ADDR);
 		}
 	}
 }
@@ -665,14 +654,6 @@ static const char * const rk3568_isp_clks[] = {
 	"clk_isp",
 	"aclk_isp",
 	"hclk_isp",
-};
-
-static const char * const rk3576_isp_clks[] = {
-	"clk_isp_core",
-	"aclk_isp",
-	"hclk_isp",
-	"clk_isp_core_marvin",
-	"clk_isp_core_vicap",
 };
 
 static const char * const rk3588_isp_clks[] = {
@@ -741,26 +722,6 @@ static const struct isp_clk_info rk3568_isp_clk_rate[] = {
 	}
 };
 
-static const struct isp_clk_info rk3576_isp_clk_rate[] = {
-	/* clk 300 * 2 equal to aclk issue if ldcv enable */
-	{
-		.clk_rate = 400,
-		.refer_data = 1920, //width
-	}, {
-		.clk_rate = 400,
-		.refer_data = 2688,
-	}, {
-		.clk_rate = 500,
-		.refer_data = 3072,
-	}, {
-		.clk_rate = 600,
-		.refer_data = 3840,
-	}, {
-		.clk_rate = 702,
-		.refer_data = 4672,
-	}
-};
-
 static const struct isp_clk_info rk3588_isp_clk_rate[] = {
 	{
 		.clk_rate = 300,
@@ -822,12 +783,6 @@ static struct isp_irqs_data rk3562_isp_irqs[] = {
 };
 
 static struct isp_irqs_data rk3568_isp_irqs[] = {
-	{"isp_irq", isp_irq_hdl},
-	{"mi_irq", mi_irq_hdl},
-	{"mipi_irq", mipi_irq_hdl}
-};
-
-static struct isp_irqs_data rk3576_isp_irqs[] = {
 	{"isp_irq", isp_irq_hdl},
 	{"mi_irq", mi_irq_hdl},
 	{"mipi_irq", mipi_irq_hdl}
@@ -906,17 +861,6 @@ static const struct isp_match_data rk3568_isp_match_data = {
 	.unite = false,
 };
 
-static const struct isp_match_data rk3576_isp_match_data = {
-	.clks = rk3576_isp_clks,
-	.num_clks = ARRAY_SIZE(rk3576_isp_clks),
-	.isp_ver = ISP_V39,
-	.clk_rate_tbl = rk3576_isp_clk_rate,
-	.num_clk_rate_tbl = ARRAY_SIZE(rk3576_isp_clk_rate),
-	.irqs = rk3576_isp_irqs,
-	.num_irqs = ARRAY_SIZE(rk3576_isp_irqs),
-	.unite = false,
-};
-
 static const struct isp_match_data rk3588_isp_match_data = {
 	.clks = rk3588_isp_clks,
 	.num_clks = ARRAY_SIZE(rk3588_isp_clks),
@@ -950,12 +894,6 @@ static const struct of_device_id rkisp_hw_of_match[] = {
 	{
 		.compatible = "rockchip,rk3568-rkisp",
 		.data = &rk3568_isp_match_data,
-	},
-#endif
-#ifdef CONFIG_CPU_RK3576
-	{
-		.compatible = "rockchip,rk3576-rkisp",
-		.data = &rk3576_isp_match_data,
 	},
 #endif
 #ifdef CONFIG_CPU_RK3588
@@ -1080,18 +1018,12 @@ void rkisp_soft_reset(struct rkisp_hw_dev *dev, bool is_secure)
 		writel(0x37, dev->base_addr + ISP32_MI_WR_WRAP_CTRL);
 	} else if (dev->isp_ver == ISP_V32_L) {
 		writel(0, dev->base_addr + ISP32_BLS_ISP_OB_PREDGAIN);
-	} else if (dev->isp_ver == ISP_V39) {
-		writel(0, dev->base_addr + ISP32_BLS_ISP_OB_PREDGAIN);
-		writel(ISP39_ADRC_CMPS_BYP_EN, dev->base_addr + ISP3X_DRC_CTRL0);
-		writel(ISP39_W3A_PDAF2DDR_HOLD_DIS | ISP39_W3A_3A_HOLD_DIS,
-		       dev->base_addr + ISP39_W3A_CTRL0);
-		writel(0, dev->base_addr + ISP39_VI3A_CTRL0);
 	} else if (dev->isp_ver == ISP_V33) {
 		writel(0, dev->base_addr + ISP32_BLS_ISP_OB_PREDGAIN);
-		writel(ISP39_ADRC_CMPS_BYP_EN, dev->base_addr + ISP3X_DRC_CTRL0);
-		writel(ISP39_W3A_PDAF2DDR_HOLD_DIS | ISP39_W3A_3A_HOLD_DIS,
-		       dev->base_addr + ISP39_W3A_CTRL0);
-		writel(0, dev->base_addr + ISP39_LDCH_OUT_SIZE);
+		writel(ISP33_ADRC_CMPS_BYP_EN, dev->base_addr + ISP3X_DRC_CTRL0);
+		writel(ISP33_W3A_PDAF2DDR_HOLD_DIS | ISP33_W3A_3A_HOLD_DIS,
+		       dev->base_addr + ISP33_W3A_CTRL0);
+		writel(0, dev->base_addr + ISP33_LDCH_OUT_HSIZE);
 		/* debayer reg default */
 		writel(0x09aa9988, dev->base_addr + ISP3X_DEBAYER_G_INTERP);
 		writel(0, dev->base_addr + ISP3X_DEBAYER_G_INTERP_FILTER1);
@@ -1104,12 +1036,12 @@ void rkisp_soft_reset(struct rkisp_hw_dev *dev, bool is_secure)
 		writel(0x00100010, dev->base_addr + ISP32_DEBAYER_C_FILTER_LOG_OFFSET);
 		writel(0x00100010, dev->base_addr + ISP32_DEBAYER_C_FILTER_ALPHA);
 		writel(0x00100010, dev->base_addr + ISP32_DEBAYER_C_FILTER_EDGE);
-		writel(0x00014001, dev->base_addr + ISP39_DEBAYER_G_FILTER_MODE_OFFSET);
-		writel(0x000a1018, dev->base_addr + ISP39_DEBAYER_G_FILTER_FILTER);
-		writel(0x08000800, dev->base_addr + ISP39_DEBAYER_G_FILTER_VSIGMA0);
-		writel(0x02000400, dev->base_addr + ISP39_DEBAYER_G_FILTER_VSIGMA1);
-		writel(0x00cd0155, dev->base_addr + ISP39_DEBAYER_G_FILTER_VSIGMA2);
-		writel(0x00800092, dev->base_addr + ISP39_DEBAYER_G_FILTER_VSIGMA3);
+		writel(0x00014001, dev->base_addr + ISP33_DEBAYER_G_FILTER_MODE_OFFSET);
+		writel(0x000a1018, dev->base_addr + ISP33_DEBAYER_G_FILTER_FILTER);
+		writel(0x08000800, dev->base_addr + ISP33_DEBAYER_G_FILTER_VSIGMA0);
+		writel(0x02000400, dev->base_addr + ISP33_DEBAYER_G_FILTER_VSIGMA1);
+		writel(0x00cd0155, dev->base_addr + ISP33_DEBAYER_G_FILTER_VSIGMA2);
+		writel(0x00800092, dev->base_addr + ISP33_DEBAYER_G_FILTER_VSIGMA3);
 	}
 }
 
@@ -1156,9 +1088,6 @@ static void isp_config_clk(struct rkisp_hw_dev *dev, int on)
 
 		if ((dev->isp_ver == ISP_V20 || dev->isp_ver == ISP_V30) && on)
 			val |= CLK_CTRL_ISP_3A | CLK_CTRL_ISP_RAW;
-		/* fix mi and scale on-off no output for isp39 */
-		if (dev->isp_ver == ISP_V39 && on)
-			val |= ISP3X_CLK_RSZM | ISP3X_CLK_RSZS;
 		if (dev->isp_ver == ISP_V32)
 			rv1106_sdmmc_get_lock();
 		writel(val, dev->base_addr + CTRL_VI_ISP_CLK_CTRL);
@@ -1387,7 +1316,6 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	hw_dev->dev_num = 0;
 	hw_dev->dev_link_num = 0;
 	hw_dev->cur_dev_id = 0;
-	hw_dev->cur_be_dev_id = 0;
 	hw_dev->mipi_dev_id = 0;
 	hw_dev->pre_dev_id = -1;
 	hw_dev->is_multi_overflow = false;
@@ -1399,7 +1327,6 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&hw_dev->rpt_list);
 	hw_dev->buf_init_cnt = 0;
 	hw_dev->is_idle = true;
-	hw_dev->is_be_idle = true;
 	hw_dev->is_single = true;
 	hw_dev->is_mi_update = false;
 	hw_dev->is_dma_contig = true;
@@ -1453,7 +1380,6 @@ static int __maybe_unused rkisp_runtime_suspend(struct device *dev)
 	int i;
 
 	hw_dev->is_idle = true;
-	hw_dev->is_be_idle = true;
 	if (dev->power.runtime_status) {
 		hw_dev->dev_link_num = 0;
 		hw_dev->is_single = true;
@@ -1590,9 +1516,6 @@ static int __init rkisp_hw_drv_init(void)
 	ret = platform_driver_register(&rkisp_hw_drv);
 	if (!ret)
 		ret = platform_driver_register(&rkisp_plat_drv);
-#if IS_ENABLED(CONFIG_VIDEO_ROCKCHIP_ISP_VERSION_V39)
-		platform_driver_register(&rkisp_sditf_drv);
-#endif
 #if IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISP) && IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISPP)
 	if (!ret)
 		ret = rkispp_hw_drv_init();
@@ -1602,9 +1525,6 @@ static int __init rkisp_hw_drv_init(void)
 
 static void __exit rkisp_hw_drv_exit(void)
 {
-#if IS_ENABLED(CONFIG_VIDEO_ROCKCHIP_ISP_VERSION_V39)
-	platform_driver_unregister(&rkisp_sditf_drv);
-#endif
 	platform_driver_unregister(&rkisp_plat_drv);
 	platform_driver_unregister(&rkisp_hw_drv);
 }

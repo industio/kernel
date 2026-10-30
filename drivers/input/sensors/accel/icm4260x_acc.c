@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2023 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2023 Rockchip Co.,Ltd.
  * Author: Wangqiang Guo <kay.guo@rock-chips.com>
  */
 #include <linux/interrupt.h>
@@ -439,9 +439,9 @@ static int gsensor_icm4260x_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gsensor_icm4260x_ops);
 }
 
-static void gsensor_icm4260x_remove(struct i2c_client *client)
+static int gsensor_icm4260x_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gsensor_icm4260x_ops);
+	return sensor_unregister_device(client, NULL, &gsensor_icm4260x_ops);
 }
 
 static const struct i2c_device_id gsensor_icm4260x_id[] = {

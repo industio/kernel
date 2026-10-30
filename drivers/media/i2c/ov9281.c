@@ -129,6 +129,7 @@ struct regval {
 };
 
 struct ov9281_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -170,6 +171,8 @@ struct ov9281 {
 	const char		*module_facing;
 	const char		*module_name;
 	const char		*len_name;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_ov9281(sd) container_of(sd, struct ov9281, subdev)
@@ -413,6 +416,7 @@ static const struct regval ov9281_1280x800_30fps_regs[] = {
 
 static const struct ov9281_mode supported_modes[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_Y10_1X10,
 		.width = 1280,
 		.height = 800,
 		.max_fps = {
@@ -426,6 +430,7 @@ static const struct ov9281_mode supported_modes[] = {
 	},
 
 	{
+		.bus_fmt = MEDIA_BUS_FMT_Y10_1X10,
 		.width = 1280,
 		.height = 800,
 		.max_fps = {
@@ -437,6 +442,10 @@ static const struct ov9281_mode supported_modes[] = {
 		.vts_def = 0x038e,
 		.reg_list = ov9281_1280x800_regs,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_Y10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -549,6 +558,10 @@ ov9281_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -556,7 +569,7 @@ ov9281_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int ov9281_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -566,13 +579,13 @@ static int ov9281_set_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov9281->mutex);
 
 	mode = ov9281_find_best_fit(fmt);
-	fmt->format.code = MEDIA_BUS_FMT_Y10_1X10;
+	fmt->format.code = mode->bus_fmt;
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&ov9281->mutex);
 		return -ENOTTY;
@@ -586,6 +599,7 @@ static int ov9281_set_fmt(struct v4l2_subdev *sd,
 		__v4l2_ctrl_modify_range(ov9281->vblank, vblank_def,
 					 OV9281_VTS_MAX - mode->height,
 					 1, vblank_def);
+		ov9281->cur_fps = mode->max_fps;
 	}
 
 	mutex_unlock(&ov9281->mutex);
@@ -594,7 +608,7 @@ static int ov9281_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov9281_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -603,7 +617,7 @@ static int ov9281_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov9281->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&ov9281->mutex);
 		return -ENOTTY;
@@ -611,7 +625,7 @@ static int ov9281_get_fmt(struct v4l2_subdev *sd,
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
-		fmt->format.code = MEDIA_BUS_FMT_Y10_1X10;
+		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
 	}
 	mutex_unlock(&ov9281->mutex);
@@ -620,24 +634,24 @@ static int ov9281_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov9281_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_Y10_1X10;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int ov9281_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_Y10_1X10)
+	if (fse->code != supported_modes[fse->index].bus_fmt)
 		return -EINVAL;
 
 	fse->min_width  = supported_modes[fse->index].width;
@@ -667,8 +681,72 @@ static int ov9281_g_frame_interval(struct v4l2_subdev *sd,
 	struct ov9281 *ov9281 = to_ov9281(sd);
 	const struct ov9281_mode *mode = ov9281->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (ov9281->streaming)
+		fi->interval = ov9281->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct ov9281_mode *ov9281_find_mode(struct ov9281 *ov9281, int fps)
+{
+	const struct ov9281_mode *mode = NULL;
+	const struct ov9281_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == ov9281->cur_mode->width &&
+		    mode->height == ov9281->cur_mode->height &&
+		    mode->bus_fmt == ov9281->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int ov9281_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct ov9281 *ov9281 = to_ov9281(sd);
+	const struct ov9281_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (ov9281->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = ov9281_find_mode(ov9281, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	ov9281->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(ov9281->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(ov9281->vblank, vblank_def,
+				 OV9281_VTS_MAX - mode->height,
+				 1, vblank_def);
+	ov9281->cur_fps = mode->max_fps;
 	return 0;
 }
 
@@ -676,10 +754,10 @@ static void ov9281_get_module_inf(struct ov9281 *ov9281,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, OV9281_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, ov9281->module_name,
+	strlcpy(inf->base.sensor, OV9281_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, ov9281->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, ov9281->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, ov9281->len_name, sizeof(inf->base.lens));
 }
 
 static long ov9281_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -977,14 +1055,14 @@ static int ov9281_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov9281 *ov9281 = to_ov9281(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct ov9281_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&ov9281->mutex);
 	/* Initialize try_fmt */
 	try_fmt->width = def_mode->width;
 	try_fmt->height = def_mode->height;
-	try_fmt->code = MEDIA_BUS_FMT_Y10_1X10;
+	try_fmt->code = def_mode->bus_fmt;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	mutex_unlock(&ov9281->mutex);
@@ -995,13 +1073,13 @@ static int ov9281_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int ov9281_enum_frame_interval(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_state *sd_state,
+				      struct v4l2_subdev_pad_config *cfg,
 				      struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	if (fie->code != MEDIA_BUS_FMT_Y10_1X10)
+	if (fie->code != supported_modes[fie->index].bus_fmt)
 		return -EINVAL;
 
 	fie->width = supported_modes[fie->index].width;
@@ -1013,8 +1091,13 @@ static int ov9281_enum_frame_interval(struct v4l2_subdev *sd,
 static int ov9281_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	u32 val = 0;
+
+	val = 1 << (OV9281_LANES - 1) |
+	      V4L2_MBUS_CSI2_CHANNEL_0 |
+	      V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = OV9281_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -1041,6 +1124,7 @@ static const struct v4l2_subdev_core_ops ov9281_core_ops = {
 static const struct v4l2_subdev_video_ops ov9281_video_ops = {
 	.s_stream = ov9281_s_stream,
 	.g_frame_interval = ov9281_g_frame_interval,
+	.s_frame_interval = ov9281_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops ov9281_pad_ops = {
@@ -1057,6 +1141,14 @@ static const struct v4l2_subdev_ops ov9281_subdev_ops = {
 	.video	= &ov9281_video_ops,
 	.pad	= &ov9281_pad_ops,
 };
+
+static void ov9281_modify_fps_info(struct ov9281 *ov9281)
+{
+	const struct ov9281_mode *mode = ov9281->cur_mode;
+
+	ov9281->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      ov9281->cur_vts;
+}
 
 static int ov9281_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1107,6 +1199,8 @@ static int ov9281_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = ov9281_write_reg(ov9281->client, OV9281_REG_VTS,
 				       OV9281_REG_VALUE_16BIT,
 				       ctrl->val + ov9281->cur_mode->height);
+		ov9281->cur_vts = ctrl->val + ov9281->cur_mode->height;
+		ov9281_modify_fps_info(ov9281);
 		break;
 	case V4L2_CID_BRIGHTNESS:
 		ret = ov9281_write_reg(ov9281->client, OV9281_AEC_STROBE_REG_H,
@@ -1355,7 +1449,7 @@ static int ov9281_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 ov9281->module_index, facing,
 		 OV9281_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1381,7 +1475,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void ov9281_remove(struct i2c_client *client)
+static int ov9281_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov9281 *ov9281 = to_ov9281(sd);
@@ -1397,6 +1491,8 @@ static void ov9281_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov9281_power_off(ov9281);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

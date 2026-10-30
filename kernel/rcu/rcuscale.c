@@ -38,7 +38,6 @@
 #include <asm/byteorder.h>
 #include <linux/torture.h>
 #include <linux/vmalloc.h>
-#include <linux/rcupdate_trace.h>
 
 #include "rcu.h"
 
@@ -268,8 +267,6 @@ static struct rcu_scale_ops srcud_ops = {
 	.name		= "srcud"
 };
 
-#ifdef CONFIG_TASKS_RCU
-
 /*
  * Definitions for RCU-tasks scalability testing.
  */
@@ -296,53 +293,6 @@ static struct rcu_scale_ops tasks_ops = {
 	.exp_sync	= synchronize_rcu_tasks,
 	.name		= "tasks"
 };
-
-#define TASKS_OPS &tasks_ops,
-
-#else // #ifdef CONFIG_TASKS_RCU
-
-#define TASKS_OPS
-
-#endif // #else // #ifdef CONFIG_TASKS_RCU
-
-#ifdef CONFIG_TASKS_TRACE_RCU
-
-/*
- * Definitions for RCU-tasks-trace scalability testing.
- */
-
-static int tasks_trace_scale_read_lock(void)
-{
-	rcu_read_lock_trace();
-	return 0;
-}
-
-static void tasks_trace_scale_read_unlock(int idx)
-{
-	rcu_read_unlock_trace();
-}
-
-static struct rcu_scale_ops tasks_tracing_ops = {
-	.ptype		= RCU_TASKS_FLAVOR,
-	.init		= rcu_sync_scale_init,
-	.readlock	= tasks_trace_scale_read_lock,
-	.readunlock	= tasks_trace_scale_read_unlock,
-	.get_gp_seq	= rcu_no_completed,
-	.gp_diff	= rcu_seq_diff,
-	.async		= call_rcu_tasks_trace,
-	.gp_barrier	= rcu_barrier_tasks_trace,
-	.sync		= synchronize_rcu_tasks_trace,
-	.exp_sync	= synchronize_rcu_tasks_trace,
-	.name		= "tasks-tracing"
-};
-
-#define TASKS_TRACING_OPS &tasks_tracing_ops,
-
-#else // #ifdef CONFIG_TASKS_TRACE_RCU
-
-#define TASKS_TRACING_OPS
-
-#endif // #else // #ifdef CONFIG_TASKS_TRACE_RCU
 
 static unsigned long rcuscale_seq_diff(unsigned long new, unsigned long old)
 {
@@ -419,7 +369,6 @@ rcu_scale_writer(void *arg)
 	VERBOSE_SCALEOUT_STRING("rcu_scale_writer task started");
 	WARN_ON(!wdpp);
 	set_cpus_allowed_ptr(current, cpumask_of(me % nr_cpu_ids));
-	current->flags |= PF_NO_SETAFFINITY;
 	sched_set_fifo_low(current);
 
 	if (holdoff)
@@ -449,7 +398,7 @@ rcu_scale_writer(void *arg)
 			udelay(writer_holdoff);
 		wdp = &wdpp[i];
 		*wdp = ktime_get_mono_fast_ns();
-		if (gp_async && !WARN_ON_ONCE(!cur_ops->async)) {
+		if (gp_async) {
 retry:
 			if (!rhp)
 				rhp = kmalloc(sizeof(*rhp), GFP_KERNEL);
@@ -505,7 +454,7 @@ retry:
 			i++;
 		rcu_scale_wait_shutdown();
 	} while (!torture_must_stop());
-	if (gp_async && cur_ops->async) {
+	if (gp_async) {
 		cur_ops->gp_barrier();
 	}
 	writer_n_durations[me] = i_max + 1;
@@ -548,8 +497,6 @@ static int compute_real(int n)
 torture_param(int, kfree_nthreads, -1, "Number of threads running loops of kfree_rcu().");
 torture_param(int, kfree_alloc_num, 8000, "Number of allocations and frees done in an iteration.");
 torture_param(int, kfree_loops, 10, "Number of loops doing kfree_alloc_num allocations and frees.");
-torture_param(bool, kfree_rcu_test_double, false, "Do we run a kfree_rcu() double-argument scale test?");
-torture_param(bool, kfree_rcu_test_single, false, "Do we run a kfree_rcu() single-argument scale test?");
 
 static struct task_struct **kfree_reader_tasks;
 static int kfree_nrealthreads;
@@ -569,13 +516,10 @@ kfree_scale_thread(void *arg)
 	struct kfree_obj *alloc_ptr;
 	u64 start_time, end_time;
 	long long mem_begin, mem_during = 0;
-	bool kfree_rcu_test_both;
-	DEFINE_TORTURE_RANDOM(tr);
 
 	VERBOSE_SCALEOUT_STRING("kfree_scale_thread task started");
 	set_cpus_allowed_ptr(current, cpumask_of(me % nr_cpu_ids));
 	set_user_nice(current, MAX_NICE);
-	kfree_rcu_test_both = (kfree_rcu_test_single == kfree_rcu_test_double);
 
 	start_time = ktime_get_mono_fast_ns();
 
@@ -598,15 +542,7 @@ kfree_scale_thread(void *arg)
 			if (!alloc_ptr)
 				return -ENOMEM;
 
-			// By default kfree_rcu_test_single and kfree_rcu_test_double are
-			// initialized to false. If both have the same value (false or true)
-			// both are randomly tested, otherwise only the one with value true
-			// is tested.
-			if ((kfree_rcu_test_single && !kfree_rcu_test_double) ||
-					(kfree_rcu_test_both && torture_random(&tr) & 0x800))
-				kfree_rcu(alloc_ptr);
-			else
-				kfree_rcu(alloc_ptr, rh);
+			kfree_rcu(alloc_ptr, rh);
 		}
 
 		cond_resched();
@@ -681,7 +617,7 @@ kfree_scale_init(void)
 		init_waitqueue_head(&shutdown_wq);
 		firsterr = torture_create_kthread(kfree_scale_shutdown, NULL,
 						  shutdown_task);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 		schedule_timeout_uninterruptible(1);
 	}
@@ -698,7 +634,7 @@ kfree_scale_init(void)
 	for (i = 0; i < kfree_nrealthreads; i++) {
 		firsterr = torture_create_kthread(kfree_scale_thread, (void *)i,
 						  kfree_reader_tasks[i]);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 	}
 
@@ -822,7 +758,7 @@ rcu_scale_init(void)
 	long i;
 	int firsterr = 0;
 	static struct rcu_scale_ops *scale_ops[] = {
-		&rcu_ops, &srcu_ops, &srcud_ops, TASKS_OPS TASKS_TRACING_OPS
+		&rcu_ops, &srcu_ops, &srcud_ops, &tasks_ops,
 	};
 
 	if (!torture_init_begin(scale_type, verbose))
@@ -840,6 +776,7 @@ rcu_scale_init(void)
 		for (i = 0; i < ARRAY_SIZE(scale_ops); i++)
 			pr_cont(" %s", scale_ops[i]->name);
 		pr_cont("\n");
+		WARN_ON(!IS_MODULE(CONFIG_RCU_SCALE_TEST));
 		firsterr = -EINVAL;
 		cur_ops = NULL;
 		goto unwind;
@@ -863,7 +800,7 @@ rcu_scale_init(void)
 		init_waitqueue_head(&shutdown_wq);
 		firsterr = torture_create_kthread(rcu_scale_shutdown, NULL,
 						  shutdown_task);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 		schedule_timeout_uninterruptible(1);
 	}
@@ -877,7 +814,7 @@ rcu_scale_init(void)
 	for (i = 0; i < nrealreaders; i++) {
 		firsterr = torture_create_kthread(rcu_scale_reader, (void *)i,
 						  reader_tasks[i]);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 	}
 	while (atomic_read(&n_rcu_scale_reader_started) < nrealreaders)
@@ -904,7 +841,7 @@ rcu_scale_init(void)
 		}
 		firsterr = torture_create_kthread(rcu_scale_writer, (void *)i,
 						  writer_tasks[i]);
-		if (torture_init_error(firsterr))
+		if (firsterr)
 			goto unwind;
 	}
 	torture_init_end();
@@ -913,10 +850,6 @@ rcu_scale_init(void)
 unwind:
 	torture_init_end();
 	rcu_scale_cleanup();
-	if (shutdown) {
-		WARN_ON(!IS_MODULE(CONFIG_RCU_SCALE_TEST));
-		kernel_power_off();
-	}
 	return firsterr;
 }
 

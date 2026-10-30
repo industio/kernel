@@ -15,7 +15,7 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/stdarg.h>
+#include <stdarg.h>
 #include <linux/module.h>
 #include <linux/io.h>
 #include <linux/console.h>
@@ -261,10 +261,11 @@ static void fiq_debugger_dump_kernel_log(struct fiq_debugger_state *state)
 {
 	char buf[512];
 	size_t len;
-	struct kmsg_dump_iter iter;
+	struct kmsg_dumper dumper = { .active = true };
 
-	kmsg_dump_rewind(&iter);
-	while (kmsg_dump_get_line(&iter, true, buf,
+
+	kmsg_dump_rewind_nolock(&dumper);
+	while (kmsg_dump_get_line_nolock(&dumper, true, buf,
 					 sizeof(buf) - 1, &len)) {
 		buf[len] = 0;
 		fiq_debugger_puts(state, buf);
@@ -318,14 +319,14 @@ static void fiq_debugger_dump_irqs(struct fiq_debugger_state *state)
 			"irqnr       total  since-last   status  name\n");
 	for_each_irq_desc(n, desc) {
 		struct irqaction *act = desc->action;
-		if (!act && !kstat_irqs_usr(n))
+		if (!act && !kstat_irqs(n))
 			continue;
 		fiq_debugger_printf(&state->output, "%5d: %10u %11u %8x  %s\n", n,
-			kstat_irqs_usr(n),
-			kstat_irqs_usr(n) - state->last_irqs[n],
+			kstat_irqs(n),
+			kstat_irqs(n) - state->last_irqs[n],
 			desc->status_use_accessors,
 			(act && act->name) ? act->name : "???");
-		state->last_irqs[n] = kstat_irqs_usr(n);
+		state->last_irqs[n] = kstat_irqs(n);
 	}
 }
 #endif
@@ -341,7 +342,7 @@ static void fiq_debugger_do_ps(struct fiq_debugger_state *state)
 	fiq_debugger_printf(&state->output, "pid   ppid  prio task            pc\n");
 	read_lock(&tasklist_lock);
 	do_each_thread(g, p) {
-		task_state = p->__state ? __ffs(p->__state) + 1 : 0;
+		task_state = p->state ? __ffs(p->state) + 1 : 0;
 		fiq_debugger_printf(&state->output,
 			     "%5d %5d %4d ", p->pid, p->parent->pid, p->prio);
 		fiq_debugger_printf(&state->output, "%-13.13s %c", p->comm,
@@ -420,7 +421,7 @@ static void fiq_debugger_schedule_work(struct fiq_debugger_state *state,
 		return;
 	}
 
-	strscpy(state->work_cmd, cmd, sizeof(state->work_cmd));
+	strlcpy(state->work_cmd, cmd, sizeof(state->work_cmd));
 	spin_unlock_irqrestore(&state->work_lock, flags);
 
 	schedule_work(&state->work);
@@ -437,7 +438,7 @@ static void fiq_debugger_work(struct work_struct *work)
 
 	spin_lock_irqsave(&state->work_lock, flags);
 
-	strscpy(work_cmd, state->work_cmd, sizeof(work_cmd));
+	strlcpy(work_cmd, state->work_cmd, sizeof(work_cmd));
 	state->work_cmd[0] = '\0';
 
 	spin_unlock_irqrestore(&state->work_lock, flags);
@@ -651,7 +652,7 @@ static bool fiq_debugger_fiq_exec(struct fiq_debugger_state *state,
 			cmd++;
 		if (*cmd) {
 			char tmp_cmd[32];
-			strscpy(tmp_cmd, cmd, sizeof(tmp_cmd));
+			strlcpy(tmp_cmd, cmd, sizeof(tmp_cmd));
 			machine_restart(tmp_cmd);
 		} else {
 			machine_restart(NULL);
@@ -1237,7 +1238,7 @@ static int fiq_tty_write(struct tty_struct *tty, const unsigned char *buf, int c
 	return count;
 }
 
-static unsigned int fiq_tty_write_room(struct tty_struct *tty)
+static int fiq_tty_write_room(struct tty_struct *tty)
 {
 #ifdef CONFIG_RK_CONSOLE_THREAD
 	int line = tty->index;
@@ -1375,7 +1376,7 @@ static int fiq_debugger_tty_init(void)
 	return 0;
 
 err_free_tty:
-	tty_driver_kref_put(fiq_tty_driver);
+	put_tty_driver(fiq_tty_driver);
 	fiq_tty_driver = NULL;
 err_free_state:
 	kfree(states);

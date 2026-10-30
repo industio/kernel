@@ -1,6 +1,6 @@
 /* drivers/input/sensors/pressure/ms5607.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -267,9 +267,9 @@ static int pressure_ms5607_probe(struct i2c_client *client, const struct i2c_dev
 	return sensor_register_device(client, NULL, devid, &pressure_ms5607_ops);
 }
 
-static void pressure_ms5607_remove(struct i2c_client *client)
+static int pressure_ms5607_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &pressure_ms5607_ops);
+	return sensor_unregister_device(client, NULL, &pressure_ms5607_ops);
 }
 
 static const struct i2c_device_id pressure_ms5607_id[] = {

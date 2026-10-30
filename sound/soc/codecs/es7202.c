@@ -568,7 +568,7 @@ static struct snd_soc_dai_driver es7202_dai0 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 2
@@ -582,7 +582,7 @@ static struct snd_soc_dai_driver es7202_dai1 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 4
@@ -596,7 +596,7 @@ static struct snd_soc_dai_driver es7202_dai2 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 6
@@ -610,7 +610,7 @@ static struct snd_soc_dai_driver es7202_dai3 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 8
@@ -624,7 +624,7 @@ static struct snd_soc_dai_driver es7202_dai4 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 10
@@ -638,7 +638,7 @@ static struct snd_soc_dai_driver es7202_dai5 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 12
@@ -652,7 +652,7 @@ static struct snd_soc_dai_driver es7202_dai6 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 #if ES7202_CHANNELS_MAX > 14
@@ -666,7 +666,7 @@ static struct snd_soc_dai_driver es7202_dai7 = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,
 	},
 	.ops = &es7202_ops,
-	.symmetric_rate = 1,
+	.symmetric_rates = 1,
 };
 #endif
 
@@ -782,6 +782,7 @@ static struct snd_soc_component_driver soc_codec_dev_es7202 = {
 	.idle_bias_on = 1,
 	.use_pmdown_time = 1,
 	.endianness = 1,
+	.non_legacy_dai_naming = 1,
 };
 
 static ssize_t es7202_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
@@ -883,9 +884,11 @@ static int es7202_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static void es7202_i2c_remove(struct i2c_client *client)
+static  int es7202_i2c_remove(struct i2c_client *client)
 {
 	sysfs_remove_group(&client->dev.kobj, &es7202_debug_attr_group);
+
+	return 0;
 }
 
 static void es7202_i2c_shutdown(struct i2c_client *client)
@@ -902,28 +905,28 @@ static int es7202_i2c_detect(struct i2c_client *client,
 
 	if (adapter->nr == ES7202_I2C_BUS_NUM) {
 		if (client->addr == 0x30) {
-			strscpy(info->type, "ES7202_PDM_ADC_1", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_1", I2C_NAME_SIZE);
 			return 0;
 		} else if (client->addr == 0x31) {
-			strscpy(info->type, "ES7202_PDM_ADC_2", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_2", I2C_NAME_SIZE);
 			return 0;
 		} else if (client->addr == 0x32) {
-			strscpy(info->type, "ES7202_PDM_ADC_3", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_3", I2C_NAME_SIZE);
 			return 0;
 		} else if (client->addr == 0x33) {
-			strscpy(info->type, "ES7202_PDM_ADC_4", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_4", I2C_NAME_SIZE);
 			return 0;
 		}else if (client->addr == 0x34) {
-			strscpy(info->type, "ES7202_PDM_ADC_5", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_5", I2C_NAME_SIZE);
 			return 0;
 		}else if (client->addr == 0x35) {
-			strscpy(info->type, "ES7202_PDM_ADC_6", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_6", I2C_NAME_SIZE);
 			return 0;
 		}else if (client->addr == 0x36) {
-			strscpy(info->type, "ES7202_PDM_ADC_7", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_7", I2C_NAME_SIZE);
 			return 0;
 		}else if (client->addr == 0x37) {
-			strscpy(info->type, "ES7202_PDM_ADC_8", I2C_NAME_SIZE);
+			strlcpy(info->type, "ES7202_PDM_ADC_8", I2C_NAME_SIZE);
 			return 0;
 		}
 	}

@@ -63,12 +63,6 @@ int driver_set_override(struct device *dev, const char **override,
 	if (len >= (PAGE_SIZE - 1))
 		return -EINVAL;
 
-	/*
-	 * Compute the real length of the string in case userspace sends us a
-	 * bunch of \0 characters like python likes to do.
-	 */
-	len = strlen(s);
-
 	if (!len) {
 		/* Empty string passed - clear override */
 		device_lock(dev);
@@ -252,7 +246,6 @@ int driver_register(struct device_driver *drv)
 		return ret;
 	}
 	kobject_uevent(&drv->p->kobj, KOBJ_ADD);
-	deferred_probe_extend_timeout();
 
 	return ret;
 }

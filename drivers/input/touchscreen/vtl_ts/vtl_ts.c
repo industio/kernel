@@ -425,7 +425,7 @@ static int vtl_ts_early_resume(struct tp_device *tp)
 	return 0;
 }
 
-static void vtl_ts_remove(struct i2c_client *client)
+int  vtl_ts_remove(struct i2c_client *client)
 {
 	struct ts_info *ts;	
 	ts =pg_ts;
@@ -458,6 +458,7 @@ static void vtl_ts_remove(struct i2c_client *client)
 		ts->driver->ts_thread = NULL;
 		printk("___kthread stop end___\n");
 	}
+	return 0;
 }
 
 static int vtl_ts_init_input_dev(struct ts_info *ts)

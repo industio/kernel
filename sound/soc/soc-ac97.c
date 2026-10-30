@@ -34,6 +34,14 @@ struct snd_ac97_reset_cfg {
 	int gpio_reset;
 };
 
+struct snd_ac97_gpio_priv {
+#ifdef CONFIG_GPIOLIB
+	struct gpio_chip gpio_chip;
+#endif
+	unsigned int gpios_set;
+	struct snd_soc_component *component;
+};
+
 static struct snd_ac97_bus soc_ac97_bus = {
 	.ops = NULL, /* Gets initialized in snd_soc_set_ac97_ops() */
 };
@@ -44,12 +52,6 @@ static void soc_ac97_device_release(struct device *dev)
 }
 
 #ifdef CONFIG_GPIOLIB
-struct snd_ac97_gpio_priv {
-	struct gpio_chip gpio_chip;
-	unsigned int gpios_set;
-	struct snd_soc_component *component;
-};
-
 static inline struct snd_soc_component *gpio_to_component(struct gpio_chip *chip)
 {
 	struct snd_ac97_gpio_priv *gpio_priv = gpiochip_get_data(chip);
@@ -57,7 +59,7 @@ static inline struct snd_soc_component *gpio_to_component(struct gpio_chip *chip
 	return gpio_priv->component;
 }
 
-static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned int offset)
+static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned offset)
 {
 	if (offset >= AC97_NUM_GPIOS)
 		return -EINVAL;
@@ -66,7 +68,7 @@ static int snd_soc_ac97_gpio_request(struct gpio_chip *chip, unsigned int offset
 }
 
 static int snd_soc_ac97_gpio_direction_in(struct gpio_chip *chip,
-					  unsigned int offset)
+					  unsigned offset)
 {
 	struct snd_soc_component *component = gpio_to_component(chip);
 
@@ -75,7 +77,7 @@ static int snd_soc_ac97_gpio_direction_in(struct gpio_chip *chip,
 				   1 << offset, 1 << offset);
 }
 
-static int snd_soc_ac97_gpio_get(struct gpio_chip *chip, unsigned int offset)
+static int snd_soc_ac97_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
 	struct snd_soc_component *component = gpio_to_component(chip);
 	int ret;
@@ -88,7 +90,7 @@ static int snd_soc_ac97_gpio_get(struct gpio_chip *chip, unsigned int offset)
 	return !!(ret & (1 << offset));
 }
 
-static void snd_soc_ac97_gpio_set(struct gpio_chip *chip, unsigned int offset,
+static void snd_soc_ac97_gpio_set(struct gpio_chip *chip, unsigned offset,
 				  int value)
 {
 	struct snd_ac97_gpio_priv *gpio_priv = gpiochip_get_data(chip);

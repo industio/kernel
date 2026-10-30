@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Rockchip Electronics Co.Ltd
  * Author:
  *      Guochun Huang <hero.huang@rock-chips.com>
  */
@@ -207,11 +207,13 @@ static int bu18rl82_i2c_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void bu18rl82_i2c_remove(struct i2c_client *client)
+static int bu18rl82_i2c_remove(struct i2c_client *client)
 {
 	struct bu18rl82 *bu18rl82 = i2c_get_clientdata(client);
 
 	drm_bridge_remove(&bu18rl82->base);
+
+	return 0;
 }
 
 static const struct i2c_device_id bu18rl82_i2c_table[] = {

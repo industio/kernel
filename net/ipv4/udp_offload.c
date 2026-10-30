@@ -7,7 +7,7 @@
  */
 
 #include <linux/skbuff.h>
-#include <net/gro.h>
+#include <net/ip6_checksum.h>
 #include <net/udp.h>
 #include <net/protocol.h>
 #include <net/inet_common.h>
@@ -50,7 +50,6 @@ static struct sk_buff *__skb_udp_tunnel_segment(struct sk_buff *skb,
 	__skb_pull(skb, tnl_hlen);
 	skb_reset_mac_header(skb);
 	skb_set_network_header(skb, skb_inner_network_offset(skb));
-	skb_set_transport_header(skb, skb_inner_transport_offset(skb));
 	skb->mac_len = skb_inner_network_offset(skb);
 	skb->protocol = new_protocol;
 
@@ -69,8 +68,6 @@ static struct sk_buff *__skb_udp_tunnel_segment(struct sk_buff *skb,
 				      (NETIF_F_HW_CSUM | NETIF_F_IP_CSUM))));
 
 	features &= skb->dev->hw_enc_features;
-	if (need_csum)
-		features &= ~NETIF_F_SCTP_CRC;
 
 	/* The only checksum offload we care about from here on out is the
 	 * outer one so strip the existing checksum feature flags and
@@ -273,22 +270,6 @@ struct sk_buff *__udp_gso_segment(struct sk_buff *gso_skb,
 	__sum16 check;
 	__be16 newlen;
 
-	mss = skb_shinfo(gso_skb)->gso_size;
-	if (gso_skb->len <= sizeof(*uh) + mss)
-		return ERR_PTR(-EINVAL);
-
-	if (unlikely(skb_checksum_start(gso_skb) !=
-		     skb_transport_header(gso_skb) &&
-		     !(skb_shinfo(gso_skb)->gso_type & SKB_GSO_FRAGLIST)))
-		return ERR_PTR(-EINVAL);
-
-	if (skb_gso_ok(gso_skb, features | NETIF_F_GSO_ROBUST)) {
-		/* Packet is from an untrusted source, reset gso_segs. */
-		skb_shinfo(gso_skb)->gso_segs = DIV_ROUND_UP(gso_skb->len - sizeof(*uh),
-							     mss);
-		return NULL;
-	}
-
 	if (skb_shinfo(gso_skb)->gso_type & SKB_GSO_FRAGLIST) {
 		 /* Detect modified geometry and pass those to skb_segment. */
 		if (skb_pagelen(gso_skb) - sizeof(*uh) == skb_shinfo(gso_skb)->gso_size)
@@ -309,6 +290,10 @@ struct sk_buff *__udp_gso_segment(struct sk_buff *gso_skb,
 						  ip_hdr(gso_skb)->saddr,
 						  ip_hdr(gso_skb)->daddr, 0);
 	}
+
+	mss = skb_shinfo(gso_skb)->gso_size;
+	if (gso_skb->len <= sizeof(*uh) + mss)
+		return ERR_PTR(-EINVAL);
 
 	skb_pull(gso_skb, sizeof(*uh));
 
@@ -455,34 +440,6 @@ out:
 	return segs;
 }
 
-static int skb_gro_receive_list(struct sk_buff *p, struct sk_buff *skb)
-{
-	if (unlikely(p->len + skb->len >= 65536))
-		return -E2BIG;
-
-	if (NAPI_GRO_CB(p)->last == p)
-		skb_shinfo(p)->frag_list = skb;
-	else
-		NAPI_GRO_CB(p)->last->next = skb;
-
-	skb_pull(skb, skb_gro_offset(skb));
-
-	NAPI_GRO_CB(p)->last = skb;
-	NAPI_GRO_CB(p)->count++;
-	p->data_len += skb->len;
-
-	/* sk ownership - if any - completely transferred to the aggregated packet */
-	skb->destructor = NULL;
-	skb->sk = NULL;
-	p->truesize += skb->truesize;
-	p->len += skb->len;
-
-	NAPI_GRO_CB(skb)->same_flow = 1;
-
-	return 0;
-}
-
-
 #define UDP_GRO_CNT_MAX 64
 static struct sk_buff *udp_gro_receive_segment(struct list_head *head,
 					       struct sk_buff *skb)
@@ -590,28 +547,19 @@ struct sk_buff *udp_gro_receive(struct list_head *head, struct sk_buff *skb,
 	 * cases. Such packets should be caught in udp_unexpected_gso later.
 	 */
 	NAPI_GRO_CB(skb)->is_flist = 0;
-	if (!sk || !udp_sk(sk)->gro_receive) {
-		/* If the packet was locally encapsulated in a UDP tunnel that
-		 * wasn't detected above, do not GRO.
-		 */
-		if (skb->encapsulation)
-			goto out;
+	if (skb->dev->features & NETIF_F_GRO_FRAGLIST)
+		NAPI_GRO_CB(skb)->is_flist = sk ? !udp_sk(sk)->gro_enabled: 1;
 
-		if (skb->dev->features & NETIF_F_GRO_FRAGLIST)
-			NAPI_GRO_CB(skb)->is_flist = sk ? !udp_test_bit(GRO_ENABLED, sk) : 1;
-
-		if ((!sk && (skb->dev->features & NETIF_F_GRO_UDP_FWD)) ||
-		    (sk && udp_test_bit(GRO_ENABLED, sk)) || NAPI_GRO_CB(skb)->is_flist)
-			return call_gro_receive(udp_gro_receive_segment, head, skb);
-
-		/* no GRO, be sure flush the current packet */
-		goto out;
+	if ((sk && udp_sk(sk)->gro_enabled) || NAPI_GRO_CB(skb)->is_flist) {
+		pp = call_gro_receive(udp_gro_receive_segment, head, skb);
+		return pp;
 	}
 
-	if (NAPI_GRO_CB(skb)->encap_mark ||
+	if (!sk || NAPI_GRO_CB(skb)->encap_mark ||
 	    (uh->check && skb->ip_summed != CHECKSUM_PARTIAL &&
 	     NAPI_GRO_CB(skb)->csum_cnt == 0 &&
-	     !NAPI_GRO_CB(skb)->csum_valid))
+	     !NAPI_GRO_CB(skb)->csum_valid) ||
+	    !udp_sk(sk)->gro_receive)
 		goto out;
 
 	/* mark that this skb passed once through the tunnel gro layer */
@@ -711,8 +659,8 @@ int udp_gro_complete(struct sk_buff *skb, int nhoff,
 {
 	__be16 newlen = htons(skb->len - nhoff);
 	struct udphdr *uh = (struct udphdr *)(skb->data + nhoff);
+	int err = -ENOSYS;
 	struct sock *sk;
-	int err;
 
 	uh->len = newlen;
 
@@ -721,11 +669,6 @@ int udp_gro_complete(struct sk_buff *skb, int nhoff,
 	if (sk && udp_sk(sk)->gro_complete) {
 		skb_shinfo(skb)->gso_type = uh->check ? SKB_GSO_UDP_TUNNEL_CSUM
 					: SKB_GSO_UDP_TUNNEL;
-
-		/* clear the encap mark, so that inner frag_list gro_complete
-		 * can take place
-		 */
-		NAPI_GRO_CB(skb)->encap_mark = 0;
 
 		/* Set encapsulation before calling into inner gro_complete()
 		 * functions to make them set up the inner offsets.
@@ -749,8 +692,7 @@ INDIRECT_CALLABLE_SCOPE int udp4_gro_complete(struct sk_buff *skb, int nhoff)
 	const struct iphdr *iph = ip_hdr(skb);
 	struct udphdr *uh = (struct udphdr *)(skb->data + nhoff);
 
-	/* do fraglist only if there is no outer UDP encap (or we already processed it) */
-	if (NAPI_GRO_CB(skb)->is_flist && !NAPI_GRO_CB(skb)->encap_mark) {
+	if (NAPI_GRO_CB(skb)->is_flist) {
 		uh->len = htons(skb->len - nhoff);
 
 		skb_shinfo(skb)->gso_type |= (SKB_GSO_FRAGLIST|SKB_GSO_UDP_L4);

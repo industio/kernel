@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Dingxian Wen <shawn.wen@rock-chips.com>
  * V0.0X01.0X00 first version.
@@ -86,7 +86,7 @@ struct lt6911uxc {
 	struct v4l2_ctrl *pixel_rate;
 	struct v4l2_ctrl_handler hdl;
 	struct v4l2_dv_timings timings;
-	struct v4l2_mbus_config_mipi_csi2 bus;
+	struct v4l2_fwnode_bus_mipi_csi2 bus;
 	struct v4l2_subdev sd;
 	struct rkmodule_multi_dev_info multi_dev_info;
 	const char *len_name;
@@ -739,6 +739,12 @@ static int lt6911uxc_s_dv_timings(struct v4l2_subdev *sd,
 		return 0;
 	}
 
+	if (!v4l2_valid_dv_timings(timings,
+				&lt6911uxc_timings_cap, NULL, NULL)) {
+		v4l2_dbg(1, debug, sd, "%s: timings out of range\n", __func__);
+		return -ERANGE;
+	}
+
 	lt6911uxc->timings = *timings;
 	enable_stream(sd, false);
 
@@ -801,7 +807,27 @@ static int lt6911uxc_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 	struct lt6911uxc *lt6911uxc = to_state(sd);
 
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
-	cfg->bus.mipi_csi2 = lt6911uxc->bus;
+	cfg->flags = V4L2_MBUS_CSI2_CONTINUOUS_CLOCK | V4L2_MBUS_CSI2_CHANNEL_0;
+
+	switch (lt6911uxc->csi_lanes_in_use) {
+	case 1:
+		cfg->flags |= V4L2_MBUS_CSI2_1_LANE;
+		break;
+	case 2:
+		cfg->flags |= V4L2_MBUS_CSI2_2_LANE;
+		break;
+	case 3:
+		cfg->flags |= V4L2_MBUS_CSI2_3_LANE;
+		break;
+	case 4:
+		cfg->flags |= V4L2_MBUS_CSI2_4_LANE;
+		break;
+	case 8:
+		cfg->flags |= V4L2_MBUS_CSI2_4_LANE;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -814,7 +840,7 @@ static int lt6911uxc_s_stream(struct v4l2_subdev *sd, int enable)
 }
 
 static int lt6911uxc_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	switch (code->index) {
@@ -830,7 +856,7 @@ static int lt6911uxc_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int lt6911uxc_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -848,7 +874,7 @@ static int lt6911uxc_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int lt6911uxc_enum_frame_interval(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -902,7 +928,7 @@ lt6911uxc_find_best_fit(struct lt6911uxc *lt6911uxc)
 }
 
 static int lt6911uxc_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct lt6911uxc *lt6911uxc = to_state(sd);
@@ -934,7 +960,7 @@ static int lt6911uxc_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int lt6911uxc_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct lt6911uxc *lt6911uxc = to_state(sd);
@@ -942,7 +968,7 @@ static int lt6911uxc_set_fmt(struct v4l2_subdev *sd,
 
 	/* is overwritten by get_fmt */
 	u32 code = format->format.code;
-	int ret = lt6911uxc_get_fmt(sd, sd_state, format);
+	int ret = lt6911uxc_get_fmt(sd, cfg, format);
 
 	format->format.code = code;
 
@@ -1527,7 +1553,7 @@ static int lt6911uxc_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 lt6911uxc->module_index, facing,
 		 LT6911UXC_NAME, dev_name(sd->dev));
-	err = v4l2_async_register_subdev_sensor(sd);
+	err = v4l2_async_register_subdev_sensor_common(sd);
 	if (err < 0) {
 		v4l2_err(sd, "v4l2 register subdev failed! err:%d\n", err);
 		goto err_clean_entity;
@@ -1599,7 +1625,7 @@ err_free_hdl:
 	return err;
 }
 
-static void lt6911uxc_remove(struct i2c_client *client)
+static int lt6911uxc_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lt6911uxc *lt6911uxc = to_state(sd);
@@ -1614,6 +1640,8 @@ static void lt6911uxc_remove(struct i2c_client *client)
 	v4l2_ctrl_handler_free(&lt6911uxc->hdl);
 	mutex_destroy(&lt6911uxc->confctl_mutex);
 	clk_disable_unprepare(lt6911uxc->xvclk);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

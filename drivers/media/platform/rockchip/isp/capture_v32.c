@@ -1581,10 +1581,10 @@ static int mi_frame_end(struct rkisp_stream *stream, u32 state)
 		if (!ns)
 			ns = rkisp_time_get_ns(dev);
 		buf->vb.sequence = i;
-		vb2_buf->timestamp = ns;
+		buf->vb.vb2_buf.timestamp = ns;
 		ns = rkisp_time_get_ns(dev);
 		stream->dbg.interval = ns - stream->dbg.timestamp;
-		stream->dbg.delay = ns - vb2_buf->timestamp;
+		stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 		stream->dbg.timestamp = ns;
 		stream->dbg.id = i;
 
@@ -1918,7 +1918,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 
 	rkisp_stream_stop(stream);
 	/* call to the other devices */
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 	ret = dev->pipe.set_stream(&dev->pipe, false);
 	if (ret < 0)
 		v4l2_err(v4l2_dev, "pipeline stream-off failed:%d\n", ret);
@@ -2084,7 +2084,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 	if (ret < 0)
 		goto stop_stream;
 
-	ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+	ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(v4l2_dev, "start pipeline failed %d\n", ret);
 		goto pipe_stream_off;
@@ -2361,10 +2361,10 @@ void rkisp_mi_v32_isr(u32 mis_val, struct rkisp_device *dev)
 			}
 		} else if (stream->id == RKISP_STREAM_MP && dev->cap_dev.wrap_line) {
 			ns = rkisp_time_get_ns(dev);
+			rkisp_dmarx_get_frame(dev, &seq, NULL, NULL, true);
 			stream->dbg.interval = ns - stream->dbg.timestamp;
+			stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 			stream->dbg.timestamp = ns;
-			rkisp_dmarx_get_frame(dev, &seq, NULL, &ns, true);
-			stream->dbg.delay = stream->dbg.timestamp - ns;
 			stream->dbg.id = seq;
 			set_mirror_flip(stream);
 		} else {

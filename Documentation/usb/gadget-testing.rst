@@ -333,12 +333,6 @@ In each lun directory there are the following attribute files:
 			being a CD-ROM.
 	nofua		Flag specifying that FUA flag
 			in SCSI WRITE(10,12)
-	forced_eject	This write-only file is useful only when
-			the function is active. It causes the backing
-			file to be forcibly detached from the LUN,
-			regardless of whether the host has allowed it.
-			Any non-zero number of bytes written will
-			result in ejection.
 	=============== ==============================================
 
 Testing the MASS STORAGE function
@@ -447,15 +441,17 @@ Function-specific configfs interface
 The function name to use when creating the function directory is "ncm".
 The NCM function provides these attributes in its function directory:
 
-	=============== ==================================================
-	ifname		network device interface name associated with this
-			function instance
-	qmult		queue length multiplier for high and super speed
-	host_addr	MAC address of host's end of this
-			Ethernet over USB link
-	dev_addr	MAC address of device's end of this
-			Ethernet over USB link
-	=============== ==================================================
+	===============   ==================================================
+	ifname		  network device interface name associated with this
+			  function instance
+	qmult		  queue length multiplier for high and super speed
+	host_addr	  MAC address of host's end of this
+			  Ethernet over USB link
+	dev_addr	  MAC address of device's end of this
+			  Ethernet over USB link
+	max_segment_size  Segment size required for P2P connections. This
+			  will set MTU to (max_segment_size - 14 bytes)
+	===============   ==================================================
 
 and after creating the functions/ncm.<instance name> they contain default
 values: qmult is 5, dev_addr and host_addr are randomly selected.

@@ -168,8 +168,7 @@ static int visionox_rm69299_get_modes(struct drm_panel *panel,
 	struct visionox_rm69299 *ctx = panel_to_ctx(panel);
 	struct drm_display_mode *mode;
 
-	mode = drm_mode_duplicate(connector->dev,
-				  &visionox_rm69299_1080x2248_60hz);
+	mode = drm_mode_create(connector->dev);
 	if (!mode) {
 		dev_err(ctx->panel.dev, "failed to create a new display mode\n");
 		return 0;
@@ -177,6 +176,7 @@ static int visionox_rm69299_get_modes(struct drm_panel *panel,
 
 	connector->display_info.width_mm = 74;
 	connector->display_info.height_mm = 131;
+	drm_mode_copy(mode, &visionox_rm69299_1080x2248_60hz);
 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 	drm_mode_probed_add(connector, mode);
 
@@ -256,12 +256,13 @@ err_dsi_attach:
 	return ret;
 }
 
-static void visionox_rm69299_remove(struct mipi_dsi_device *dsi)
+static int visionox_rm69299_remove(struct mipi_dsi_device *dsi)
 {
 	struct visionox_rm69299 *ctx = mipi_dsi_get_drvdata(dsi);
 
 	mipi_dsi_detach(ctx->dsi);
 	drm_panel_remove(&ctx->panel);
+	return 0;
 }
 
 static const struct of_device_id visionox_rm69299_of_match[] = {

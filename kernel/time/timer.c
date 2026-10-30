@@ -44,7 +44,6 @@
 #include <linux/slab.h>
 #include <linux/compat.h>
 #include <linux/random.h>
-#include <linux/sysctl.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -56,6 +55,11 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/timer.h>
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/timer.h>
+
+EXPORT_TRACEPOINT_SYMBOL_GPL(hrtimer_expire_entry);
+EXPORT_TRACEPOINT_SYMBOL_GPL(hrtimer_expire_exit);
 
 __visible u64 jiffies_64 __cacheline_aligned_in_smp = INITIAL_JIFFIES;
 
@@ -224,7 +228,7 @@ static void timer_update_keys(struct work_struct *work);
 static DECLARE_WORK(timer_update_work, timer_update_keys);
 
 #ifdef CONFIG_SMP
-static unsigned int sysctl_timer_migration = 1;
+unsigned int sysctl_timer_migration = 1;
 
 DEFINE_STATIC_KEY_FALSE(timers_migration_enabled);
 
@@ -235,42 +239,7 @@ static void timers_update_migration(void)
 	else
 		static_branch_disable(&timers_migration_enabled);
 }
-
-#ifdef CONFIG_SYSCTL
-static int timer_migration_handler(struct ctl_table *table, int write,
-			    void *buffer, size_t *lenp, loff_t *ppos)
-{
-	int ret;
-
-	mutex_lock(&timer_keys_mutex);
-	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-	if (!ret && write)
-		timers_update_migration();
-	mutex_unlock(&timer_keys_mutex);
-	return ret;
-}
-
-static struct ctl_table timer_sysctl[] = {
-	{
-		.procname	= "timer_migration",
-		.data		= &sysctl_timer_migration,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= timer_migration_handler,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{}
-};
-
-static int __init timer_sysctl_init(void)
-{
-	register_sysctl("kernel", timer_sysctl);
-	return 0;
-}
-device_initcall(timer_sysctl_init);
-#endif /* CONFIG_SYSCTL */
-#else /* CONFIG_SMP */
+#else
 static inline void timers_update_migration(void) { }
 #endif /* !CONFIG_SMP */
 
@@ -285,6 +254,19 @@ static void timer_update_keys(struct work_struct *work)
 void timers_update_nohz(void)
 {
 	schedule_work(&timer_update_work);
+}
+
+int timer_migration_handler(struct ctl_table *table, int write,
+			    void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret;
+
+	mutex_lock(&timer_keys_mutex);
+	ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	if (!ret && write)
+		timers_update_migration();
+	mutex_unlock(&timer_keys_mutex);
+	return ret;
 }
 
 static inline bool is_timers_nohz_active(void)
@@ -525,7 +507,8 @@ static inline unsigned calc_index(unsigned long expires, unsigned lvl,
 	 *
 	 * Round up with level granularity to prevent this.
 	 */
-	expires = (expires >> LVL_SHIFT(lvl)) + 1;
+	trace_android_vh_timer_calc_index(lvl, &expires);
+	expires = (expires + LVL_GRAN(lvl)) >> LVL_SHIFT(lvl);
 	*bucket_expiry = expires << LVL_SHIFT(lvl);
 	return LVL_OFFS(lvl) + (expires & LVL_MASK);
 }
@@ -638,39 +621,9 @@ static void internal_add_timer(struct timer_base *base, struct timer_list *timer
 
 static const struct debug_obj_descr timer_debug_descr;
 
-struct timer_hint {
-	void	(*function)(struct timer_list *t);
-	long	offset;
-};
-
-#define TIMER_HINT(fn, container, timr, hintfn)			\
-	{							\
-		.function = fn,					\
-		.offset	  = offsetof(container, hintfn) -	\
-			    offsetof(container, timr)		\
-	}
-
-static const struct timer_hint timer_hints[] = {
-	TIMER_HINT(delayed_work_timer_fn,
-		   struct delayed_work, timer, work.func),
-	TIMER_HINT(kthread_delayed_work_timer_fn,
-		   struct kthread_delayed_work, timer, work.func),
-};
-
 static void *timer_debug_hint(void *addr)
 {
-	struct timer_list *timer = addr;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(timer_hints); i++) {
-		if (timer_hints[i].function == timer->function) {
-			void (**fn)(void) = addr + timer_hints[i].offset;
-
-			return *fn;
-		}
-	}
-
-	return timer->function;
+	return ((struct timer_list *) addr)->function;
 }
 
 static bool timer_is_static_object(void *addr)
@@ -949,7 +902,7 @@ static inline void forward_timer_base(struct timer_base *base)
 	/*
 	 * No need to forward if we are close enough below jiffies.
 	 * Also while executing timers, base->clk is 1 offset ahead
-	 * of jiffies to avoid endless requeuing to current jiffies.
+	 * of jiffies to avoid endless requeuing to current jffies.
 	 */
 	if ((long)(jnow - base->clk) < 1)
 		return;
@@ -1083,7 +1036,7 @@ __mod_timer(struct timer_list *timer, unsigned long expires, unsigned int option
 		/*
 		 * We are trying to schedule the timer on the new base.
 		 * However we can't change timer's base while it is running,
-		 * otherwise timer_delete_sync() can't detect that the timer's
+		 * otherwise del_timer_sync() can't detect that the timer's
 		 * handler yet has not finished. This also guarantees that the
 		 * timer is serialized wrt itself.
 		 */
@@ -1255,11 +1208,11 @@ void add_timer_on(struct timer_list *timer, int cpu)
 EXPORT_SYMBOL_GPL(add_timer_on);
 
 /**
- * timer_delete - Deactivate a timer
+ * del_timer - Deactivate a timer.
  * @timer:	The timer to be deactivated
  *
  * The function only deactivates a pending timer, but contrary to
- * timer_delete_sync() it does not take into account whether the timer's
+ * del_timer_sync() it does not take into account whether the timer's
  * callback function is concurrently executed on a different CPU or not.
  * It neither prevents rearming of the timer. If @timer can be rearmed
  * concurrently then the return value of this function is meaningless.
@@ -1268,7 +1221,7 @@ EXPORT_SYMBOL_GPL(add_timer_on);
  * * %0 - The timer was not pending
  * * %1 - The timer was pending and deactivated
  */
-int timer_delete(struct timer_list *timer)
+int del_timer(struct timer_list *timer)
 {
 	struct timer_base *base;
 	unsigned long flags;
@@ -1284,7 +1237,7 @@ int timer_delete(struct timer_list *timer)
 
 	return ret;
 }
-EXPORT_SYMBOL(timer_delete);
+EXPORT_SYMBOL(del_timer);
 
 /**
  * try_to_del_timer_sync - Try to deactivate a timer
@@ -1341,7 +1294,7 @@ static inline void timer_base_unlock_expiry(struct timer_base *base)
  * The counterpart to del_timer_wait_running().
  *
  * If there is a waiter for base->expiry_lock, then it was waiting for the
- * timer callback to finish. Drop expiry_lock and reacquire it. That allows
+ * timer callback to finish. Drop expiry_lock and reaquire it. That allows
  * the waiter to acquire the lock and make progress.
  */
 static void timer_sync_wait_running(struct timer_base *base)
@@ -1369,7 +1322,7 @@ static void del_timer_wait_running(struct timer_list *timer)
 	u32 tf;
 
 	tf = READ_ONCE(timer->flags);
-	if (!(tf & (TIMER_MIGRATING | TIMER_IRQSAFE))) {
+	if (!(tf & TIMER_MIGRATING)) {
 		struct timer_base *base = get_timer_base(tf);
 
 		/*
@@ -1395,7 +1348,7 @@ static inline void del_timer_wait_running(struct timer_list *timer) { }
 #endif
 
 /**
- * timer_delete_sync - Deactivate a timer and wait for the handler to finish.
+ * del_timer_sync - Deactivate a timer and wait for the handler to finish.
  * @timer:	The timer to be deactivated
  *
  * Synchronization rules: Callers must prevent restarting of the timer,
@@ -1417,10 +1370,10 @@ static inline void del_timer_wait_running(struct timer_list *timer) { }
  *    spin_lock_irq(somelock);
  *                                     <IRQ>
  *                                        spin_lock(somelock);
- *    timer_delete_sync(mytimer);
+ *    del_timer_sync(mytimer);
  *    while (base->running_timer == mytimer);
  *
- * Now timer_delete_sync() will never return and never release somelock.
+ * Now del_timer_sync() will never return and never release somelock.
  * The interrupt on the other CPU is waiting to grab somelock but it has
  * interrupted the softirq that CPU0 is waiting to finish.
  *
@@ -1433,7 +1386,7 @@ static inline void del_timer_wait_running(struct timer_list *timer) { }
  * * %0	- The timer was not pending
  * * %1	- The timer was pending and deactivated
  */
-int timer_delete_sync(struct timer_list *timer)
+int del_timer_sync(struct timer_list *timer)
 {
 	int ret;
 
@@ -1455,13 +1408,6 @@ int timer_delete_sync(struct timer_list *timer)
 	 */
 	WARN_ON(in_irq() && !(timer->flags & TIMER_IRQSAFE));
 
-	/*
-	 * Must be able to sleep on PREEMPT_RT because of the slowpath in
-	 * del_timer_wait_running().
-	 */
-	if (IS_ENABLED(CONFIG_PREEMPT_RT) && !(timer->flags & TIMER_IRQSAFE))
-		lockdep_assert_preemption_enabled();
-
 	do {
 		ret = try_to_del_timer_sync(timer);
 
@@ -1473,7 +1419,7 @@ int timer_delete_sync(struct timer_list *timer)
 
 	return ret;
 }
-EXPORT_SYMBOL(timer_delete_sync);
+EXPORT_SYMBOL(del_timer_sync);
 
 static void call_timer_fn(struct timer_list *timer,
 			  void (*fn)(struct timer_list *),
@@ -1495,8 +1441,8 @@ static void call_timer_fn(struct timer_list *timer,
 #endif
 	/*
 	 * Couple the lock chain with the lock chain at
-	 * timer_delete_sync() by acquiring the lock_map around the fn()
-	 * call here and in timer_delete_sync().
+	 * del_timer_sync() by acquiring the lock_map around the fn()
+	 * call here and in del_timer_sync().
 	 */
 	lock_map_acquire(&lockdep_map);
 
@@ -1786,6 +1732,29 @@ void timer_clear_idle(void)
 }
 #endif
 
+/*
+ * Called from the timer interrupt handler to charge one tick to the current
+ * process.  user_tick is 1 if the tick is user time, 0 for system.
+ */
+void update_process_times(int user_tick)
+{
+	struct task_struct *p = current;
+
+	PRANDOM_ADD_NOISE(jiffies, user_tick, p, 0);
+
+	/* Note: this timer irq context must be accounted for as well. */
+	account_process_tick(p, user_tick);
+	run_local_timers();
+	rcu_sched_clock_irq(user_tick);
+#ifdef CONFIG_IRQ_WORK
+	if (in_irq())
+		irq_work_tick();
+#endif
+	scheduler_tick();
+	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
+		run_posix_cpu_timers();
+}
+
 /**
  * __run_timers - run all expired timers (if any) on this CPU.
  * @base: the timer vector to be processed.
@@ -1838,7 +1807,7 @@ static __latent_entropy void run_timer_softirq(struct softirq_action *h)
 /*
  * Called by the local, per-CPU timer interrupt on SMP.
  */
-static void run_local_timers(void)
+void run_local_timers(void)
 {
 	struct timer_base *base = this_cpu_ptr(&timer_bases[BASE_STD]);
 
@@ -1853,27 +1822,6 @@ static void run_local_timers(void)
 			return;
 	}
 	raise_softirq(TIMER_SOFTIRQ);
-}
-
-/*
- * Called from the timer interrupt handler to charge one tick to the current
- * process.  user_tick is 1 if the tick is user time, 0 for system.
- */
-void update_process_times(int user_tick)
-{
-	struct task_struct *p = current;
-
-	/* Note: this timer irq context must be accounted for as well. */
-	account_process_tick(p, user_tick);
-	run_local_timers();
-	rcu_sched_clock_irq(user_tick);
-#ifdef CONFIG_IRQ_WORK
-	if (in_irq())
-		irq_work_tick();
-#endif
-	scheduler_tick();
-	if (IS_ENABLED(CONFIG_POSIX_TIMERS))
-		run_posix_cpu_timers();
 }
 
 /*
@@ -1952,7 +1900,7 @@ signed long __sched schedule_timeout(signed long timeout)
 			printk(KERN_ERR "schedule_timeout: wrong timeout "
 				"value %lx\n", timeout);
 			dump_stack();
-			__set_current_state(TASK_RUNNING);
+			current->state = TASK_RUNNING;
 			goto out;
 		}
 	}
@@ -1963,7 +1911,7 @@ signed long __sched schedule_timeout(signed long timeout)
 	timer_setup_on_stack(&timer.timer, process_timeout, 0);
 	__mod_timer(&timer.timer, expire, MOD_TIMER_NOTPENDING);
 	schedule();
-	del_timer_sync(&timer.timer);
+	del_singleshot_timer_sync(&timer.timer);
 
 	/* Remove the timer from the object tracker */
 	destroy_timer_on_stack(&timer.timer);
@@ -2034,7 +1982,6 @@ int timers_prepare_cpu(unsigned int cpu)
 		base = per_cpu_ptr(&timer_bases[b], cpu);
 		base->clk = jiffies;
 		base->next_expiry = base->clk + NEXT_TIMER_MAX_DELTA;
-		base->next_expiry_recalc = false;
 		base->timers_pending = false;
 		base->is_idle = false;
 	}
@@ -2163,4 +2110,20 @@ void __sched usleep_range_state(unsigned long min, unsigned long max,
 			break;
 	}
 }
-EXPORT_SYMBOL(usleep_range_state);
+
+/**
+ * usleep_range - Sleep for an approximate time
+ * @min: Minimum time in usecs to sleep
+ * @max: Maximum time in usecs to sleep
+ *
+ * In non-atomic context where the exact wakeup time is flexible, use
+ * usleep_range() instead of udelay().  The sleep improves responsiveness
+ * by avoiding the CPU-hogging busy-wait of udelay(), and the range reduces
+ * power usage by allowing hrtimers to take advantage of an already-
+ * scheduled interrupt instead of scheduling a new one just for this sleep.
+ */
+void __sched usleep_range(unsigned long min, unsigned long max)
+{
+	usleep_range_state(min, max, TASK_UNINTERRUPTIBLE);
+}
+EXPORT_SYMBOL(usleep_range);

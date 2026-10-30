@@ -59,8 +59,6 @@ static struct pt_cap_desc {
 	PT_CAP(mtc,			0, CPUID_EBX, BIT(3)),
 	PT_CAP(ptwrite,			0, CPUID_EBX, BIT(4)),
 	PT_CAP(power_event_trace,	0, CPUID_EBX, BIT(5)),
-	PT_CAP(event_trace,		0, CPUID_EBX, BIT(7)),
-	PT_CAP(tnt_disable,		0, CPUID_EBX, BIT(8)),
 	PT_CAP(topa_output,		0, CPUID_ECX, BIT(0)),
 	PT_CAP(topa_multiple_entries,	0, CPUID_ECX, BIT(1)),
 	PT_CAP(single_range_output,	0, CPUID_ECX, BIT(2)),
@@ -112,8 +110,6 @@ PMU_FORMAT_ATTR(tsc,		"config:10"	);
 PMU_FORMAT_ATTR(noretcomp,	"config:11"	);
 PMU_FORMAT_ATTR(ptw,		"config:12"	);
 PMU_FORMAT_ATTR(branch,		"config:13"	);
-PMU_FORMAT_ATTR(event,		"config:31"	);
-PMU_FORMAT_ATTR(notnt,		"config:55"	);
 PMU_FORMAT_ATTR(mtc_period,	"config:14-17"	);
 PMU_FORMAT_ATTR(cyc_thresh,	"config:19-22"	);
 PMU_FORMAT_ATTR(psb_period,	"config:24-27"	);
@@ -122,8 +118,6 @@ static struct attribute *pt_formats_attr[] = {
 	&format_attr_pt.attr,
 	&format_attr_cyc.attr,
 	&format_attr_pwr_evt.attr,
-	&format_attr_event.attr,
-	&format_attr_notnt.attr,
 	&format_attr_fup_on_ptw.attr,
 	&format_attr_mtc.attr,
 	&format_attr_tsc.attr,
@@ -304,8 +298,6 @@ fail:
 			RTIT_CTL_CYC_PSB	| \
 			RTIT_CTL_MTC		| \
 			RTIT_CTL_PWR_EVT_EN	| \
-			RTIT_CTL_EVENT_EN	| \
-			RTIT_CTL_NOTNT		| \
 			RTIT_CTL_FUP_ON_PTW	| \
 			RTIT_CTL_PTW_EN)
 
@@ -360,14 +352,6 @@ static bool pt_event_valid(struct perf_event *event)
 	    !intel_pt_validate_hw_cap(PT_CAP_power_event_trace))
 		return false;
 
-	if (config & RTIT_CTL_EVENT_EN &&
-	    !intel_pt_validate_hw_cap(PT_CAP_event_trace))
-		return false;
-
-	if (config & RTIT_CTL_NOTNT &&
-	    !intel_pt_validate_hw_cap(PT_CAP_tnt_disable))
-		return false;
-
 	if (config & RTIT_CTL_PTW) {
 		if (!intel_pt_validate_hw_cap(PT_CAP_ptwrite))
 			return false;
@@ -380,7 +364,7 @@ static bool pt_event_valid(struct perf_event *event)
 
 	/*
 	 * Setting bit 0 (TraceEn in RTIT_CTL MSR) in the attr.config
-	 * clears the assumption that BranchEn must always be enabled,
+	 * clears the assomption that BranchEn must always be enabled,
 	 * as was the case with the first implementation of PT.
 	 * If this bit is not set, the legacy behavior is preserved
 	 * for compatibility with the older userspace.
@@ -1602,7 +1586,6 @@ static void pt_event_stop(struct perf_event *event, int mode)
 	 * see comment in intel_pt_interrupt().
 	 */
 	WRITE_ONCE(pt->handle_nmi, 0);
-	barrier();
 
 	pt_config_stop(event);
 
@@ -1654,10 +1637,11 @@ static long pt_event_snapshot_aux(struct perf_event *event,
 		return 0;
 
 	/*
-	 * There is no PT interrupt in this mode, so stop the trace and it will
-	 * remain stopped while the buffer is copied.
+	 * Here, handle_nmi tells us if the tracing is on
 	 */
-	pt_config_stop(event);
+	if (READ_ONCE(pt->handle_nmi))
+		pt_config_stop(event);
+
 	pt_read_offset(buf);
 	pt_update_head(pt);
 
@@ -1669,10 +1653,11 @@ static long pt_event_snapshot_aux(struct perf_event *event,
 	ret = perf_output_copy_aux(&pt->handle, handle, from, to);
 
 	/*
-	 * Here, handle_nmi tells us if the tracing was on.
-	 * If the tracing was on, restart it.
+	 * If the tracing was on when we turned up, restart it.
+	 * Compiler barrier not needed as we couldn't have been
+	 * preempted by anything that touches pt->handle_nmi.
 	 */
-	if (READ_ONCE(pt->handle_nmi))
+	if (pt->handle_nmi)
 		pt_config_start(event);
 
 	return ret;
@@ -1760,7 +1745,7 @@ static __init int pt_init(void)
 	if (!boot_cpu_has(X86_FEATURE_INTEL_PT))
 		return -ENODEV;
 
-	cpus_read_lock();
+	get_online_cpus();
 	for_each_online_cpu(cpu) {
 		u64 ctl;
 
@@ -1768,7 +1753,7 @@ static __init int pt_init(void)
 		if (!ret && (ctl & RTIT_CTL_TRACEEN))
 			prior_warn++;
 	}
-	cpus_read_unlock();
+	put_online_cpus();
 
 	if (prior_warn) {
 		x86_add_exclusive(x86_lbr_exclusive_pt);

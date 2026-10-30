@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright (C) 2019 Rockchip Electronics Co., Ltd. */
+/* Copyright (C) 2019 Rockchip Electronics Co., Ltd */
 
 #include <media/videobuf2-dma-contig.h>
 #include <media/videobuf2-dma-sg.h>
@@ -237,7 +237,7 @@ int rkisp_buf_get_fd(struct rkisp_device *dev,
 	}
 
 	if (buf->is_need_dbuf && !buf->dbuf) {
-		buf->dbuf = g_ops->get_dmabuf(&buf->vb, buf->mem_priv, O_RDWR);
+		buf->dbuf = g_ops->get_dmabuf(buf->mem_priv, O_RDWR);
 		new_dbuf = true;
 	}
 
@@ -257,24 +257,10 @@ int rkisp_buf_get_fd(struct rkisp_device *dev,
 	return 0;
 }
 
-static void rkisp_init_dummy_vb2(struct rkisp_device *dev,
-				 struct rkisp_dummy_buffer *buf)
-{
-	unsigned long attrs = buf->is_need_vaddr ? 0 : DMA_ATTR_NO_KERNEL_MAPPING;
-
-	memset(&buf->vb2_queue, 0, sizeof(buf->vb2_queue));
-	memset(&buf->vb, 0, sizeof(buf->vb));
-	buf->vb2_queue.gfp_flags = GFP_KERNEL | GFP_DMA32;
-	buf->vb2_queue.dma_dir = DMA_BIDIRECTIONAL;
-	if (dev->hw_dev->is_dma_contig)
-		attrs |= DMA_ATTR_FORCE_CONTIGUOUS;
-	buf->vb2_queue.dma_attrs = attrs;
-	buf->vb.vb2_queue = &buf->vb2_queue;
-}
-
 int rkisp_alloc_buffer(struct rkisp_device *dev,
 		       struct rkisp_dummy_buffer *buf)
 {
+	unsigned long attrs = buf->is_need_vaddr ? 0 : DMA_ATTR_NO_KERNEL_MAPPING;
 	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
 	struct sg_table	 *sg_tbl;
 	void *mem_priv;
@@ -287,9 +273,11 @@ int rkisp_alloc_buffer(struct rkisp_device *dev,
 		goto err;
 	}
 
-	rkisp_init_dummy_vb2(dev, buf);
+	if (dev->hw_dev->is_dma_contig)
+		attrs |= DMA_ATTR_FORCE_CONTIGUOUS;
 	buf->size = PAGE_ALIGN(buf->size);
-	mem_priv = g_ops->alloc(&buf->vb, dev->hw_dev->dev, buf->size);
+	mem_priv = g_ops->alloc(dev->hw_dev->dev, attrs, buf->size,
+				DMA_BIDIRECTIONAL, GFP_KERNEL | GFP_DMA32);
 	if (IS_ERR_OR_NULL(mem_priv)) {
 		ret = -ENOMEM;
 		goto err;
@@ -297,14 +285,14 @@ int rkisp_alloc_buffer(struct rkisp_device *dev,
 
 	buf->mem_priv = mem_priv;
 	if (dev->hw_dev->is_dma_sg_ops) {
-		sg_tbl = (struct sg_table *)g_ops->cookie(&buf->vb, mem_priv);
+		sg_tbl = (struct sg_table *)g_ops->cookie(mem_priv);
 		buf->dma_addr = sg_dma_address(sg_tbl->sgl);
 		g_ops->prepare(mem_priv);
 	} else {
-		buf->dma_addr = *((dma_addr_t *)g_ops->cookie(&buf->vb, mem_priv));
+		buf->dma_addr = *((dma_addr_t *)g_ops->cookie(mem_priv));
 	}
 	if (buf->is_need_vaddr)
-		buf->vaddr = g_ops->vaddr(&buf->vb, mem_priv);
+		buf->vaddr = g_ops->vaddr(mem_priv);
 	ret = rkisp_buf_get_fd(dev, buf, false);
 	if (ret < 0) {
 		g_ops->put(buf->mem_priv);
@@ -325,7 +313,7 @@ err:
 }
 
 void rkisp_free_buffer(struct rkisp_device *dev,
-		       struct rkisp_dummy_buffer *buf)
+			struct rkisp_dummy_buffer *buf)
 {
 	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
 
@@ -338,7 +326,6 @@ void rkisp_free_buffer(struct rkisp_device *dev,
 			dma_buf_put(buf->dbuf);
 		g_ops->put(buf->mem_priv);
 		buf->size = 0;
-		buf->index = -1;
 		buf->dbuf = NULL;
 		buf->vaddr = NULL;
 		buf->mem_priv = NULL;

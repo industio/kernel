@@ -114,8 +114,6 @@
 
 &route_rgb {
 	status = "okay";
-
-	bridge = <&i2c2_rk628>;
 };
 
 &rgb_in_vp2 {

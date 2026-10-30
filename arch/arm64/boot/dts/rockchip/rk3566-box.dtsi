@@ -244,7 +244,7 @@
 
 &i2s1_8ch {
 	status = "okay";
-	rockchip,trcm-sync-tx-only;
+	rockchip,clk-trcm = <1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2s1m0_sclktx
 		     &i2s1m0_lrcktx
@@ -463,7 +463,6 @@
 	status = "okay";
 	assigned-clocks = <&cru DCLK_VOP1>;
 	assigned-clock-parents = <&cru PLL_VPLL>;
-	vop-supply = <&vdd_logic>;
 };
 
 &vop_mmu {

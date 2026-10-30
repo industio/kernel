@@ -352,8 +352,12 @@ static const struct sc2232_mode supported_modes[] = {
 		.hdr_mode = NO_HDR,
 		.mipi_freq_idx = 0,
 		.bpp = 10,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const s64 link_freq_items[] = {
@@ -457,10 +461,13 @@ sc2232_find_best_fit(struct sc2232 *sc2232, struct v4l2_subdev_format *fmt)
 
 	for (i = 0; i < sc2232->cfg_num; i++) {
 		dist = sc2232_get_reso_dist(&supported_modes[i], framefmt);
-		if ((cur_best_fit_dist == -1 || dist <= cur_best_fit_dist) &&
-			(supported_modes[i].bus_fmt == framefmt->code)) {
+		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -476,7 +483,7 @@ static void sc2232_change_mode(struct sc2232 *sc2232, const struct sc2232_mode *
 }
 
 static int sc2232_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc2232 *sc2232 = to_sc2232(sd);
@@ -493,7 +500,7 @@ static int sc2232_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc2232->mutex);
 		return -ENOTTY;
@@ -521,7 +528,7 @@ static int sc2232_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc2232_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc2232 *sc2232 = to_sc2232(sd);
@@ -530,7 +537,7 @@ static int sc2232_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc2232->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc2232->mutex);
 		return -ENOTTY;
@@ -551,20 +558,18 @@ static int sc2232_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc2232_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct sc2232 *sc2232 = to_sc2232(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = sc2232->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc2232_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct sc2232 *sc2232 = to_sc2232(sd);
@@ -597,11 +602,92 @@ static int sc2232_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static const struct sc2232_mode *sc2232_find_mode(struct sc2232 *sc2232, int fps)
+{
+	const struct sc2232_mode *mode = NULL;
+	const struct sc2232_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < sc2232->cfg_num; i++) {
+		mode = &supported_modes[i];
+		if (mode->width == sc2232->cur_mode->width &&
+		    mode->height == sc2232->cur_mode->height &&
+		    mode->hdr_mode == sc2232->cur_mode->hdr_mode &&
+		    mode->bus_fmt == sc2232->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int sc2232_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct sc2232 *sc2232 = to_sc2232(sd);
+	const struct sc2232_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	u64 pixel_rate = 0;
+	int fps;
+
+	if (sc2232->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = sc2232_find_mode(sc2232, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	sc2232->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(sc2232->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(sc2232->vblank, vblank_def,
+				 SC2232_VTS_MAX - mode->height,
+				 1, vblank_def);
+	__v4l2_ctrl_s_ctrl(sc2232->link_freq, mode->mipi_freq_idx);
+	pixel_rate = (u32)link_freq_items[mode->mipi_freq_idx] /
+		mode->bpp * 2 * SC2232_LANES;
+	__v4l2_ctrl_s_ctrl_int64(sc2232->pixel_rate, pixel_rate);
+	sc2232->cur_fps = mode->max_fps;
+	return 0;
+}
+
 static int sc2232_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	struct sc2232 *sc2232 = to_sc2232(sd);
+	const struct sc2232_mode *mode = sc2232->cur_mode;
+	u32 val = 0;
+
+	if (mode->hdr_mode == NO_HDR)
+		val = 1 << (SC2232_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+	if (mode->hdr_mode == HDR_X2)
+		val = 1 << (SC2232_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK |
+		V4L2_MBUS_CSI2_CHANNEL_1;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = SC2232_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -610,10 +696,10 @@ static void sc2232_get_module_inf(struct sc2232 *sc2232,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, SC2232_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, sc2232->module_name,
+	strlcpy(inf->base.sensor, SC2232_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, sc2232->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, sc2232->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, sc2232->len_name, sizeof(inf->base.lens));
 }
 
 static int sc2232_set_gain(struct sc2232 *sc2232, u32 total_gain)
@@ -1070,7 +1156,7 @@ static int sc2232_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc2232 *sc2232 = to_sc2232(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc2232_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc2232->mutex);
@@ -1088,7 +1174,7 @@ static int sc2232_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int sc2232_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct sc2232 *sc2232 = to_sc2232(sd);
@@ -1126,6 +1212,7 @@ static const struct v4l2_subdev_core_ops sc2232_core_ops = {
 static const struct v4l2_subdev_video_ops sc2232_video_ops = {
 	.s_stream = sc2232_s_stream,
 	.g_frame_interval = sc2232_g_frame_interval,
+	.s_frame_interval = sc2232_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops sc2232_pad_ops = {
@@ -1478,7 +1565,7 @@ static int sc2232_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc2232->module_index, facing,
 		 SC2232_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1506,7 +1593,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc2232_remove(struct i2c_client *client)
+static int sc2232_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc2232 *sc2232 = to_sc2232(sd);
@@ -1522,6 +1609,8 @@ static void sc2232_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc2232_power_off(sc2232);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

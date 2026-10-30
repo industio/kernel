@@ -490,46 +490,6 @@ int usb_interface_id(struct usb_configuration *config,
 }
 EXPORT_SYMBOL_GPL(usb_interface_id);
 
-/**
- * usb_func_wakeup - sends function wake notification to the host.
- * @func: function that sends the remote wakeup notification.
- *
- * Applicable to devices operating at enhanced superspeed when usb
- * functions are put in function suspend state and armed for function
- * remote wakeup. On completion, function wake notification is sent. If
- * the device is in low power state it tries to bring the device to active
- * state before sending the wake notification. Since it is a synchronous
- * call, caller must take care of not calling it in interrupt context.
- * For devices operating at lower speeds  returns negative errno.
- *
- * Returns zero on success, else negative errno.
- */
-int usb_func_wakeup(struct usb_function *func)
-{
-	struct usb_gadget	*gadget = func->config->cdev->gadget;
-	int			id;
-
-	if (!gadget->ops->func_wakeup)
-		return -EOPNOTSUPP;
-
-	if (!func->func_wakeup_armed) {
-		ERROR(func->config->cdev, "not armed for func remote wakeup\n");
-		return -EINVAL;
-	}
-
-	for (id = 0; id < MAX_CONFIG_INTERFACES; id++)
-		if (func->config->interface[id] == func)
-			break;
-
-	if (id == MAX_CONFIG_INTERFACES) {
-		ERROR(func->config->cdev, "Invalid function\n");
-		return -EINVAL;
-	}
-
-	return gadget->ops->func_wakeup(gadget, id);
-}
-EXPORT_SYMBOL_GPL(usb_func_wakeup);
-
 static u8 encode_bMaxPower(enum usb_device_speed speed,
 		struct usb_configuration *c)
 {
@@ -549,19 +509,6 @@ static u8 encode_bMaxPower(enum usb_device_speed speed,
 		 * by 8 the integral division will effectively cap to 896mA.
 		 */
 		return min(val, 900U) / 8;
-}
-
-void check_remote_wakeup_config(struct usb_gadget *g,
-				struct usb_configuration *c)
-{
-	if (USB_CONFIG_ATT_WAKEUP & c->bmAttributes) {
-		/* Reset the rw bit if gadget is not capable of it */
-		if (!g->wakeup_capable && g->ops->set_remote_wakeup) {
-			WARN(c->cdev, "Clearing wakeup bit for config c.%d\n",
-			     c->bConfigurationValue);
-			c->bmAttributes &= ~USB_CONFIG_ATT_WAKEUP;
-		}
-	}
 }
 
 static int config_buf(struct usb_configuration *config,
@@ -916,25 +863,24 @@ static int set_config(struct usb_composite_dev *cdev,
 		const struct usb_ctrlrequest *ctrl, unsigned number)
 {
 	struct usb_gadget	*gadget = cdev->gadget;
-	struct usb_configuration *c = NULL, *iter;
+	struct usb_configuration *c = NULL;
 	int			result = -EINVAL;
 	unsigned		power = gadget_is_otg(gadget) ? 8 : 100;
 	int			tmp;
 
 	if (number) {
-		list_for_each_entry(iter, &cdev->configs, list) {
-			if (iter->bConfigurationValue != number)
-				continue;
-			/*
-			 * We disable the FDs of the previous
-			 * configuration only if the new configuration
-			 * is a valid one
-			 */
-			if (cdev->config)
-				reset_config(cdev);
-			c = iter;
-			result = 0;
-			break;
+		list_for_each_entry(c, &cdev->configs, list) {
+			if (c->bConfigurationValue == number) {
+				/*
+				 * We disable the FDs of the previous
+				 * configuration only if the new configuration
+				 * is a valid one
+				 */
+				if (cdev->config)
+					reset_config(cdev);
+				result = 0;
+				break;
+			}
 		}
 		if (result < 0)
 			goto done;
@@ -1012,11 +958,6 @@ static int set_config(struct usb_composite_dev *cdev,
 		power = min(power, 500U);
 	else
 		power = min(power, 900U);
-
-	if (USB_CONFIG_ATT_WAKEUP & c->bmAttributes)
-		usb_gadget_set_remote_wakeup(gadget, 1);
-	else
-		usb_gadget_set_remote_wakeup(gadget, 0);
 done:
 	if (power <= USB_SELF_POWER_VBUS_MAX_DRAW)
 		usb_gadget_set_selfpowered(gadget);
@@ -1087,10 +1028,6 @@ int usb_add_config(struct usb_composite_dev *cdev,
 		goto done;
 
 	status = bind(config);
-
-	if (status == 0)
-		status = usb_gadget_check_config(cdev->gadget);
-
 	if (status < 0) {
 		while (!list_empty(&config->functions)) {
 			struct usb_function		*f;
@@ -1753,7 +1690,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	u16				w_value = le16_to_cpu(ctrl->wValue);
 	u16				w_length = le16_to_cpu(ctrl->wLength);
 	struct usb_function		*f = NULL;
-	struct usb_function		*iter;
 	u8				endp;
 
 	if (w_length > USB_COMP_EP0_BUFSIZ) {
@@ -2113,12 +2049,12 @@ unknown:
 			if (!cdev->config)
 				break;
 			endp = ((w_index & 0x80) >> 3) | (w_index & 0x0f);
-			list_for_each_entry(iter, &cdev->config->functions, list) {
-				if (test_bit(endp, iter->endpoints)) {
-					f = iter;
+			list_for_each_entry(f, &cdev->config->functions, list) {
+				if (test_bit(endp, f->endpoints))
 					break;
-				}
 			}
+			if (&f->list == &cdev->config->functions)
+				f = NULL;
 			break;
 		}
 try_fun_setup:
@@ -2514,6 +2450,10 @@ void composite_resume(struct usb_gadget *gadget)
 			usb_gadget_clear_selfpowered(gadget);
 
 		usb_gadget_vbus_draw(gadget, maxpower);
+	} else {
+		maxpower = CONFIG_USB_GADGET_VBUS_DRAW;
+		maxpower = min(maxpower, 100U);
+		usb_gadget_vbus_draw(gadget, maxpower);
 	}
 
 	cdev->suspended = 0;
@@ -2570,7 +2510,7 @@ int usb_composite_probe(struct usb_composite_driver *driver)
 	gadget_driver->driver.name = driver->name;
 	gadget_driver->max_speed = driver->max_speed;
 
-	return usb_gadget_register_driver(gadget_driver);
+	return usb_gadget_probe_driver(gadget_driver);
 }
 EXPORT_SYMBOL_GPL(usb_composite_probe);
 

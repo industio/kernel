@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author:
  *      Sandy Huang <hjc@rock-chips.com>
  */
@@ -16,9 +16,9 @@
 
 #include <video/of_display_timing.h>
 
-#include <drm/display/drm_dp_helper.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_dp_helper.h>
 #include <drm/drm_of.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_probe_helper.h>
@@ -54,20 +54,11 @@
 #define RK3288_LVDS_CON_CLKINV(x)	HIWORD_UPDATE(x,  8,  8)
 #define RK3288_LVDS_CON_TTL_EN(x)	HIWORD_UPDATE(x,  6,  6)
 
-#define RK3506_GRF_SOC_CON2		0x0008
-#define RK3506_GRF_VOP_DLL_SEL(v)	HIWORD_UPDATE(v, 4, 10)
-#define RK3506_GRF_VOP_DATA_BYPASS(v)	HIWORD_UPDATE(v, 1, 2)
-
 #define RK3562_GRF_IOC_VO_IO_CON	0x10500
 #define RK3562_RGB_DATA_BYPASS(v)	HIWORD_UPDATE(v, 6, 6)
 
 #define RK3568_GRF_VO_CON1		0X0364
 #define RK3568_RGB_DATA_BYPASS(v)	HIWORD_UPDATE(v, 6, 6)
-
-#define RK3576_IOC_GRF_MISC_CON8	0x6420
-#define RK3576_VOP_MCU_SEL(v)		HIWORD_UPDATE(v, 10, 10)
-#define RK3576_VOP_DLL_SEL(v)		HIWORD_UPDATE(v, 8, 8)
-#define RK3576_VOP_DCLK_DELAYLINE(v)	HIWORD_UPDATE(v, 0, 6)
 
 struct rockchip_rgb;
 
@@ -287,8 +278,6 @@ rockchip_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	else
 		s->bus_format = MEDIA_BUS_FMT_RGB888_1X24;
 
-	s->color_range = DRM_COLOR_YCBCR_FULL_RANGE;
-	s->color_encoding = DRM_COLOR_YCBCR_BT709;
 	switch (s->bus_format) {
 	case MEDIA_BUS_FMT_RGB666_1X18:
 		s->output_mode = ROCKCHIP_OUT_MODE_P666;
@@ -323,8 +312,6 @@ rockchip_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	case MEDIA_BUS_FMT_VYUY8_2X8:
 		s->output_mode = ROCKCHIP_OUT_MODE_BT656;
 		s->output_if = VOP_OUTPUT_IF_BT656;
-		s->color_range = DRM_COLOR_YCBCR_LIMITED_RANGE;
-		s->color_encoding = DRM_COLOR_YCBCR_BT601;
 		break;
 	case MEDIA_BUS_FMT_YUYV8_1X16:
 	case MEDIA_BUS_FMT_YVYU8_1X16:
@@ -332,7 +319,6 @@ rockchip_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	case MEDIA_BUS_FMT_VYUY8_1X16:
 		s->output_mode = ROCKCHIP_OUT_MODE_BT1120;
 		s->output_if = VOP_OUTPUT_IF_BT1120;
-		s->color_range = DRM_COLOR_YCBCR_LIMITED_RANGE;
 		break;
 	case MEDIA_BUS_FMT_RGB888_1X24:
 	case MEDIA_BUS_FMT_RGB666_1X24_CPADHI:
@@ -346,6 +332,7 @@ rockchip_rgb_encoder_atomic_check(struct drm_encoder *encoder,
 	s->bus_flags = info->bus_flags;
 	s->tv_state = &conn_state->tv;
 	s->eotf = HDMI_EOTF_TRADITIONAL_GAMMA_SDR;
+	s->color_space = V4L2_COLORSPACE_DEFAULT;
 	if (rgb->np_mcu_panel)
 		s->soft_te = mcu_panel->te_gpio ? true : false;
 
@@ -1113,29 +1100,6 @@ static const struct rockchip_rgb_data rk3288_rgb = {
 	.funcs = &rk3288_rgb_funcs,
 };
 
-static void rk3506_rgb_enable(struct rockchip_rgb *rgb)
-{
-	struct drm_crtc *crtc = rgb->encoder.crtc;
-	struct rockchip_crtc_state *s = to_rockchip_crtc_state(crtc->state);
-
-	regmap_write(rgb->grf, RK3506_GRF_SOC_CON2,
-		     RK3506_GRF_VOP_DATA_BYPASS(rgb->data_sync_bypass ? 0x3 : 0x0));
-	if (s->output_if == VOP_OUTPUT_IF_BT1120 || s->output_if == VOP_OUTPUT_IF_BT656)
-		regmap_write(rgb->grf, RK3506_GRF_SOC_CON2, RK3506_GRF_VOP_DLL_SEL(0x20));
-	else
-		regmap_write(rgb->grf, RK3506_GRF_SOC_CON2, RK3506_GRF_VOP_DLL_SEL(0x10));
-}
-
-static const struct rockchip_rgb_funcs rk3506_rgb_funcs = {
-	.enable = rk3506_rgb_enable,
-};
-
-static const struct rockchip_rgb_data rk3506_rgb = {
-	.rgb_max_dclk_rate = 120000,
-	.mcu_max_dclk_rate = 120000,
-	.funcs = &rk3506_rgb_funcs,
-};
-
 static void rk3562_rgb_enable(struct rockchip_rgb *rgb)
 {
 	regmap_write(rgb->grf, RK3562_GRF_IOC_VO_IO_CON,
@@ -1162,22 +1126,6 @@ static const struct rockchip_rgb_funcs rk3568_rgb_funcs = {
 
 static const struct rockchip_rgb_data rk3568_rgb = {
 	.funcs = &rk3568_rgb_funcs,
-};
-
-static void rk3576_rgb_enable(struct rockchip_rgb *rgb)
-{
-	regmap_write(rgb->grf, RK3576_IOC_GRF_MISC_CON8,
-		     RK3576_VOP_MCU_SEL(rgb->data_sync_bypass));
-	regmap_write(rgb->grf, RK3576_IOC_GRF_MISC_CON8, RK3576_VOP_DLL_SEL(true));
-	regmap_write(rgb->grf, RK3576_IOC_GRF_MISC_CON8, RK3576_VOP_DCLK_DELAYLINE(0x5));
-}
-
-static const struct rockchip_rgb_funcs rk3576_rgb_funcs = {
-	.enable = rk3576_rgb_enable,
-};
-
-static const struct rockchip_rgb_data rk3576_rgb = {
-	.funcs = &rk3576_rgb_funcs,
 };
 
 static void rv1126_rgb_enable(struct rockchip_rgb *rgb)
@@ -1220,10 +1168,8 @@ static const struct of_device_id rockchip_rgb_dt_ids[] = {
 	{ .compatible = "rockchip,rk3288-rgb", .data = &rk3288_rgb },
 	{ .compatible = "rockchip,rk3308-rgb", },
 	{ .compatible = "rockchip,rk3368-rgb", },
-	{ .compatible = "rockchip,rk3506-rgb", .data = &rk3506_rgb },
 	{ .compatible = "rockchip,rk3562-rgb", .data = &rk3562_rgb },
 	{ .compatible = "rockchip,rk3568-rgb", .data = &rk3568_rgb },
-	{ .compatible = "rockchip,rk3576-rgb", .data = &rk3576_rgb },
 	{ .compatible = "rockchip,rk3588-rgb", },
 	{ .compatible = "rockchip,rv1106-rgb", .data = &rv1106_rgb},
 	{ .compatible = "rockchip,rv1108-rgb", },

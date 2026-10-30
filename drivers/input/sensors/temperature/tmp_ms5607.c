@@ -1,6 +1,6 @@
 /* drivers/input/sensors/temperature/tmp_ms5607.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -284,9 +284,9 @@ static int temperature_ms5607_probe(struct i2c_client *client, const struct i2c_
 	return sensor_register_device(client, NULL, devid, &temperature_ms5607_ops);
 }
 
-static void temperature_ms5607_remove(struct i2c_client *client)
+static int temperature_ms5607_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &temperature_ms5607_ops);
+	return sensor_unregister_device(client, NULL, &temperature_ms5607_ops);
 }
 
 static const struct i2c_device_id temperature_ms5607_id[] = {

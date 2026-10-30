@@ -5,6 +5,8 @@
  * Author: Huang Lee <Putin.li@rock-chips.com>
  */
 
+#define pr_fmt(fmt) "rga_iommu: " fmt
+
 #include "rga_iommu.h"
 #include "rga_dma_buf.h"
 #include "rga_mm.h"
@@ -35,11 +37,11 @@ int rga_user_memory_check(struct page **pages, u32 w, u32 h, u32 format, int fla
 	}
 
 	if (flag == 1) {
-		rga_log("src user memory check\n");
-		rga_log("tai data is %d\n", *tai_vaddr);
+		pr_info("src user memory check\n");
+		pr_info("tai data is %d\n", *tai_vaddr);
 	} else {
-		rga_log("dst user memory check\n");
-		rga_log("tai data is %d\n", *tai_vaddr);
+		pr_info("dst user memory check\n");
+		pr_info("tai data is %d\n", *tai_vaddr);
 	}
 
 	if (taidata_num == 0)
@@ -98,14 +100,14 @@ static int rga_mmu_buf_get_try(struct rga_mmu_base *t, uint32_t size)
 
 	if ((t->back - t->front) > t->size) {
 		if (t->front + size > t->back - t->size) {
-			rga_log("front %d, back %d dsize %d size %d",
+			pr_info("front %d, back %d dsize %d size %d",
 				t->front, t->back, t->size, size);
 			ret = -ENOMEM;
 			goto out;
 		}
 	} else {
 		if ((t->front + size) > t->back) {
-			rga_log("front %d, back %d dsize %d size %d",
+			pr_info("front %d, back %d dsize %d size %d",
 				t->front, t->back, t->size, size);
 			ret = -ENOMEM;
 			goto out;
@@ -113,7 +115,7 @@ static int rga_mmu_buf_get_try(struct rga_mmu_base *t, uint32_t size)
 
 		if (t->front + size > t->size) {
 			if (size > (t->back - t->size)) {
-				rga_log("front %d, back %d dsize %d size %d",
+				pr_info("front %d, back %d dsize %d size %d",
 					t->front, t->back, t->size, size);
 				ret = -ENOMEM;
 				goto out;
@@ -136,7 +138,7 @@ unsigned int *rga_mmu_buf_get(struct rga_mmu_base *mmu_base, uint32_t size)
 
 	ret = rga_mmu_buf_get_try(mmu_base, size);
 	if (ret < 0) {
-		rga_err("Get MMU mem failed\n");
+		pr_err("Get MMU mem failed\n");
 		return NULL;
 	}
 
@@ -240,7 +242,7 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 	if (job == NULL)
 		return 0;
 
-	rga_err("IOMMU intr fault, IOVA[0x%lx], STATUS[0x%x]\n", iova, status);
+	pr_err("IOMMU intr fault, IOVA[0x%lx], STATUS[0x%x]\n", iova, status);
 	if (scheduler->ops->irq)
 		scheduler->ops->irq(scheduler);
 
@@ -251,13 +253,13 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 	}
 
 	if (status & RGA_IOMMU_IRQ_PAGE_FAULT) {
-		rga_err("RGA IOMMU: page fault! Please check the memory size.\n");
+		pr_err("RGA IOMMU: page fault! Please check the memory size.\n");
 		job->ret = -EACCES;
 	} else if (status & RGA_IOMMU_IRQ_BUS_ERROR) {
-		rga_err("RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
+		pr_err("RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
 		job->ret = -EACCES;
 	} else {
-		rga_err("RGA IOMMU: Wrong IOMMU interrupt signal!\n");
+		pr_err("RGA IOMMU: Wrong IOMMU interrupt signal!\n");
 	}
 
 	return 0;

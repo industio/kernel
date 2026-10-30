@@ -1,13 +1,20 @@
-// SPDX-License-Identifier: GPL-2.0
-//
-// rk817 ALSA SoC Audio driver
-//
-// Copyright (c) 2018, Fuzhou Rockchip Electronics Co., Ltd All rights reserved.
+/*
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
 
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
 #include <linux/mfd/rk808.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -1299,7 +1306,7 @@ static void rk817_codec_shutdown(struct snd_pcm_substream *substream,
 	}
 }
 
-static const struct snd_soc_dai_ops rk817_dai_ops = {
+static struct snd_soc_dai_ops rk817_dai_ops = {
 	.hw_params	= rk817_hw_params,
 	.set_fmt	= rk817_set_dai_fmt,
 	.set_sysclk	= rk817_set_dai_sysclk,
@@ -1346,6 +1353,7 @@ static struct snd_soc_dai_driver rk817_dai[] = {
 		},
 		.ops = &rk817_dai_ops,
 	},
+
 };
 
 static int rk817_suspend(struct snd_soc_component *component)
@@ -1432,6 +1440,7 @@ static const struct snd_soc_component_driver soc_codec_dev_rk817 = {
 	.idle_bias_on = 1,
 	.use_pmdown_time = 1,
 	.endianness = 1,
+	.non_legacy_dai_naming = 1
 };
 
 static int rk817_codec_parse_dt_property(struct device *dev,
@@ -1527,8 +1536,6 @@ static int rk817_codec_parse_dt_property(struct device *dev,
 	rk817->adc_for_loopback =
 			of_property_read_bool(node, "adc-for-loopback");
 
-	of_node_put(node);
-
 	return 0;
 }
 
@@ -1599,13 +1606,15 @@ static int rk817_platform_probe(struct platform_device *pdev)
 	}
 
 	return 0;
-
 err_:
+
 	return ret;
 }
 
 static int rk817_platform_remove(struct platform_device *pdev)
 {
+	snd_soc_unregister_component(&pdev->dev);
+
 	return 0;
 }
 
@@ -1640,4 +1649,3 @@ module_platform_driver(rk817_codec_driver);
 MODULE_DESCRIPTION("ASoC RK817 codec driver");
 MODULE_AUTHOR("binyuan <kevan.lan@rock-chips.com>");
 MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:rk817-codec");

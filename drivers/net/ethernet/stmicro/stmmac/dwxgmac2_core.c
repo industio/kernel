@@ -359,8 +359,7 @@ static void dwxgmac2_pmt(struct mac_device_info *hw, unsigned long mode)
 }
 
 static void dwxgmac2_set_umac_addr(struct mac_device_info *hw,
-				   const unsigned char *addr,
-				   unsigned int reg_n)
+				   unsigned char *addr, unsigned int reg_n)
 {
 	void __iomem *ioaddr = hw->pcsr;
 	u32 value;
@@ -871,9 +870,7 @@ static void dwxgmac3_handle_dma_err(struct net_device *ndev,
 			   STAT_OFF(dma_dpp_errors), stats);
 }
 
-static int
-dwxgmac3_safety_feat_config(void __iomem *ioaddr, unsigned int asp,
-			    struct stmmac_safety_feature_cfg *safety_cfg)
+static int dwxgmac3_safety_feat_config(void __iomem *ioaddr, unsigned int asp)
 {
 	u32 value;
 
@@ -1521,8 +1518,7 @@ static int dwxgmac3_est_configure(void __iomem *ioaddr, struct stmmac_est *cfg,
 	return 0;
 }
 
-static void dwxgmac3_fpe_configure(void __iomem *ioaddr, struct stmmac_fpe_cfg *cfg,
-				   u32 num_txq,
+static void dwxgmac3_fpe_configure(void __iomem *ioaddr, u32 num_txq,
 				   u32 num_rxq, bool enable)
 {
 	u32 value;

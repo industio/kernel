@@ -1,6 +1,6 @@
 /* drivers/input/sensors/access/kxtik.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -129,9 +129,9 @@ static int hall_och165t_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &hall_och165t_ops);
 }
 
-static void hall_och165t_remove(struct i2c_client *client)
+static int hall_och165t_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &hall_och165t_ops);
+	return sensor_unregister_device(client, NULL, &hall_och165t_ops);
 }
 
 static const struct i2c_device_id hall_och165t_id[] = {

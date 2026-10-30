@@ -65,7 +65,6 @@ static void do_insert_old_idx(struct ubifs_info *c,
 		else {
 			ubifs_err(c, "old idx added twice!");
 			kfree(old_idx);
-			return;
 		}
 	}
 	rb_link_node(&old_idx->rb, parent, p);
@@ -354,7 +353,7 @@ static int lnc_add(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 	err = ubifs_validate_entry(c, dent);
 	if (err) {
 		dump_stack();
-		ubifs_dump_node(c, dent, zbr->len);
+		ubifs_dump_node(c, dent);
 		return err;
 	}
 
@@ -387,7 +386,7 @@ static int lnc_add_directly(struct ubifs_info *c, struct ubifs_zbranch *zbr,
 	err = ubifs_validate_entry(c, node);
 	if (err) {
 		dump_stack();
-		ubifs_dump_node(c, node, zbr->len);
+		ubifs_dump_node(c, node);
 		return err;
 	}
 
@@ -415,7 +414,7 @@ static void lnc_free(struct ubifs_zbranch *zbr)
  *
  * This function reads a "hashed" node defined by @zbr from the leaf node cache
  * (in it is there) or from the hash media, in which case the node is also
- * added to LNC. Returns zero in case of success or a negative error
+ * added to LNC. Returns zero in case of success or a negative negative error
  * code in case of failure.
  */
 static int tnc_read_hashed_node(struct ubifs_info *c, struct ubifs_zbranch *zbr,
@@ -1737,7 +1736,7 @@ static int validate_data_node(struct ubifs_info *c, void *buf,
 		goto out_err;
 	}
 
-	err = ubifs_check_node(c, buf, zbr->len, zbr->lnum, zbr->offs, 0, 0);
+	err = ubifs_check_node(c, buf, zbr->lnum, zbr->offs, 0, 0);
 	if (err) {
 		ubifs_err(c, "expected node type %d", UBIFS_DATA_NODE);
 		goto out;
@@ -1771,7 +1770,7 @@ out_err:
 	err = -EINVAL;
 out:
 	ubifs_err(c, "bad node at LEB %d:%d", zbr->lnum, zbr->offs);
-	ubifs_dump_node(c, buf, zbr->len);
+	ubifs_dump_node(c, buf);
 	dump_stack();
 	return err;
 }

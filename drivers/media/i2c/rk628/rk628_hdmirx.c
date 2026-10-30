@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (C) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2020 Rockchip Electronics Co. Ltd.
  *
  * Author: Shunqing Chen <csq@rock-chips.com>
  */
@@ -46,7 +46,6 @@ struct rk628_audioinfo {
 	bool fifo_ints_en;
 	bool ctsn_ints_en;
 	bool audio_present;
-	bool arc_en;
 	bool underflow;
 	bool overflow;
 	bool startthreshold;
@@ -384,14 +383,16 @@ static void rk628_hdmirx_audio_clk_inc_rate(struct rk628_audioinfo *aif, int dis
 
 static void rk628_hdmirx_audio_clk_ppm_inc(struct rk628_audioinfo *aif, int ppm)
 {
-	int delta, rate, inc;
+	int delta, inc;
+	u32 rate;
 
 	rate = aif->audio_state.hdmirx_aud_clkrate;
 	if (ppm < 0) {
 		ppm = -ppm;
 		inc = -1;
-	} else
+	} else {
 		inc = 1;
+	}
 	delta = div_u64(((uint64_t)rate * ppm + 500000), 1000000);
 	delta *= inc;
 	rate += delta;
@@ -836,28 +837,6 @@ int rk628_hdmirx_audio_fs(HAUDINFO info)
 	return aif->audio_state.fs_audio;
 }
 EXPORT_SYMBOL(rk628_hdmirx_audio_fs);
-
-bool rk628_hdmirx_get_arc_enable(HAUDINFO info)
-{
-	struct rk628_audioinfo *aif = (struct rk628_audioinfo *)info;
-
-	if (!aif)
-		return false;
-
-	return aif->arc_en;
-}
-EXPORT_SYMBOL(rk628_hdmirx_get_arc_enable);
-
-int rk628_hdmirx_set_arc_enable(HAUDINFO info, bool enabled)
-{
-	struct rk628_audioinfo *aif = (struct rk628_audioinfo *)info;
-
-	if (!aif)
-		return false;
-
-	return aif->arc_en = enabled;
-}
-EXPORT_SYMBOL(rk628_hdmirx_set_arc_enable);
 
 void rk628_hdmirx_audio_i2s_ctrl(HAUDINFO info, bool enable)
 {
@@ -1830,9 +1809,9 @@ u8 rk628_hdmirx_get_color_space(struct rk628 *rk628)
 	EC2_0 = (val & EXT_COLORIMETRY_MASK) >> 20;
 	C1_C0 = (val & COLORIMETRY_MASK) >> 14;
 	fmt = (val & VIDEO_FORMAT_MASK) >> 5;
-	if (HDMIRX_RGB888 == fmt) {
-		if (HDMIRX_ADOBE_RGB == EC2_0 ||
-		    HDMIRX_BT2020_RGB_OR_YCC == EC2_0)
+	if (fmt == HDMIRX_RGB888) {
+		if (EC2_0 == HDMIRX_ADOBE_RGB ||
+		    EC2_0 == HDMIRX_BT2020_RGB_OR_YCC)
 			color_space = EC2_0;
 		else
 			color_space = HDMIRX_RGB;

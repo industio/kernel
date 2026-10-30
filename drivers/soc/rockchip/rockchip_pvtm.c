@@ -2,7 +2,7 @@
 /*
  * Rockchip PVTM support.
  *
- * Copyright (c) 2016 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2016 Rockchip Electronics Co. Ltd.
  * Author: Finley Xiao <finley.xiao@rock-chips.com>
  */
 
@@ -17,7 +17,6 @@
 #include <linux/of_clk.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
@@ -984,13 +983,13 @@ static int rockchip_pvtm_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct device_node *np = pdev->dev.of_node;
 	struct device_node *node;
-	const struct rockchip_pvtm_data *data;
+	const struct of_device_id *match;
 	struct rockchip_pvtm *pvtm;
 	struct regmap *grf = NULL;
 	void __iomem *base = NULL;
 
-	data = device_get_match_data(dev);
-	if (!data) {
+	match = of_match_device(dev->driver->of_match_table, dev);
+	if (!match || !match->data) {
 		dev_err(dev, "missing pvtm data\n");
 		return -EINVAL;
 	}
@@ -1006,7 +1005,7 @@ static int rockchip_pvtm_probe(struct platform_device *pdev)
 	}
 
 	for_each_available_child_of_node(np, node) {
-		pvtm = rockchip_pvtm_init(dev, node, data, grf, base);
+		pvtm = rockchip_pvtm_init(dev, node, match->data, grf, base);
 		if (!pvtm) {
 			dev_err(dev, "failed to handle node %s\n",
 				node->full_name);

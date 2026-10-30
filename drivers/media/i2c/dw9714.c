@@ -2,7 +2,7 @@
 /*
  * dw9714 vcm driver
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Fuzhou Rockchip Electronics Co., Ltd.
  */
 
 #include <linux/delay.h>
@@ -1368,7 +1368,7 @@ err_cleanup:
 	return ret;
 }
 
-static void dw9714_remove(struct i2c_client *client)
+static int dw9714_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct dw9714_device *dw9714_dev = sd_to_dw9714_vcm(sd);
@@ -1376,6 +1376,8 @@ static void dw9714_remove(struct i2c_client *client)
 	remove_sysfs_interfaces(&client->dev);
 	pm_runtime_disable(&client->dev);
 	dw9714_subdev_cleanup(dw9714_dev);
+
+	return 0;
 }
 
 static int __maybe_unused dw9714_vcm_suspend(struct device *dev)

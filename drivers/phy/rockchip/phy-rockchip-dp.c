@@ -2,7 +2,7 @@
 /*
  * Rockchip DP PHY driver
  *
- * Copyright (C) 2016 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2016 FuZhou Rockchip Co., Ltd.
  * Author: Yakir Yang <ykk@@rock-chips.com>
  */
 

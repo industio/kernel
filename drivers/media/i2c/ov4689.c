@@ -112,6 +112,7 @@ struct regval {
 };
 
 struct ov4689_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -154,6 +155,7 @@ struct ov4689 {
 	bool			has_init_exp;
 	struct preisp_hdrae_exp_s init_hdrae_exp;
 	u32			cur_vts;
+	struct v4l2_fract	cur_fps;
 };
 
 #define to_ov4689(sd) container_of(sd, struct ov4689, subdev)
@@ -475,6 +477,7 @@ static const struct regval ov4689_hdr_x3_regs[] = {
 
 static const struct ov4689_mode supported_modes[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 2688,
 		.height = 1520,
 		.max_fps = {
@@ -486,8 +489,9 @@ static const struct ov4689_mode supported_modes[] = {
 		.vts_def = 0x0612,
 		.reg_list = ov4689_linear_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}, {
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 2688,
 		.height = 1520,
 		.max_fps = {
@@ -499,11 +503,12 @@ static const struct ov4689_mode supported_modes[] = {
 		.vts_def = 0x0612,
 		.reg_list = ov4689_hdr_x2_regs,
 		.hdr_mode = HDR_X2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 	}, {
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 2688,
 		.height = 1520,
 		.max_fps = {
@@ -515,11 +520,15 @@ static const struct ov4689_mode supported_modes[] = {
 		.vts_def = 0x0612,
 		.reg_list = ov4689_hdr_x3_regs,
 		.hdr_mode = HDR_X3,
-		.vc[PAD0] = 2,
-		.vc[PAD1] = 1,//M->csi wr0
-		.vc[PAD2] = 0,//L->csi wr1
-		.vc[PAD3] = 2,//S->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_2,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr1
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_2,//S->csi wr2
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -632,6 +641,10 @@ ov4689_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -639,7 +652,7 @@ ov4689_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int ov4689_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov4689 *ov4689 = to_ov4689(sd);
@@ -649,13 +662,13 @@ static int ov4689_set_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov4689->mutex);
 
 	mode = ov4689_find_best_fit(fmt);
-	fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fmt->format.code = mode->bus_fmt;
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&ov4689->mutex);
 		return -ENOTTY;
@@ -669,6 +682,7 @@ static int ov4689_set_fmt(struct v4l2_subdev *sd,
 		__v4l2_ctrl_modify_range(ov4689->vblank, vblank_def,
 					 OV4689_VTS_MAX - mode->height,
 					 1, vblank_def);
+		ov4689->cur_fps = mode->max_fps;
 	}
 
 	mutex_unlock(&ov4689->mutex);
@@ -677,7 +691,7 @@ static int ov4689_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov4689_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct ov4689 *ov4689 = to_ov4689(sd);
@@ -686,7 +700,7 @@ static int ov4689_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&ov4689->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&ov4689->mutex);
 		return -ENOTTY;
@@ -694,7 +708,7 @@ static int ov4689_get_fmt(struct v4l2_subdev *sd,
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
-		fmt->format.code = MEDIA_BUS_FMT_SBGGR10_1X10;
+		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
 		/* format info: width/height/data type/virctual channel */
 		if (fmt->pad < PAD_MAX && mode->hdr_mode != NO_HDR)
@@ -708,24 +722,24 @@ static int ov4689_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov4689_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int ov4689_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	if (fse->code != MEDIA_BUS_FMT_SBGGR10_1X10)
+	if (fse->code != supported_modes[fse->index].bus_fmt)
 		return -EINVAL;
 
 	fse->min_width  = supported_modes[fse->index].width;
@@ -755,17 +769,92 @@ static int ov4689_g_frame_interval(struct v4l2_subdev *sd,
 	struct ov4689 *ov4689 = to_ov4689(sd);
 	const struct ov4689_mode *mode = ov4689->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (ov4689->streaming)
+		fi->interval = ov4689->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct ov4689_mode *ov4689_find_mode(struct ov4689 *ov4689, int fps)
+{
+	const struct ov4689_mode *mode = NULL;
+	const struct ov4689_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == ov4689->cur_mode->width &&
+		    mode->height == ov4689->cur_mode->height &&
+		    mode->hdr_mode == ov4689->cur_mode->hdr_mode &&
+		    mode->bus_fmt == ov4689->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int ov4689_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct ov4689 *ov4689 = to_ov4689(sd);
+	const struct ov4689_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (ov4689->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = ov4689_find_mode(ov4689, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	ov4689->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(ov4689->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(ov4689->vblank, vblank_def,
+				 OV4689_VTS_MAX - mode->height,
+				 1, vblank_def);
+	ov4689->cur_fps = mode->max_fps;
 	return 0;
 }
 
 static int ov4689_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	struct ov4689 *ov4689 = to_ov4689(sd);
+	const struct ov4689_mode *mode = ov4689->cur_mode;
+	u32 val = 1 << (OV4689_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	if (mode->hdr_mode != NO_HDR)
+		val |= V4L2_MBUS_CSI2_CHANNEL_1;
+	if (mode->hdr_mode == HDR_X3)
+		val |= V4L2_MBUS_CSI2_CHANNEL_2;
 
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = OV4689_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -774,10 +863,10 @@ static void ov4689_get_module_inf(struct ov4689 *ov4689,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, OV4689_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, ov4689->module_name,
+	strlcpy(inf->base.sensor, OV4689_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, ov4689->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, ov4689->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, ov4689->len_name, sizeof(inf->base.lens));
 }
 
 static int ov4689_set_hdrae(struct ov4689 *ov4689,
@@ -855,13 +944,28 @@ static int ov4689_set_hdrae(struct ov4689 *ov4689,
 	return ret;
 }
 
+static int ov4689_get_channel_info(struct ov4689 *ov4689, struct rkmodule_channel_info *ch_info)
+{
+	if (ch_info->index < PAD0 || ch_info->index >= PAD_MAX)
+		return -EINVAL;
+	ch_info->vc = ov4689->cur_mode->vc[ch_info->index];
+	ch_info->width = ov4689->cur_mode->width;
+	ch_info->height = ov4689->cur_mode->height;
+	ch_info->bus_fmt = ov4689->cur_mode->bus_fmt;
+	return 0;
+}
+
 static long ov4689_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
 	struct ov4689 *ov4689 = to_ov4689(sd);
 	struct rkmodule_hdr_cfg *hdr;
+	struct rkmodule_channel_info *ch_info;
 	u32 i, h, w;
 	long ret = 0;
 	u32 stream = 0;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case RKMODULE_GET_MODULE_INFO:
@@ -874,22 +978,36 @@ static long ov4689_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		break;
 	case RKMODULE_SET_HDR_CFG:
 		hdr = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr->hdr_mode == ov4689->cur_mode->hdr_mode)
+			return 0;
 		w = ov4689->cur_mode->width;
 		h = ov4689->cur_mode->height;
+		dst_fps = DIV_ROUND_CLOSEST(ov4689->cur_mode->max_fps.denominator,
+			ov4689->cur_mode->max_fps.numerator);
 		for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
 			if (w == supported_modes[i].width &&
 			    h == supported_modes[i].height &&
-			    supported_modes[i].hdr_mode == hdr->hdr_mode) {
-				ov4689->cur_mode = &supported_modes[i];
-				break;
+			    supported_modes[i].hdr_mode == hdr->hdr_mode &&
+			    supported_modes[i].bus_fmt == ov4689->cur_mode->bus_fmt) {
+				cur_fps = DIV_ROUND_CLOSEST(supported_modes[i].max_fps.denominator,
+					supported_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == ARRAY_SIZE(supported_modes)) {
+		if (cur_best_fit == -1) {
 			dev_err(&ov4689->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			ov4689->cur_mode = &supported_modes[cur_best_fit];
 			dev_dbg(&ov4689->client->dev,
 				"set hdr mode:%d\n",
 				ov4689->cur_mode->hdr_mode);
@@ -898,6 +1016,7 @@ static long ov4689_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 			__v4l2_ctrl_modify_range(ov4689->hblank, w, w, 1, w);
 			__v4l2_ctrl_modify_range(ov4689->vblank, h,
 				OV4689_VTS_MAX - ov4689->cur_mode->height, 1, h);
+			ov4689->cur_fps = ov4689->cur_mode->max_fps;
 		}
 		break;
 	case PREISP_CMD_SET_HDRAE_EXP:
@@ -912,6 +1031,10 @@ static long ov4689_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		else
 			ret = ov4689_write_reg(ov4689->client, OV4689_REG_CTRL_MODE,
 				OV4689_REG_VALUE_08BIT, OV4689_MODE_SW_STANDBY);
+		break;
+	case RKMODULE_GET_CHANNEL_INFO:
+		ch_info = (struct rkmodule_channel_info *)arg;
+		ret = ov4689_get_channel_info(ov4689, ch_info);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -930,6 +1053,7 @@ static long ov4689_compat_ioctl32(struct v4l2_subdev *sd,
 	struct rkmodule_awb_cfg *cfg;
 	struct rkmodule_hdr_cfg *hdr;
 	struct preisp_hdrae_exp_s *hdrae;
+	struct rkmodule_channel_info *ch_info;
 	long ret;
 	u32 stream = 0;
 
@@ -998,6 +1122,21 @@ static long ov4689_compat_ioctl32(struct v4l2_subdev *sd,
 		ret = copy_from_user(&stream, up, sizeof(u32));
 		if (!ret)
 			ret = ov4689_ioctl(sd, cmd, &stream);
+		break;
+	case RKMODULE_GET_CHANNEL_INFO:
+		ch_info = kzalloc(sizeof(*ch_info), GFP_KERNEL);
+		if (!ch_info) {
+			ret = -ENOMEM;
+			return ret;
+		}
+
+		ret = ov4689_ioctl(sd, cmd, ch_info);
+		if (!ret) {
+			ret = copy_to_user(up, ch_info, sizeof(*ch_info));
+			if (ret)
+				return -EFAULT;
+		}
+		kfree(ch_info);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -1218,14 +1357,14 @@ static int ov4689_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct ov4689 *ov4689 = to_ov4689(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct ov4689_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&ov4689->mutex);
 	/* Initialize try_fmt */
 	try_fmt->width = def_mode->width;
 	try_fmt->height = def_mode->height;
-	try_fmt->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	try_fmt->code = def_mode->bus_fmt;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	mutex_unlock(&ov4689->mutex);
@@ -1236,13 +1375,13 @@ static int ov4689_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int ov4689_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	fie->code = MEDIA_BUS_FMT_SBGGR10_1X10;
+	fie->code = supported_modes[fie->index].bus_fmt;
 	fie->width = supported_modes[fie->index].width;
 	fie->height = supported_modes[fie->index].height;
 	fie->interval = supported_modes[fie->index].max_fps;
@@ -1272,6 +1411,7 @@ static const struct v4l2_subdev_core_ops ov4689_core_ops = {
 static const struct v4l2_subdev_video_ops ov4689_video_ops = {
 	.s_stream = ov4689_s_stream,
 	.g_frame_interval = ov4689_g_frame_interval,
+	.s_frame_interval = ov4689_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops ov4689_pad_ops = {
@@ -1288,6 +1428,14 @@ static const struct v4l2_subdev_ops ov4689_subdev_ops = {
 	.video	= &ov4689_video_ops,
 	.pad	= &ov4689_pad_ops,
 };
+
+static void ov4689_modify_fps_info(struct ov4689 *ov4689)
+{
+	const struct ov4689_mode *mode = ov4689->cur_mode;
+
+	ov4689->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      ov4689->cur_vts;
+}
 
 static int ov4689_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1335,6 +1483,7 @@ static int ov4689_set_ctrl(struct v4l2_ctrl *ctrl)
 				       OV4689_REG_VALUE_16BIT,
 				       ctrl->val + ov4689->cur_mode->height);
 		ov4689->cur_vts = ctrl->val + ov4689->cur_mode->height;
+		ov4689_modify_fps_info(ov4689);
 		dev_dbg(&client->dev, "%s set vts %d\n",
 			 __func__, ov4689->cur_vts);
 		break;
@@ -1577,7 +1726,7 @@ static int ov4689_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 ov4689->module_index, facing,
 		 OV4689_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1603,7 +1752,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void ov4689_remove(struct i2c_client *client)
+static int ov4689_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov4689 *ov4689 = to_ov4689(sd);
@@ -1619,6 +1768,8 @@ static void ov4689_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__ov4689_power_off(ov4689);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

@@ -11,10 +11,8 @@
 #ifndef DM_VERITY_H
 #define DM_VERITY_H
 
-#include <linux/dm-io.h>
 #include <linux/dm-bufio.h>
 #include <linux/device-mapper.h>
-#include <linux/interrupt.h>
 #include <crypto/hash.h>
 
 #define DM_VERITY_MAX_LEVELS		63
@@ -43,7 +41,7 @@ struct dm_verity {
 	u8 *root_digest;	/* digest of the root block */
 	u8 *salt;		/* salt: its size is salt_size */
 	u8 *zero_digest;	/* digest for a zero block */
-	unsigned int salt_size;
+	unsigned salt_size;
 	sector_t data_start;	/* data offset in 512-byte sectors */
 	sector_t hash_start;	/* hash start in blocks */
 	sector_t data_blocks;	/* the number of data blocks */
@@ -53,12 +51,11 @@ struct dm_verity {
 	unsigned char hash_per_block_bits;	/* log2(hashes in hash block) */
 	unsigned char levels;	/* the number of tree levels */
 	unsigned char version;
-	bool hash_failed:1;	/* set if hash of any block failed */
-	bool use_tasklet:1;	/* try to verify in tasklet before work-queue */
-	unsigned int digest_size;	/* digest size for the current hash algorithm */
+	unsigned digest_size;	/* digest size for the current hash algorithm */
 	unsigned int ahash_reqsize;/* the size of temporary space for crypto */
+	int hash_failed;	/* set to 1 if hash of any block failed */
 	enum verity_mode mode;	/* mode for handling verification errors */
-	unsigned int corrupted_errs;/* Number of errors for corrupted blocks */
+	unsigned corrupted_errs;/* Number of errors for corrupted blocks */
 
 	struct workqueue_struct *verify_wq;
 
@@ -69,9 +66,6 @@ struct dm_verity {
 	unsigned long *validated_blocks; /* bitset blocks validated */
 
 	char *signature_key_desc; /* signature keyring reference */
-
-	struct dm_io_client *io;
-	mempool_t recheck_pool;
 };
 
 struct dm_verity_io {
@@ -83,12 +77,9 @@ struct dm_verity_io {
 	struct bvec_iter iter;
 
 	sector_t block;
-	unsigned int n_blocks;
-	bool in_tasklet;
+	unsigned n_blocks;
 
 	struct work_struct work;
-
-	char *recheck_buffer;
 
 	/*
 	 * Three variably-size fields follow this struct:
@@ -127,14 +118,9 @@ extern int verity_for_bv_block(struct dm_verity *v, struct dm_verity_io *io,
 					      u8 *data, size_t len));
 
 extern int verity_hash(struct dm_verity *v, struct ahash_request *req,
-		       const u8 *data, size_t len, u8 *digest, bool may_sleep);
+		       const u8 *data, size_t len, u8 *digest);
 
 extern int verity_hash_for_block(struct dm_verity *v, struct dm_verity_io *io,
 				 sector_t block, u8 *digest, bool *is_zero);
-
-extern bool dm_is_verity_target(struct dm_target *ti);
-extern int dm_verity_get_mode(struct dm_target *ti);
-extern int dm_verity_get_root_digest(struct dm_target *ti, u8 **root_digest,
-				     unsigned int *digest_size);
 
 #endif /* DM_VERITY_H */

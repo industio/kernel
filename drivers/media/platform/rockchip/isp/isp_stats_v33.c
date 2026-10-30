@@ -187,7 +187,7 @@ rkisp_stats_update_buf(struct rkisp_isp_stats_vdev *stats_vdev)
 {
 	struct rkisp_device *dev = stats_vdev->dev;
 	struct rkisp_buffer *buf;
-	unsigned long flags = 0;
+	unsigned long flags;
 	u32 size = stats_vdev->vdev_fmt.fmt.meta.buffersize / dev->unite_div;
 	u32 val, addr = 0, offset = 0;
 	int i, ret = 0;
@@ -217,22 +217,22 @@ rkisp_stats_update_buf(struct rkisp_isp_stats_vdev *stats_vdev)
 		for (i = 0; i < dev->unite_div; i++) {
 			val = addr + i * size;
 
-			rkisp_idx_write(dev, ISP39_W3A_AEBIG_ADDR, val, i, false);
+			rkisp_idx_write(dev, ISP33_W3A_AEBIG_ADDR, val, i, false);
 
 			offset = sizeof(struct isp33_rawae_stat) +
 				 sizeof(struct isp33_rawhist_stat);
 			val += offset;
-			rkisp_idx_write(dev, ISP39_W3A_AE0_ADDR, val, i, false);
+			rkisp_idx_write(dev, ISP33_W3A_AE0_ADDR, val, i, false);
 
 			val += offset;
-			rkisp_idx_write(dev, ISP39_W3A_AWB_ADDR, val, i, false);
+			rkisp_idx_write(dev, ISP33_W3A_AWB_ADDR, val, i, false);
 		}
 		v4l2_dbg(4, rkisp_debug, &dev->v4l2_dev,
 			 "%s BASE:0x%x SHD AEBIG:0x%x AE0:0x%x AWB:0x%x\n",
 			 __func__, addr,
-			 isp3_stats_read(stats_vdev, ISP39_W3A_AEBIG_ADDR_SHD),
-			 isp3_stats_read(stats_vdev, ISP39_W3A_AE0_ADDR_SHD),
-			 isp3_stats_read(stats_vdev, ISP39_W3A_AWB_ADDR_SHD));
+			 isp3_stats_read(stats_vdev, ISP33_W3A_AEBIG_ADDR_SHD),
+			 isp3_stats_read(stats_vdev, ISP33_W3A_AE0_ADDR_SHD),
+			 isp3_stats_read(stats_vdev, ISP33_W3A_AWB_ADDR_SHD));
 	}
 	return ret;
 }
@@ -328,11 +328,11 @@ rkisp_stats_send_meas_v33(struct rkisp_isp_stats_vdev *stats_vdev,
 	u32 size = stats_vdev->vdev_fmt.fmt.meta.buffersize;
 	u32 val, w3a_int, cur_frame_id = meas_work->frame_id;
 	bool is_dummy = false;
-	unsigned long flags = 0;
+	unsigned long flags;
 
-	w3a_int = isp3_stats_read(stats_vdev, ISP39_W3A_INT_STAT);
+	w3a_int = isp3_stats_read(stats_vdev, ISP33_W3A_INT_STAT);
 	if (w3a_int)
-		isp3_stats_write(stats_vdev, ISP39_W3A_INT_STAT, w3a_int);
+		isp3_stats_write(stats_vdev, ISP33_W3A_INT_STAT, w3a_int);
 
 	if (!stats_vdev->rdbk_drop) {
 		if (!cur_buf && stats_vdev->stats_buf[0].mem_priv) {
@@ -372,7 +372,7 @@ rkisp_stats_send_meas_v33(struct rkisp_isp_stats_vdev *stats_vdev,
 		cur_buf = NULL;
 	}
 
-	if (w3a_int & ISP39_W3A_INT_ERR_MASK) {
+	if (w3a_int & ISP33_W3A_INT_ERR_MASK) {
 		val = isp3_stats_read(stats_vdev, ISP3X_RAWAE_BIG1_BASE);
 		if (val & ISP33_3A_MEAS_DONE)
 			isp3_module_done(stats_vdev, ISP3X_RAWAE_BIG1_BASE, val);
@@ -396,11 +396,11 @@ rkisp_stats_send_meas_v33(struct rkisp_isp_stats_vdev *stats_vdev,
 		v4l2_warn(&dev->v4l2_dev,
 			  "id:%d stats seq:%d error:0x%x overflow(aebig:%d ae0:%d awb:%d wcfifo(wr:%d rd:%d))\n",
 			  dev->unite_index, cur_frame_id, w3a_int,
-			  !!(w3a_int & ISP39_W3A_INT_AEBIG_OVF),
-			  !!(w3a_int & ISP39_W3A_INT_AE0_OVF),
-			  !!(w3a_int & ISP39_W3A_INT_AWB_OVF),
-			  !!(w3a_int & ISP39_W3A_INT_WCFIFO_WR_ERR),
-			  !!(w3a_int & ISP39_W3A_INT_WCFIFO_RD_ERR));
+			  !!(w3a_int & ISP33_W3A_INT_AEBIG_OVF),
+			  !!(w3a_int & ISP33_W3A_INT_AE0_OVF),
+			  !!(w3a_int & ISP33_W3A_INT_AWB_OVF),
+			  !!(w3a_int & ISP33_W3A_INT_WCFIFO_WR_ERR),
+			  !!(w3a_int & ISP33_W3A_INT_WCFIFO_RD_ERR));
 	} else {
 		if (meas_work->isp3a_ris & ISP3X_3A_RAWAWB && cur_stat_buf)
 			cur_stat_buf->meas_type |= ISP33_STAT_RAWAWB;
@@ -530,9 +530,9 @@ void rkisp_stats_first_ddr_config_v33(struct rkisp_isp_stats_vdev *stats_vdev)
 		return;
 	}
 	rkisp_unite_set_bits(dev, ISP3X_SWS_CFG, 0, ISP3X_3A_DDR_WRITE_EN, false);
-	val = ISP39_W3A_EN | ISP39_W3A_AUTO_CLR_EN | ISP39_W3A_FORCE_UPD;
-	rkisp_unite_write(dev, ISP39_W3A_CTRL0, val, false);
-	rkisp_unite_write(dev, ISP39_W3A_WR_SIZE, size / div, false);
+	val = ISP33_W3A_EN | ISP33_W3A_AUTO_CLR_EN | ISP33_W3A_FORCE_UPD;
+	rkisp_unite_write(dev, ISP33_W3A_CTRL0, val, false);
+	rkisp_unite_write(dev, ISP33_W3A_WR_SIZE, size / div, false);
 	if (stats_vdev->nxt_buf) {
 		stats_vdev->cur_buf = stats_vdev->nxt_buf;
 		stats_vdev->nxt_buf = NULL;

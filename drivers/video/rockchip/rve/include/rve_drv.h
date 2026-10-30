@@ -17,7 +17,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/fb.h>
-#include <linux/fdtable.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
@@ -50,6 +49,7 @@
 
 #include <linux/iommu.h>
 #include <linux/iova.h>
+#include <linux/dma-iommu.h>
 #include <linux/dma-map-ops.h>
 #include <linux/hrtimer.h>
 
@@ -72,7 +72,7 @@
 
 #define DRIVER_MAJOR_VERSION		1
 #define DRIVER_MINOR_VERSION		0
-#define DRIVER_REVISION_VERSION		5
+#define DRIVER_REVISION_VERSION		7
 
 #define DRIVER_VERSION (STR(DRIVER_MAJOR_VERSION) "." STR(DRIVER_MINOR_VERSION) \
 			"." STR(DRIVER_REVISION_VERSION))

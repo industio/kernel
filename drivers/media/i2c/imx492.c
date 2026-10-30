@@ -172,9 +172,10 @@ struct imx492 {
 	enum rkmodule_sync_mode	sync_mode;
 	struct preisp_hdrae_exp_s init_hdrae_exp;
 	bool			isHCG;
+	struct v4l2_fract	cur_fps;
 };
 
-#define to_IMX492(sd) container_of(sd, struct imx492, subdev)
+#define to_imx492(sd) container_of(sd, struct imx492, subdev)
 
 static const struct regval imx492_linear_12bit_8192x4320_4lane_mode1_regs[] = {
 	{0x3033, 0x30},
@@ -683,7 +684,7 @@ static const struct imx492_mode supported_modes[] = {
 		.mclk = 24000000,
 		.reg_list = imx492_linear_12bit_8192x4320_4lane_mode1_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
 		.bus_fmt = MEDIA_BUS_FMT_SRGGB10_1X10,
@@ -701,8 +702,13 @@ static const struct imx492_mode supported_modes[] = {
 		.mclk = 24000000,
 		.reg_list = imx492_linear_10bit_8192x4320_4lane_mode2_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SRGGB12_1X12,
+	MEDIA_BUS_FMT_SRGGB10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -821,10 +827,10 @@ imx492_find_best_fit(struct imx492 *imx492, struct v4l2_subdev_format *fmt)
 }
 
 static int imx492_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	const struct imx492_mode *mode;
 	s64 h_blank, vblank_def;
 	u64 pixel_rate = 0;
@@ -838,7 +844,7 @@ static int imx492_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&imx492->mutex);
 		return -ENOTTY;
@@ -857,6 +863,7 @@ static int imx492_set_fmt(struct v4l2_subdev *sd,
 				mode->bpp * 2 * 4;
 		__v4l2_ctrl_s_ctrl_int64(imx492->pixel_rate, pixel_rate);
 		__v4l2_ctrl_s_ctrl(imx492->link_freq, mode->mipi_freq_idx);
+		imx492->cur_fps = mode->max_fps;
 	}
 
 	mutex_unlock(&imx492->mutex);
@@ -865,16 +872,16 @@ static int imx492_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int imx492_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	const struct imx492_mode *mode = imx492->cur_mode;
 
 	mutex_lock(&imx492->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&imx492->mutex);
 		return -ENOTTY;
@@ -895,23 +902,21 @@ static int imx492_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int imx492_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = imx492->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int imx492_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	if (fse->index >= imx492->cfg_num)
 		return -EINVAL;
@@ -930,22 +935,114 @@ static int imx492_enum_frame_sizes(struct v4l2_subdev *sd,
 static int imx492_g_frame_interval(struct v4l2_subdev *sd,
 				   struct v4l2_subdev_frame_interval *fi)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	const struct imx492_mode *mode = imx492->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (imx492->streaming)
+		fi->interval = imx492->cur_fps;
+	else
+		fi->interval = mode->max_fps;
 
+	return 0;
+}
+
+static const struct imx492_mode *imx492_find_mode(struct imx492 *imx492, int fps)
+{
+	const struct imx492_mode *mode = NULL;
+	const struct imx492_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < imx492->cfg_num; i++) {
+		mode = &imx492->support_modes[i];
+		if (mode->width == imx492->cur_mode->width &&
+		    mode->height == imx492->cur_mode->height &&
+		    mode->bus_fmt == imx492->cur_mode->bus_fmt &&
+		    mode->hdr_mode == imx492->cur_mode->hdr_mode) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int imx492_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct imx492 *imx492 = to_imx492(sd);
+	const struct imx492_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	u64 pixel_rate = 0;
+	u32 lane_num = imx492->bus_cfg.bus.mipi_csi2.num_data_lanes;
+	int fps;
+
+	if (imx492->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = imx492_find_mode(imx492, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	imx492->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(imx492->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(imx492->vblank, vblank_def,
+				 IMX492_VTS_MAX - mode->height,
+				 1, vblank_def);
+	pixel_rate = (u32)link_freq_menu_items[mode->mipi_freq_idx] / mode->bpp * 2 * lane_num;
+
+	__v4l2_ctrl_s_ctrl_int64(imx492->pixel_rate,
+				 pixel_rate);
+	__v4l2_ctrl_s_ctrl(imx492->link_freq,
+			   mode->mipi_freq_idx);
+	imx492->cur_fps = mode->max_fps;
 	return 0;
 }
 
 static int imx492_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
+	const struct imx492_mode *mode = imx492->cur_mode;
+	u32 val = 0;
 	u32 lane_num = imx492->bus_cfg.bus.mipi_csi2.num_data_lanes;
 
+	if (mode->hdr_mode == NO_HDR) {
+		val = 1 << (lane_num - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+	}
+	if (mode->hdr_mode == HDR_X2)
+		val = 1 << (lane_num - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK |
+		V4L2_MBUS_CSI2_CHANNEL_1;
+	if (mode->hdr_mode == HDR_X3)
+		val = 1 << (lane_num - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK |
+		V4L2_MBUS_CSI2_CHANNEL_1 |
+		V4L2_MBUS_CSI2_CHANNEL_2;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = lane_num;
+	config->flags = val;
 
 	return 0;
 }
@@ -974,7 +1071,7 @@ static int imx492_get_channel_info(struct imx492 *imx492,
 
 static long imx492_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	struct rkmodule_hdr_cfg *hdr;
 	struct rkmodule_channel_info *ch_info;
 	u32 i, h, w, stream;
@@ -1000,6 +1097,7 @@ static long imx492_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		for (i = 0; i < imx492->cfg_num; i++) {
 			if (w == imx492->support_modes[i].width &&
 			    h == imx492->support_modes[i].height &&
+			    imx492->support_modes[i].bus_fmt == imx492->cur_mode->bus_fmt &&
 			    imx492->support_modes[i].hdr_mode == hdr->hdr_mode) {
 				imx492->cur_mode = &imx492->support_modes[i];
 				break;
@@ -1025,6 +1123,7 @@ static long imx492_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 						 pixel_rate);
 			__v4l2_ctrl_s_ctrl(imx492->link_freq,
 					   imx492->cur_mode->mipi_freq_idx);
+			imx492->cur_fps = imx492->cur_mode->max_fps;
 		}
 		break;
 	case RKMODULE_SET_QUICK_STREAM:
@@ -1244,7 +1343,7 @@ static int __imx492_stop_stream(struct imx492 *imx492)
 
 static int imx492_s_stream(struct v4l2_subdev *sd, int on)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	struct i2c_client *client = imx492->client;
 	int ret = 0;
 
@@ -1281,7 +1380,7 @@ unlock_and_return:
 
 static int imx492_s_power(struct v4l2_subdev *sd, int on)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	struct i2c_client *client = imx492->client;
 	int ret = 0;
 
@@ -1378,7 +1477,7 @@ static int imx492_runtime_resume(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	return __imx492_power_on(imx492);
 }
@@ -1387,7 +1486,7 @@ static int imx492_runtime_suspend(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	__imx492_power_off(imx492);
 
@@ -1397,9 +1496,9 @@ static int imx492_runtime_suspend(struct device *dev)
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
 static int imx492_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct imx492_mode *def_mode = &imx492->support_modes[0];
 
 	mutex_lock(&imx492->mutex);
@@ -1417,10 +1516,10 @@ static int imx492_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int imx492_enum_frame_interval(struct v4l2_subdev *sd,
-	struct v4l2_subdev_state *sd_state,
+	struct v4l2_subdev_pad_config *cfg,
 	struct v4l2_subdev_frame_interval_enum *fie)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	if (fie->index >= imx492->cfg_num)
 		return -EINVAL;
@@ -1450,10 +1549,10 @@ static int imx492_enum_frame_interval(struct v4l2_subdev *sd,
  * to the alignment rules.
  */
 static int imx492_get_selection(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
+				struct v4l2_subdev_pad_config *cfg,
 				struct v4l2_subdev_selection *sel)
 {
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	if (sel->target == V4L2_SEL_TGT_CROP_BOUNDS) {
 		sel->r.left = 168;// CROP_START(imx492->cur_mode->width, DST_WIDTH_8192);
@@ -1488,6 +1587,7 @@ static const struct v4l2_subdev_core_ops imx492_core_ops = {
 static const struct v4l2_subdev_video_ops imx492_video_ops = {
 	.s_stream = imx492_s_stream,
 	.g_frame_interval = imx492_g_frame_interval,
+	.s_frame_interval = imx492_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops imx492_pad_ops = {
@@ -1506,6 +1606,13 @@ static const struct v4l2_subdev_ops imx492_subdev_ops = {
 	.pad	= &imx492_pad_ops,
 };
 
+static void imx492_modify_fps_info(struct imx492 *imx492)
+{
+	const struct imx492_mode *mode = imx492->cur_mode;
+
+	imx492->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      imx492->cur_vts;
+}
 
 static int imx492_set_ctrl(struct v4l2_ctrl *ctrl)
 {
@@ -1611,7 +1718,7 @@ static int imx492_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret |= imx492_write_reg(imx492->client, IMX492_VTS_REG_H,
 					IMX492_REG_VALUE_08BIT,
 					IMX492_FETCH_VTS_H(vts));
-
+		imx492_modify_fps_info(imx492);
 		dev_info(&client->dev, "set vts 0x%x\n",
 			vts);
 		break;
@@ -1886,7 +1993,7 @@ static int imx492_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 			 imx492->module_index, facing,
 			 IMX492_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1912,10 +2019,10 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void imx492_remove(struct i2c_client *client)
+static int imx492_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct imx492 *imx492 = to_IMX492(sd);
+	struct imx492 *imx492 = to_imx492(sd);
 
 	v4l2_async_unregister_subdev(sd);
 #if defined(CONFIG_MEDIA_CONTROLLER)
@@ -1928,6 +2035,8 @@ static void imx492_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__imx492_power_off(imx492);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

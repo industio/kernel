@@ -134,20 +134,16 @@
 };
 
 &emac {
-	phy = <&phy0>;
-	phy-reset-duration = <10>; /* millisecond */
-	phy-reset-gpios = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>; /* PHY_RST */
 	pinctrl-names = "default";
 	pinctrl-0 = <&emac_xfer>, <&emac_mdio>;
+	phy = <&phy0>;
+	phy-reset-gpios = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>; /* PHY_RST */
+	phy-reset-duration = <10>; /* millisecond */
+
 	status = "okay";
 
-	mdio {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		phy0: ethernet-phy@0 {
-			reg = <0>;
-		};
+	phy0: ethernet-phy@0 {
+		reg = <0>;
 	};
 };
 
@@ -367,8 +363,8 @@
 &i2c2 {
 	status = "okay";
 
-	rt5616: audio-codec@1b {
-		compatible = "realtek,rt5616";
+	rt5616: rt5616@1b {
+		compatible = "rt5616";
 		reg = <0x1b>;
 		clocks = <&cru SCLK_I2S_OUT>;
 		clock-names = "mclk";

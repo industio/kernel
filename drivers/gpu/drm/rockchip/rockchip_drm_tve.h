@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author:
  *      algea cao <algea.cao@rock-chips.com>
  *

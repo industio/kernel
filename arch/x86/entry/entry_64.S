@@ -86,7 +86,6 @@
 
 SYM_CODE_START(entry_SYSCALL_64)
 	UNWIND_HINT_ENTRY
-	ENDBR
 
 	swapgs
 	/* tss.sp2 is scratch space. */
@@ -95,7 +94,6 @@ SYM_CODE_START(entry_SYSCALL_64)
 	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
 
 SYM_INNER_LABEL(entry_SYSCALL_64_safe_stack, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
 
 	/* Construct struct pt_regs on stack */
 	pushq	$__USER_DS				/* pt_regs->ss */
@@ -109,14 +107,12 @@ SYM_INNER_LABEL(entry_SYSCALL_64_after_hwframe, SYM_L_GLOBAL)
 	PUSH_AND_CLEAR_REGS rax=$-ENOSYS
 
 	/* IRQs are off. */
-	movq	%rsp, %rdi
-	/* Sign extend the lower 32bit as syscall numbers are treated as int */
-	movslq	%eax, %rsi
+	movq	%rax, %rdi
+	movq	%rsp, %rsi
 
 	/* clobbers %rax, make sure it is after saving the syscall nr */
 	IBRS_ENTER
 	UNTRAIN_RET
-	CLEAR_BRANCH_HISTORY
 
 	call	do_syscall_64		/* returns with IRQs disabled */
 
@@ -167,9 +163,22 @@ SYM_INNER_LABEL(entry_SYSCALL_64_after_hwframe, SYM_L_GLOBAL)
 	jne	swapgs_restore_regs_and_return_to_usermode
 
 	/*
-	 * SYSRET cannot restore RF.  It can restore TF, but unlike IRET,
-	 * restoring TF results in a trap from userspace immediately after
-	 * SYSRET.
+	 * SYSCALL clears RF when it saves RFLAGS in R11 and SYSRET cannot
+	 * restore RF properly. If the slowpath sets it for whatever reason, we
+	 * need to restore it correctly.
+	 *
+	 * SYSRET can restore TF, but unlike IRET, restoring TF results in a
+	 * trap from userspace immediately after SYSRET.  This would cause an
+	 * infinite loop whenever #DB happens with register state that satisfies
+	 * the opportunistic SYSRET conditions.  For example, single-stepping
+	 * this user code:
+	 *
+	 *           movq	$stuck_here, %rcx
+	 *           pushfq
+	 *           popq %r11
+	 *   stuck_here:
+	 *
+	 * would never get past 'stuck_here'.
 	 */
 	testq	$(X86_EFLAGS_RF|X86_EFLAGS_TF), %r11
 	jnz	swapgs_restore_regs_and_return_to_usermode
@@ -208,14 +217,9 @@ syscall_return_via_sysret:
 
 	popq	%rdi
 	popq	%rsp
-SYM_INNER_LABEL(entry_SYSRETQ_unsafe_stack, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
 	swapgs
 	CLEAR_CPU_BUFFERS
 	sysretq
-SYM_INNER_LABEL(entry_SYSRETQ_end, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
-	int3
 SYM_CODE_END(entry_SYSCALL_64)
 
 /*
@@ -275,7 +279,6 @@ SYM_FUNC_END(__switch_to_asm)
 .pushsection .text, "ax"
 SYM_CODE_START(ret_from_fork)
 	UNWIND_HINT_EMPTY
-	ANNOTATE_NOENDBR // copy_thread
 	movq	%rax, %rdi
 	call	schedule_tail			/* rdi: 'prev' task parameter */
 
@@ -306,7 +309,7 @@ SYM_CODE_END(ret_from_fork)
 .macro DEBUG_ENTRY_ASSERT_IRQS_OFF
 #ifdef CONFIG_DEBUG_ENTRY
 	pushq %rax
-	SAVE_FLAGS
+	SAVE_FLAGS(CLBR_RAX)
 	testl $X86_EFLAGS_IF, %eax
 	jz .Lokay_\@
 	ud2
@@ -315,14 +318,6 @@ SYM_CODE_END(ret_from_fork)
 #endif
 .endm
 
-SYM_CODE_START_LOCAL(xen_error_entry)
-	UNWIND_HINT_FUNC
-	PUSH_AND_CLEAR_REGS save_ret=1
-	ENCODE_FRAME_POINTER 8
-	UNTRAIN_RET
-	RET
-SYM_CODE_END(xen_error_entry)
-
 /**
  * idtentry_body - Macro to emit code calling the C function
  * @cfunc:		C function to be called
@@ -330,18 +325,7 @@ SYM_CODE_END(xen_error_entry)
  */
 .macro idtentry_body cfunc has_error_code:req
 
-	/*
-	 * Call error_entry() and switch to the task stack if from userspace.
-	 *
-	 * When in XENPV, it is already in the task stack, and it can't fault
-	 * for native_iret() nor native_load_gs_index() since XENPV uses its
-	 * own pvops for IRET and load_gs_index().  And it doesn't need to
-	 * switch the CR3.  So it can skip invoking error_entry().
-	 */
-	ALTERNATIVE "call error_entry; movq %rax, %rsp", \
-		    "call xen_error_entry", X86_FEATURE_XENPV
-
-	ENCODE_FRAME_POINTER
+	call	error_entry
 	UNWIND_HINT_REGS
 
 	movq	%rsp, %rdi			/* pt_regs pointer into 1st argument*/
@@ -352,9 +336,6 @@ SYM_CODE_END(xen_error_entry)
 	.endif
 
 	call	\cfunc
-
-	/* For some configurations \cfunc ends up being a noreturn. */
-	REACHABLE
 
 	jmp	error_return
 .endm
@@ -372,9 +353,7 @@ SYM_CODE_END(xen_error_entry)
 .macro idtentry vector asmsym cfunc has_error_code:req
 SYM_CODE_START(\asmsym)
 	UNWIND_HINT_IRET_REGS offset=\has_error_code*8
-	ENDBR
 	ASM_CLAC
-	cld
 
 	.if \has_error_code == 0
 		pushq	$-1			/* ORIG_RAX: no syscall to restart */
@@ -441,9 +420,7 @@ SYM_CODE_END(\asmsym)
 .macro idtentry_mce_db vector asmsym cfunc
 SYM_CODE_START(\asmsym)
 	UNWIND_HINT_IRET_REGS
-	ENDBR
 	ASM_CLAC
-	cld
 
 	pushq	$-1			/* ORIG_RAX: no syscall to restart */
 
@@ -498,9 +475,7 @@ SYM_CODE_END(\asmsym)
 .macro idtentry_vc vector asmsym cfunc
 SYM_CODE_START(\asmsym)
 	UNWIND_HINT_IRET_REGS
-	ENDBR
 	ASM_CLAC
-	cld
 
 	/*
 	 * If the entry is from userspace, switch stacks and treat it as
@@ -541,7 +516,7 @@ SYM_CODE_START(\asmsym)
 	/*
 	 * No need to switch back to the IST stack. The current stack is either
 	 * identical to the stack in the IRET frame or the VC fall-back stack,
-	 * so it is definitely mapped even with PTI enabled.
+	 * so it is definitly mapped even with PTI enabled.
 	 */
 	jmp	paranoid_exit
 
@@ -562,9 +537,7 @@ SYM_CODE_END(\asmsym)
 .macro idtentry_df vector asmsym cfunc
 SYM_CODE_START(\asmsym)
 	UNWIND_HINT_IRET_REGS offset=8
-	ENDBR
 	ASM_CLAC
-	cld
 
 	/* paranoid_entry returns GS information for paranoid_exit in EBX. */
 	call	paranoid_entry
@@ -574,9 +547,6 @@ SYM_CODE_START(\asmsym)
 	movq	ORIG_RAX(%rsp), %rsi	/* get error code into 2nd argument*/
 	movq	$-1, ORIG_RAX(%rsp)	/* no syscall to restart */
 	call	\cfunc
-
-	/* For some configurations \cfunc ends up being a noreturn. */
-	REACHABLE
 
 	jmp	paranoid_exit
 
@@ -598,7 +568,6 @@ __irqentry_text_start:
 	.align 16
 	.globl __irqentry_text_end
 __irqentry_text_end:
-	ANNOTATE_NOENDBR
 
 SYM_CODE_START_LOCAL(common_interrupt_return)
 SYM_INNER_LABEL(swapgs_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
@@ -644,9 +613,9 @@ SYM_INNER_LABEL(swapgs_restore_regs_and_return_to_usermode, SYM_L_GLOBAL)
 
 	/* Restore RDI. */
 	popq	%rdi
-	swapgs
+	SWAPGS
 	CLEAR_CPU_BUFFERS
-	jmp	.Lnative_iret
+	INTERRUPT_RETURN
 
 
 SYM_INNER_LABEL(restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
@@ -663,14 +632,9 @@ SYM_INNER_LABEL(restore_regs_and_return_to_kernel, SYM_L_GLOBAL)
 	 * ARCH_HAS_MEMBARRIER_SYNC_CORE rely on IRET core serialization
 	 * when returning from IPI handler.
 	 */
-#ifdef CONFIG_XEN_PV
-SYM_INNER_LABEL(early_xen_iret_patch, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR
-	.byte 0xe9
-	.long .Lnative_iret - (. + 4)
-#endif
+	INTERRUPT_RETURN
 
-.Lnative_iret:
+SYM_INNER_LABEL_ALIGN(native_iret, SYM_L_GLOBAL)
 	UNWIND_HINT_IRET_REGS
 	/*
 	 * Are we returning to a stack segment from the LDT?  Note: in
@@ -682,7 +646,6 @@ SYM_INNER_LABEL(early_xen_iret_patch, SYM_L_GLOBAL)
 #endif
 
 SYM_INNER_LABEL(native_irq_return_iret, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR // exc_double_fault
 	/*
 	 * This may fault.  Non-paranoid faults on return to userspace are
 	 * handled by fixup_bad_iret.  These include #SS, #GP, and #NP.
@@ -717,6 +680,7 @@ native_irq_return_ldt:
 	pushq	%rdi				/* Stash user RDI */
 	swapgs					/* to kernel GS */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdi	/* to kernel CR3 */
+	UNTRAIN_RET
 
 	movq	PER_CPU_VAR(espfix_waddr), %rdi
 	movq	%rax, (0*8)(%rdi)		/* user RAX */
@@ -779,15 +743,18 @@ SYM_FUNC_START(asm_load_gs_index)
 	FRAME_BEGIN
 	swapgs
 .Lgs_change:
-	ANNOTATE_NOENDBR // error_entry
 	movl	%edi, %gs
 2:	ALTERNATIVE "", "mfence", X86_BUG_SWAPGS_FENCE
 	swapgs
 	FRAME_END
 	RET
+SYM_FUNC_END(asm_load_gs_index)
+EXPORT_SYMBOL(asm_load_gs_index)
 
+	_ASM_EXTABLE(.Lgs_change, .Lbad_gs)
+	.section .fixup, "ax"
 	/* running with kernelgs */
-.Lbad_gs:
+SYM_CODE_START_LOCAL_NOALIGN(.Lbad_gs)
 	swapgs					/* switch back to user gs */
 .macro ZAP_GS
 	/* This can't be a string because the preprocessor needs to see it. */
@@ -798,11 +765,49 @@ SYM_FUNC_START(asm_load_gs_index)
 	xorl	%eax, %eax
 	movl	%eax, %gs
 	jmp	2b
+SYM_CODE_END(.Lbad_gs)
+	.previous
 
-	_ASM_EXTABLE(.Lgs_change, .Lbad_gs)
+/*
+ * rdi: New stack pointer points to the top word of the stack
+ * rsi: Function pointer
+ * rdx: Function argument (can be NULL if none)
+ */
+SYM_FUNC_START(asm_call_on_stack)
+SYM_INNER_LABEL(asm_call_sysvec_on_stack, SYM_L_GLOBAL)
+SYM_INNER_LABEL(asm_call_irq_on_stack, SYM_L_GLOBAL)
+	/*
+	 * Save the frame pointer unconditionally. This allows the ORC
+	 * unwinder to handle the stack switch.
+	 */
+	pushq		%rbp
+	mov		%rsp, %rbp
 
-SYM_FUNC_END(asm_load_gs_index)
-EXPORT_SYMBOL(asm_load_gs_index)
+	/*
+	 * The unwinder relies on the word at the top of the new stack
+	 * page linking back to the previous RSP.
+	 */
+	mov		%rsp, (%rdi)
+	mov		%rdi, %rsp
+	/* Move the argument to the right place */
+	mov		%rdx, %rdi
+
+1:
+	.pushsection .discard.instr_begin
+	.long 1b - .
+	.popsection
+
+	CALL_NOSPEC	rsi
+
+2:
+	.pushsection .discard.instr_end
+	.long 2b - .
+	.popsection
+
+	/* Restore the previous stack pointer from RBP. */
+	leaveq
+	RET
+SYM_FUNC_END(asm_call_on_stack)
 
 #ifdef CONFIG_XEN_PV
 /*
@@ -850,7 +855,6 @@ SYM_CODE_END(exc_xen_hypervisor_callback)
  */
 SYM_CODE_START(xen_failsafe_callback)
 	UNWIND_HINT_EMPTY
-	ENDBR
 	movl	%ds, %ecx
 	cmpw	%cx, 0x10(%rsp)
 	jne	1f
@@ -897,6 +901,7 @@ SYM_CODE_END(xen_failsafe_callback)
  */
 SYM_CODE_START_LOCAL(paranoid_entry)
 	UNWIND_HINT_FUNC
+	cld
 	PUSH_AND_CLEAR_REGS save_ret=1
 	ENCODE_FRAME_POINTER 8
 
@@ -1028,14 +1033,13 @@ SYM_CODE_START_LOCAL(paranoid_exit)
 SYM_CODE_END(paranoid_exit)
 
 /*
- * Switch GS and CR3 if needed.
+ * Save all registers in pt_regs, and switch GS if needed.
  */
 SYM_CODE_START_LOCAL(error_entry)
 	UNWIND_HINT_FUNC
-
+	cld
 	PUSH_AND_CLEAR_REGS save_ret=1
 	ENCODE_FRAME_POINTER 8
-
 	testb	$3, CS+8(%rsp)
 	jz	.Lerror_kernelspace
 
@@ -1043,18 +1047,22 @@ SYM_CODE_START_LOCAL(error_entry)
 	 * We entered from user mode or we're pretending to have entered
 	 * from user mode due to an IRET fault.
 	 */
-	swapgs
+	SWAPGS
 	FENCE_SWAPGS_USER_ENTRY
 	/* We have user CR3.  Change to kernel CR3. */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
 	IBRS_ENTER
 	UNTRAIN_RET
 
-	leaq	8(%rsp), %rdi			/* arg0 = pt_regs pointer */
 .Lerror_entry_from_usermode_after_swapgs:
 
 	/* Put us onto the real thread stack. */
+	popq	%r12				/* save return addr in %12 */
+	movq	%rsp, %rdi			/* arg0 = pt_regs pointer */
 	call	sync_regs
+	movq	%rax, %rsp			/* switch stack */
+	ENCODE_FRAME_POINTER
+	pushq	%r12
 	RET
 
 	/*
@@ -1078,7 +1086,7 @@ SYM_CODE_START_LOCAL(error_entry)
 	 * gsbase and proceed.  We'll fix up the exception and land in
 	 * .Lgs_change's error handler with kernel gsbase.
 	 */
-	swapgs
+	SWAPGS
 
 	/*
 	 * Issue an LFENCE to prevent GS speculation, regardless of whether it is a
@@ -1086,7 +1094,6 @@ SYM_CODE_START_LOCAL(error_entry)
 	 */
 .Lerror_entry_done_lfence:
 	FENCE_SWAPGS_KERNEL_ENTRY
-	leaq	8(%rsp), %rax			/* return pt_regs pointer */
 	ANNOTATE_UNRET_END
 	RET
 
@@ -1100,7 +1107,7 @@ SYM_CODE_START_LOCAL(error_entry)
 	 * We came from an IRET to user mode, so we have user
 	 * gsbase and CR3.  Switch to kernel gsbase and CR3:
 	 */
-	swapgs
+	SWAPGS
 	FENCE_SWAPGS_USER_ENTRY
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
 	IBRS_ENTER
@@ -1110,9 +1117,9 @@ SYM_CODE_START_LOCAL(error_entry)
 	 * Pretend that the exception came from user mode: set up pt_regs
 	 * as if we faulted immediately after IRET.
 	 */
-	leaq	8(%rsp), %rdi			/* arg0 = pt_regs pointer */
+	mov	%rsp, %rdi
 	call	fixup_bad_iret
-	mov	%rax, %rdi
+	mov	%rax, %rsp
 	jmp	.Lerror_entry_from_usermode_after_swapgs
 SYM_CODE_END(error_entry)
 
@@ -1134,7 +1141,6 @@ SYM_CODE_END(error_return)
  */
 SYM_CODE_START(asm_exc_nmi)
 	UNWIND_HINT_IRET_REGS
-	ENDBR
 
 	/*
 	 * We allow breakpoints in NMIs. If a breakpoint occurs, then
@@ -1175,7 +1181,6 @@ SYM_CODE_START(asm_exc_nmi)
 	 */
 
 	ASM_CLAC
-	cld
 
 	/* Use %rdx as our temp variable throughout */
 	pushq	%rdx
@@ -1195,6 +1200,7 @@ SYM_CODE_START(asm_exc_nmi)
 	 */
 
 	swapgs
+	cld
 	FENCE_SWAPGS_USER_ENTRY
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdx
 	movq	%rsp, %rdx
@@ -1385,7 +1391,6 @@ first_nmi:
 #endif
 
 repeat_nmi:
-	ANNOTATE_NOENDBR // this code
 	/*
 	 * If there was a nested NMI, the first NMI's iret will return
 	 * here. But NMIs are still enabled and we can take another
@@ -1414,7 +1419,6 @@ repeat_nmi:
 	.endr
 	subq	$(5*8), %rsp
 end_repeat_nmi:
-	ANNOTATE_NOENDBR // this code
 
 	/*
 	 * Everything below this point can be preempted by a nested NMI.
@@ -1507,7 +1511,6 @@ SYM_CODE_END(asm_exc_nmi)
  */
 SYM_CODE_START(ignore_sysret)
 	UNWIND_HINT_EMPTY
-	ENDBR
 	mov	$-ENOSYS, %eax
 	CLEAR_CPU_BUFFERS
 	sysretl
@@ -1527,63 +1530,3 @@ SYM_CODE_START(rewind_stack_and_make_dead)
 	call	make_task_dead
 SYM_CODE_END(rewind_stack_and_make_dead)
 .popsection
-
-/*
- * This sequence executes branches in order to remove user branch information
- * from the branch history tracker in the Branch Predictor, therefore removing
- * user influence on subsequent BTB lookups.
- *
- * It should be used on parts prior to Alder Lake. Newer parts should use the
- * BHI_DIS_S hardware control instead. If a pre-Alder Lake part is being
- * virtualized on newer hardware the VMM should protect against BHI attacks by
- * setting BHI_DIS_S for the guests.
- *
- * CALLs/RETs are necessary to prevent Loop Stream Detector(LSD) from engaging
- * and not clearing the branch history. The call tree looks like:
- *
- * call 1
- *    call 2
- *      call 2
- *        call 2
- *          call 2
- * 	      call 2
- * 	      ret
- * 	    ret
- *        ret
- *      ret
- *    ret
- * ret
- *
- * This means that the stack is non-constant and ORC can't unwind it with %rsp
- * alone.  Therefore we unconditionally set up the frame pointer, which allows
- * ORC to unwind properly.
- *
- * The alignment is for performance and not for safety, and may be safely
- * refactored in the future if needed.
- */
-SYM_FUNC_START(clear_bhb_loop)
-	push	%rbp
-	mov	%rsp, %rbp
-	movl	$5, %ecx
-	ANNOTATE_INTRA_FUNCTION_CALL
-	call	1f
-	jmp	5f
-	.align 64, 0xcc
-	ANNOTATE_INTRA_FUNCTION_CALL
-1:	call	2f
-	RET
-	.align 64, 0xcc
-2:	movl	$5, %eax
-3:	jmp	4f
-	nop
-4:	sub	$1, %eax
-	jnz	3b
-	sub	$1, %ecx
-	jnz	1b
-	RET
-5:	lfence
-	pop	%rbp
-	RET
-SYM_FUNC_END(clear_bhb_loop)
-EXPORT_SYMBOL_GPL(clear_bhb_loop)
-STACK_FRAME_NON_STANDARD(clear_bhb_loop)

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-/*
+/* -*- mode: c; c-basic-offset: 8; -*-
+ * vim: noexpandtab sw=8 ts=8 sts=0:
+ *
  * dir.c
  *
  * Creates, reads, walks and deletes directory-nodes
@@ -1966,7 +1968,7 @@ bail_nolock:
 }
 
 /*
- * NOTE: this should always be called with parent dir i_rwsem taken.
+ * NOTE: this should always be called with parent dir i_mutex taken.
  */
 int ocfs2_find_files_on_disk(const char *name,
 			     int namelen,
@@ -2012,7 +2014,7 @@ int ocfs2_lookup_ino_from_name(struct inode *dir, const char *name,
  * Return 0 if the name does not exist
  * Return -EEXIST if the directory contains the name
  *
- * Callers should have i_rwsem + a cluster lock on dir
+ * Callers should have i_mutex + a cluster lock on dir
  */
 int ocfs2_check_dir_for_entry(struct inode *dir,
 			      const char *name,
@@ -2041,7 +2043,7 @@ struct ocfs2_empty_dir_priv {
 	unsigned seen_other;
 	unsigned dx_dir;
 };
-static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
+static int ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 				   int name_len, loff_t pos, u64 ino,
 				   unsigned type)
 {
@@ -2061,7 +2063,7 @@ static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 	 */
 	if (name_len == 1 && !strncmp(".", name, 1) && pos == 0) {
 		p->seen_dot = 1;
-		return true;
+		return 0;
 	}
 
 	if (name_len == 2 && !strncmp("..", name, 2) &&
@@ -2069,13 +2071,13 @@ static bool ocfs2_empty_dir_filldir(struct dir_context *ctx, const char *name,
 		p->seen_dot_dot = 1;
 
 		if (p->dx_dir && p->seen_dot)
-			return false;
+			return 1;
 
-		return true;
+		return 0;
 	}
 
 	p->seen_other = 1;
-	return false;
+	return 1;
 }
 
 static int ocfs2_empty_dir_dx(struct inode *inode,
@@ -3352,7 +3354,7 @@ static int ocfs2_find_dir_space_id(struct inode *dir, struct buffer_head *di_bh,
 	struct ocfs2_dir_entry *de, *last_de = NULL;
 	char *first_de, *de_buf, *limit;
 	unsigned long offset = 0;
-	unsigned int rec_len, new_rec_len, free_space;
+	unsigned int rec_len, new_rec_len, free_space = dir->i_sb->s_blocksize;
 
 	/*
 	 * This calculates how many free bytes we'd have in block zero, should

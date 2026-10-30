@@ -11,7 +11,7 @@ ifneq ($(filter y, $(CONFIG_FB)),)
 endif
 
 ifneq ($(filter y, $(CONFIG_DRM)),)
-	#ccflags-y += -DHX_CONFIG_DRM
+	ccflags-y += -DHX_CONFIG_DRM
 endif
 
 ifneq ($(filter y m, $(CONFIG_TOUCHSCREEN_HIMAX_DEBUG)),)

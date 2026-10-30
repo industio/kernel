@@ -31,12 +31,10 @@
  */
 extern struct auth_ops svcauth_null;
 extern struct auth_ops svcauth_unix;
-extern struct auth_ops svcauth_tls;
 
 static struct auth_ops __rcu *authtab[RPC_AUTH_MAXFLAVOR] = {
 	[RPC_AUTH_NULL] = (struct auth_ops __force __rcu *)&svcauth_null,
 	[RPC_AUTH_UNIX] = (struct auth_ops __force __rcu *)&svcauth_unix,
-	[RPC_AUTH_TLS]  = (struct auth_ops __force __rcu *)&svcauth_tls,
 };
 
 static struct auth_ops *
@@ -61,12 +59,12 @@ svc_put_auth_ops(struct auth_ops *aops)
 }
 
 int
-svc_authenticate(struct svc_rqst *rqstp)
+svc_authenticate(struct svc_rqst *rqstp, __be32 *authp)
 {
 	rpc_authflavor_t	flavor;
 	struct auth_ops		*aops;
 
-	rqstp->rq_auth_stat = rpc_auth_ok;
+	*authp = rpc_auth_ok;
 
 	flavor = svc_getnl(&rqstp->rq_arg.head[0]);
 
@@ -74,7 +72,7 @@ svc_authenticate(struct svc_rqst *rqstp)
 
 	aops = svc_get_auth_ops(flavor);
 	if (aops == NULL) {
-		rqstp->rq_auth_stat = rpc_autherr_badcred;
+		*authp = rpc_autherr_badcred;
 		return SVC_DENIED;
 	}
 
@@ -82,7 +80,7 @@ svc_authenticate(struct svc_rqst *rqstp)
 	init_svc_cred(&rqstp->rq_cred);
 
 	rqstp->rq_authop = aops;
-	return aops->accept(rqstp);
+	return aops->accept(rqstp, authp);
 }
 EXPORT_SYMBOL_GPL(svc_authenticate);
 

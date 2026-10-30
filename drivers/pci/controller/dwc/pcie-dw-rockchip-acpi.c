@@ -21,9 +21,6 @@
 #define DWC_ATU_REGION_INDEX1		(0x1 << 0)
 #define ECAM_RESV_SIZE	SZ_16M
 
-#define PCIE_GET_ATU_OUTB_UNR_REG_OFFSET(region) \
-		((region) << 9)
-
 struct rk_pcie_acpi  {
 	void __iomem *dbi_base;
 	void __iomem *cfg_base;

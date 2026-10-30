@@ -184,13 +184,6 @@ static int slave_configure(struct scsi_device *sdev)
 		sdev->use_192_bytes_for_3f = 1;
 
 		/*
-		 * Some devices report generic values until the media has been
-		 * accessed. Force a READ(10) prior to querying device
-		 * characteristics.
-		 */
-		sdev->read_before_ms = 1;
-
-		/*
 		 * Some devices don't like MODE SENSE with page=0x3f,
 		 * which is the command used for checking if a device
 		 * is write-protected.  Now that we tell the sd driver
@@ -374,9 +367,9 @@ static int target_alloc(struct scsi_target *starget)
 
 /* queue a command */
 /* This is always called with scsi_lock(host) held */
-static int queuecommand_lck(struct scsi_cmnd *srb)
+static int queuecommand_lck(struct scsi_cmnd *srb,
+			void (*done)(struct scsi_cmnd *))
 {
-	void (*done)(struct scsi_cmnd *) = scsi_done;
 	struct us_data *us = host_to_us(srb->device->host);
 
 	/* check for state-transition errors */
@@ -404,6 +397,7 @@ static int queuecommand_lck(struct scsi_cmnd *srb)
 	}
 
 	/* enqueue the command and wake up the control thread */
+	srb->scsi_done = done;
 	us->srb = srb;
 	complete(&us->cmnd_ready);
 
@@ -612,12 +606,10 @@ static ssize_t max_sectors_store(struct device *dev, struct device_attribute *at
 }
 static DEVICE_ATTR_RW(max_sectors);
 
-static struct attribute *usb_sdev_attrs[] = {
-	&dev_attr_max_sectors.attr,
+static struct device_attribute *sysfs_device_attr_list[] = {
+	&dev_attr_max_sectors,
 	NULL,
 };
-
-ATTRIBUTE_GROUPS(usb_sdev);
 
 /*
  * this defines our host template, with which we'll allocate hosts
@@ -679,7 +671,7 @@ static const struct scsi_host_template usb_stor_host_template = {
 	.skip_settle_delay =		1,
 
 	/* sysfs device attributes */
-	.sdev_groups =			usb_sdev_groups,
+	.sdev_attrs =			sysfs_device_attr_list,
 
 	/* module management */
 	.module =			THIS_MODULE

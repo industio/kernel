@@ -1,28 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2018 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
  *
  * Author: Wyon Bi <bivvy.bi@rock-chips.com>
  */
 
-#include <linux/bits.h>
 #include <linux/kernel.h>
 #include <linux/clk.h>
 #include <linux/iopoll.h>
 #include <linux/clk-provider.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/reset.h>
-#include <linux/time64.h>
-
 #include <linux/phy/phy.h>
 #include <linux/phy/phy-mipi-dphy.h>
+#include <linux/pm_runtime.h>
+#include <linux/mfd/syscon.h>
 #include <linux/rockchip/cpu.h>
+
+#define PSEC_PER_SEC	1000000000000LL
 
 #define UPDATE(x, h, l)	(((x) << (l)) & GENMASK((h), (l)))
 
@@ -96,44 +95,20 @@
 #define SAMPLE_CLOCK_DIRECTION_MASK		BIT(4)
 #define SAMPLE_CLOCK_DIRECTION_REVERSE		BIT(4)
 #define SAMPLE_CLOCK_DIRECTION_FORWARD		0
-#define LOWFRE_EN_MASK				BIT(5)
-#define PLL_OUTPUT_FREQUENCY_DIV_BY_1		0
-#define PLL_OUTPUT_FREQUENCY_DIV_BY_2		1
-/* Analog Register Part: reg0b */
-#define CLOCK_LANE_VOD_RANGE_SET_MASK		GENMASK(3, 0)
-#define CLOCK_LANE_VOD_RANGE_SET(x)		UPDATE(x, 3, 0)
-#define VOD_MIN_RANGE				0x1
-#define VOD_MID_RANGE				0x3
-#define VOD_BIG_RANGE				0x7
-#define VOD_MAX_RANGE				0xf
-#define RK3506_VOD_MIN_RANGE			0x8
-#define RK3506_VOD_MID_RANGE			0xc
-#define RK3506_VOD_BIG_RANGE			0xe
-#define RK3506_VOD_MAX_RANGE			0xf
-/* Analog Register Part: reg18 */
-#define LANE0_PRE_EMPHASIS_ENABLE_MASK          BIT(6)
-#define LANE0_PRE_EMPHASIS_ENABLE               BIT(6)
-#define LANE0_PRE_EMPHASIS_DISABLE              0
-#define LANE1_PRE_EMPHASIS_ENABLE_MASK          BIT(5)
-#define LANE1_PRE_EMPHASIS_ENABLE               BIT(5)
-#define LANE1_PRE_EMPHASIS_DISABLE              0
-/* Analog Register Part: reg19 */
-#define PRE_EMPHASIS_RANGE_SET_MASK             GENMASK(7, 6)
-#define PRE_EMPHASIS_RANGE_SET(x)               UPDATE(x, 7, 6)
-/* Analog Register Part: reg1A */
-#define LANE0_PRE_EMPHASIS_RANGE_SET_MASK       GENMASK(7, 6)
-#define LANE0_PRE_EMPHASIS_RANGE_SET(x)         UPDATE(x, 7, 6)
-/* Analog Register Part: reg1B */
-#define LANE1_PRE_EMPHASIS_RANGE_SET_MASK       GENMASK(7, 6)
-#define LANE1_PRE_EMPHASIS_RANGE_SET(x)         UPDATE(x, 7, 6)
-#define PRE_EMPHASIS_MIN_RANGE			0x0
-#define PRE_EMPHASIS_MID_RANGE			0x1
-#define PRE_EMPHASIS_MAX_RANGE			0x2
-#define PRE_EMPHASIS_RESERVED_RANGE		0x3
-/* Analog Register Part: reg1E */
+#define LOWFRE_EN_MASK                          BIT(5)
+#define PLL_OUTPUT_FREQUENCY_DIV_BY_1           0
+#define PLL_OUTPUT_FREQUENCY_DIV_BY_2           1
+/* Analog Register Part: reg1e */
 #define PLL_MODE_SEL_MASK			GENMASK(6, 5)
 #define PLL_MODE_SEL_LVDS_MODE			0
 #define PLL_MODE_SEL_MIPI_MODE			BIT(5)
+/* Analog Register Part: reg0b */
+#define CLOCK_LANE_VOD_RANGE_SET_MASK	GENMASK(3, 0)
+#define CLOCK_LANE_VOD_RANGE_SET(x)	UPDATE(x, 3, 0)
+#define VOD_MIN_RANGE			0x1
+#define VOD_MID_RANGE			0x3
+#define VOD_BIG_RANGE			0x7
+#define VOD_MAX_RANGE			0xf
 /* Digital Register Part: reg00 */
 #define REG_DIG_RSTN_MASK			BIT(0)
 #define REG_DIG_RSTN_NORMAL			BIT(0)
@@ -178,8 +153,8 @@
 #define T_CLK_PRE_CNT_MASK			GENMASK(3, 0)
 #define T_CLK_PRE_CNT(x)			UPDATE(x, 3, 0)
 /* Clock/Data0/Data1/Data2/Data3 Lane Register Part: reg10 */
-#define T_CLK_POST_CNT_HI_MASK			GENMASK(7, 6)
-#define T_CLK_POST_CNT_HI(x)			UPDATE(x, 7, 6)
+#define T_CLK_POST_HI_MASK			GENMASK(7, 6)
+#define T_CLK_POST_HI(x)			UPDATE(x, 7, 6)
 #define T_TA_GO_CNT_MASK			GENMASK(5, 0)
 #define T_TA_GO_CNT(x)				UPDATE(x, 5, 0)
 /* Clock/Data0/Data1/Data2/Data3 Lane Register Part: reg11 */
@@ -203,11 +178,6 @@
 #define TTL_MODE_ENABLE				BIT(2)
 #define LVDS_MODE_ENABLE			BIT(1)
 #define MIPI_MODE_ENABLE			BIT(0)
-/* LVDS Register Part: reg04 */
-#define LVDS_VCOM_MASK				GENMASK(5, 4)
-#define LVDS_VCOM(x)				UPDATE(x, 5, 4)
-#define LVDS_VOD_MASK				GENMASK(7, 6)
-#define LVDS_VOD(x)				UPDATE(x, 7, 6)
 /* LVDS Register Part: reg0b */
 #define LVDS_LANE_EN_MASK			GENMASK(7, 3)
 #define LVDS_DATA_LANE0_EN			BIT(7)
@@ -232,7 +202,6 @@ enum soc_type {
 	PX30S,
 	RK3128,
 	RK3368,
-	RK3506,
 	RK3562,
 	RK3568,
 	RV1126,
@@ -240,16 +209,16 @@ enum soc_type {
 
 enum phy_max_rate {
 	MAX_1GHZ,
-	MAX_1_5GHZ,
 	MAX_2_5GHZ,
 };
 
-struct inno_dsidphy_plat_data {
-	enum soc_type soc_type;
-	const struct inno_mipi_dphy_timing *inno_mipi_dphy_timing_table;
-	const unsigned int num_timings;
-	enum phy_max_rate max_rate;
-	unsigned int max_lanes;
+struct inno_mipi_dphy_timing {
+	unsigned int max_lane_mbps;
+	u8 lpx;
+	u8 hs_prepare;
+	u8 clk_lane_hs_zero;
+	u8 data_lane_hs_zero;
+	u8 hs_trail;
 };
 
 struct inno_dsidphy {
@@ -257,12 +226,12 @@ struct inno_dsidphy {
 	struct clk *ref_clk;
 	struct clk *pclk_phy;
 	struct clk *pclk_host;
-	const struct inno_dsidphy_plat_data *pdata;
 	void __iomem *phy_base;
 	void __iomem *host_base;
 	struct reset_control *rst;
 	struct phy_configure_opts_mipi_dphy dphy_cfg;
 	unsigned int lanes;
+	const struct inno_dsidphy_plat_data *pdata;
 
 	struct clk *pll_clk;
 	struct {
@@ -271,8 +240,13 @@ struct inno_dsidphy {
 		u16 fbdiv;
 		unsigned long rate;
 	} pll;
-	u32 lvds_vcom;
-	u32 lvds_vod;
+};
+
+struct inno_dsidphy_plat_data {
+	enum soc_type soc_type;
+	const struct inno_mipi_dphy_timing *inno_mipi_dphy_timing_table;
+	const unsigned int num_timings;
+	enum phy_max_rate max_rate;
 };
 
 enum {
@@ -286,17 +260,8 @@ enum {
 	REGISTER_PART_LVDS,
 };
 
-struct inno_mipi_dphy_timing {
-	unsigned int max_lane_mbps;
-	u8 lpx;
-	u8 hs_prepare;
-	u8 clk_lane_hs_zero;
-	u8 data_lane_hs_zero;
-	u8 hs_trail;
-};
-
 static const
-struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_1ghz[] = {
+struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_1GHz[] = {
 	{ 110, 0x0, 0x20, 0x16, 0x02, 0x22},
 	{ 150, 0x0, 0x06, 0x16, 0x03, 0x45},
 	{ 200, 0x0, 0x18, 0x17, 0x04, 0x0b},
@@ -310,25 +275,8 @@ struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_1ghz[] = {
 	{1000, 0x0, 0x09, 0x20, 0x09, 0x27},
 };
 
-struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_1_5ghz[] = {
-	{ 110, 0x02, 0x7f, 0x16, 0x02, 0x02},
-	{ 150, 0x02, 0x7f, 0x16, 0x03, 0x02},
-	{ 200, 0x02, 0x7f, 0x17, 0x04, 0x02},
-	{ 250, 0x02, 0x7f, 0x17, 0x05, 0x04},
-	{ 300, 0x02, 0x7f, 0x18, 0x06, 0x04},
-	{ 400, 0x03, 0x7e, 0x19, 0x07, 0x04},
-	{ 500, 0x03, 0x7c, 0x1b, 0x07, 0x08},
-	{ 600, 0x03, 0x70, 0x1d, 0x08, 0x10},
-	{ 700, 0x05, 0x40, 0x1e, 0x08, 0x30},
-	{ 800, 0x05, 0x02, 0x1f, 0x09, 0x30},
-	{1000, 0x05, 0x08, 0x20, 0x09, 0x30},
-	{1200, 0x06, 0x03, 0x32, 0x14, 0x0f},
-	{1400, 0x09, 0x03, 0x32, 0x14, 0x0f},
-	{1500, 0x0d, 0x42, 0x36, 0x0e, 0x0f},
-};
-
 static const
-struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_2_5ghz[] = {
+struct inno_mipi_dphy_timing inno_mipi_dphy_timing_table_max_2_5GHz[] = {
 	{ 110, 0x02, 0x7f, 0x16, 0x02, 0x02},
 	{ 150, 0x02, 0x7f, 0x16, 0x03, 0x02},
 	{ 200, 0x02, 0x7f, 0x17, 0x04, 0x02},
@@ -494,35 +442,6 @@ static void inno_mipi_dphy_max_2_5GHz_pll_enable(struct inno_dsidphy *inno)
 			 REG_LDOPD_POWER_ON | REG_PLLPD_POWER_ON);
 }
 
-static void inno_mipi_dphy_max_1_5GHz_pll_enable(struct inno_dsidphy *inno)
-{
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x03,
-			REG_PREDIV_MASK, REG_PREDIV(inno->pll.prediv));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x03,
-			REG_FBDIV_HI_MASK, REG_FBDIV_HI(inno->pll.fbdiv));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x04,
-			REG_FBDIV_LO_MASK, REG_FBDIV_LO(inno->pll.fbdiv));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x18,
-			LANE0_PRE_EMPHASIS_ENABLE_MASK, LANE0_PRE_EMPHASIS_ENABLE);
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x18,
-			LANE1_PRE_EMPHASIS_ENABLE_MASK, LANE1_PRE_EMPHASIS_ENABLE);
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x19,
-			PRE_EMPHASIS_RANGE_SET_MASK,
-			PRE_EMPHASIS_RANGE_SET(PRE_EMPHASIS_MID_RANGE));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x1a,
-			LANE0_PRE_EMPHASIS_RANGE_SET_MASK,
-			LANE0_PRE_EMPHASIS_RANGE_SET(PRE_EMPHASIS_MID_RANGE));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x1b,
-			LANE1_PRE_EMPHASIS_RANGE_SET_MASK,
-			LANE1_PRE_EMPHASIS_RANGE_SET(PRE_EMPHASIS_MID_RANGE));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x0b,
-			CLOCK_LANE_VOD_RANGE_SET_MASK,
-			CLOCK_LANE_VOD_RANGE_SET(RK3506_VOD_MAX_RANGE));
-	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x01,
-			REG_LDOPD_MASK | REG_PLLPD_MASK,
-			REG_LDOPD_POWER_ON | REG_PLLPD_POWER_ON);
-}
-
 static void inno_mipi_dphy_max_1GHz_pll_enable(struct inno_dsidphy *inno)
 {
 	/* Configure PLL */
@@ -532,13 +451,6 @@ static void inno_mipi_dphy_max_1GHz_pll_enable(struct inno_dsidphy *inno)
 			REG_FBDIV_HI_MASK, REG_FBDIV_HI(inno->pll.fbdiv));
 	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x04,
 			REG_FBDIV_LO_MASK, REG_FBDIV_LO(inno->pll.fbdiv));
-	if (inno->pdata->max_rate == MAX_2_5GHZ) {
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x08,
-				PLL_POST_DIV_ENABLE_MASK, PLL_POST_DIV_ENABLE);
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x0b,
-				CLOCK_LANE_VOD_RANGE_SET_MASK,
-				CLOCK_LANE_VOD_RANGE_SET(VOD_MAX_RANGE));
-	}
 	/* Enable PLL and LDO */
 	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x01,
 			REG_LDOPD_MASK | REG_PLLPD_MASK,
@@ -593,7 +505,6 @@ static void inno_mipi_dphy_timing_init(struct inno_dsidphy *inno)
 	 * Tclk-pre = Tpin_txbyteclkhs * value
 	 */
 	clk_pre = DIV_ROUND_UP(cfg->clk_pre, t_txbyteclkhs);
-
 	/*
 	 * The value of counter for HS Tta-go
 	 * Tta-go for turnaround
@@ -614,7 +525,6 @@ static void inno_mipi_dphy_timing_init(struct inno_dsidphy *inno)
 	ta_wait = DIV_ROUND_UP(cfg->ta_get, t_txclkesc);
 
 	timing = inno_mipi_dphy_get_timing(inno);
-
 	/*
 	 * The value of counter for HS Tlpx Time
 	 * Tlpx = Tpin_txbyteclkhs * (2 + value)
@@ -642,21 +552,27 @@ static void inno_mipi_dphy_timing_init(struct inno_dsidphy *inno)
 				T_LPX_CNT(lpx));
 		phy_update_bits(inno, i, 0x06, T_HS_PREPARE_CNT_MASK,
 				T_HS_PREPARE_CNT(hs_prepare));
+
 		if (inno->pdata->max_rate == MAX_2_5GHZ)
 			phy_update_bits(inno, i, 0x06, T_HS_ZERO_CNT_HI_MASK,
 					T_HS_ZERO_CNT_HI(hs_zero >> 6));
+
 		phy_update_bits(inno, i, 0x07, T_HS_ZERO_CNT_LO_MASK,
 				T_HS_ZERO_CNT_LO(hs_zero));
 		phy_update_bits(inno, i, 0x08, T_HS_TRAIL_CNT_MASK,
 				T_HS_TRAIL_CNT(hs_trail));
+
 		if (inno->pdata->max_rate == MAX_2_5GHZ)
 			phy_update_bits(inno, i, 0x11, T_HS_EXIT_CNT_HI_MASK,
 					T_HS_EXIT_CNT_HI(hs_exit >> 5));
+
 		phy_update_bits(inno, i, 0x09, T_HS_EXIT_CNT_LO_MASK,
 				T_HS_EXIT_CNT_LO(hs_exit));
+
 		if (inno->pdata->max_rate == MAX_2_5GHZ)
-			phy_update_bits(inno, i, 0x10, T_CLK_POST_CNT_HI_MASK,
-					T_CLK_POST_CNT_HI(clk_post >> 4));
+			phy_update_bits(inno, i, 0x10, T_CLK_POST_HI_MASK,
+					T_CLK_POST_HI(clk_post >> 4));
+
 		phy_update_bits(inno, i, 0x0a, T_CLK_POST_CNT_LO_MASK,
 				T_CLK_POST_CNT_LO(clk_post));
 		phy_update_bits(inno, i, 0x0e, T_CLK_PRE_CNT_MASK,
@@ -710,43 +626,12 @@ static void inno_dsidphy_mipi_mode_enable(struct inno_dsidphy *inno)
 
 	if (inno->pdata->max_rate == MAX_2_5GHZ)
 		inno_mipi_dphy_max_2_5GHz_pll_enable(inno);
-	else if (inno->pdata->max_rate == MAX_1_5GHZ)
-		inno_mipi_dphy_max_1_5GHz_pll_enable(inno);
 	else
 		inno_mipi_dphy_max_1GHz_pll_enable(inno);
 
 	inno_mipi_dphy_reset(inno);
 	inno_mipi_dphy_timing_init(inno);
 	inno_mipi_dphy_lane_enable(inno);
-}
-
-static void inno_dsiphy_lvds_voltage_set(struct inno_dsidphy *inno)
-{
-	u32 val = 0;
-
-	/* This version of inno phy does not have voltage register, skip it. */
-	if (inno->pdata->max_rate == MAX_1GHZ)
-		return;
-
-	if (inno->lvds_vcom >= 1000)
-		val |= LVDS_VCOM(3);
-	else if (inno->lvds_vcom >= 950)
-		val |= LVDS_VCOM(2);
-	else if (inno->lvds_vcom >= 900)
-		val |= LVDS_VCOM(0);
-	else
-		val |= LVDS_VCOM(1); /* 850mV */
-
-	if (inno->lvds_vod >= 400)
-		val |= LVDS_VOD(3);
-	else if (inno->lvds_vod >= 350)
-		val |= LVDS_VOD(2);
-	else if (inno->lvds_vod >= 300)
-		val |= LVDS_VOD(1);
-	else
-		val |= LVDS_VOD(0); /* 250mV */
-
-	phy_update_bits(inno, REGISTER_PART_LVDS, 0x04, LVDS_VCOM_MASK | LVDS_VOD_MASK, val);
 }
 
 static void inno_dsidphy_lvds_mode_enable(struct inno_dsidphy *inno)
@@ -768,7 +653,7 @@ static void inno_dsidphy_lvds_mode_enable(struct inno_dsidphy *inno)
 	phy_update_bits(inno, REGISTER_PART_LVDS, 0x00,
 			LVDS_DIGITAL_INTERNAL_RESET_MASK,
 			LVDS_DIGITAL_INTERNAL_RESET_DISABLE);
-	inno_dsiphy_lvds_voltage_set(inno);
+
 	/* Select LVDS mode */
 	phy_update_bits(inno, REGISTER_PART_LVDS, 0x03,
 			MODE_ENABLE_MASK, LVDS_MODE_ENABLE);
@@ -846,12 +731,6 @@ static int inno_dsidphy_power_on(struct phy *phy)
 	phy_update_bits(inno, REGISTER_PART_ANALOG, 0x00,
 			POWER_WORK_MASK, POWER_WORK_ENABLE);
 
-	if (inno->pdata->soc_type == RK3506) {
-		/* The internal 1.2V LDO power on */
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x17, BIT(7), 0);
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x1d, BIT(7), 0);
-	}
-
 	switch (mode) {
 	case PHY_MODE_MIPI_DPHY:
 		inno_dsidphy_mipi_mode_enable(inno);
@@ -886,12 +765,6 @@ static int inno_dsidphy_power_off(struct phy *phy)
 	phy_update_bits(inno, REGISTER_PART_LVDS, 0x0b,
 			LVDS_PLL_POWER_MASK | LVDS_BANDGAP_POWER_MASK,
 			LVDS_PLL_POWER_OFF | LVDS_BANDGAP_POWER_DOWN);
-
-	if (inno->pdata->soc_type == RK3506) {
-		/* The internal 1.2V LDO power off */
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x17, BIT(7), BIT(7));
-		phy_update_bits(inno, REGISTER_PART_ANALOG, 0x1d, BIT(7), BIT(7));
-	}
 
 	pm_runtime_put(inno->dev);
 	clk_disable_unprepare(inno->ref_clk);
@@ -964,66 +837,51 @@ static const struct phy_ops inno_dsidphy_ops = {
 
 static const struct inno_dsidphy_plat_data px30_video_phy_plat_data = {
 	.soc_type = PX30,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1GHz),
 	.max_rate = MAX_1GHZ,
-	.max_lanes = 4,
 };
 
 static const struct inno_dsidphy_plat_data px30s_video_phy_plat_data = {
 	.soc_type = PX30S,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5GHz),
 	.max_rate = MAX_2_5GHZ,
-	.max_lanes = 4,
 };
 
 static const struct inno_dsidphy_plat_data rk3128_video_phy_plat_data = {
 	.soc_type = RK3128,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1GHz),
 	.max_rate = MAX_1GHZ,
-	.max_lanes = 4,
 };
 
 static const struct inno_dsidphy_plat_data rk3368_video_phy_plat_data = {
 	.soc_type = RK3368,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1GHz),
 	.max_rate = MAX_1GHZ,
-	.max_lanes = 4,
-};
-
-static const struct inno_dsidphy_plat_data rk3506_video_phy_plat_data = {
-	.soc_type = RK3506,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_1_5ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_1_5ghz),
-	.max_rate = MAX_1_5GHZ,
-	.max_lanes = 2,
 };
 
 static const struct inno_dsidphy_plat_data rk3562_video_phy_plat_data = {
 	.soc_type = RK3562,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5GHz),
 	.max_rate = MAX_2_5GHZ,
-	.max_lanes = 4,
 };
 
 static const struct inno_dsidphy_plat_data rk3568_video_phy_plat_data = {
 	.soc_type = RK3568,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5GHz),
 	.max_rate = MAX_2_5GHZ,
-	.max_lanes = 4,
 };
 
 static const struct inno_dsidphy_plat_data rv1126_video_phy_plat_data = {
 	.soc_type = RV1126,
-	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5ghz,
-	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5ghz),
+	.inno_mipi_dphy_timing_table = inno_mipi_dphy_timing_table_max_2_5GHz,
+	.num_timings = ARRAY_SIZE(inno_mipi_dphy_timing_table_max_2_5GHz),
 	.max_rate = MAX_2_5GHZ,
-	.max_lanes = 4,
 };
 
 static int inno_dsidphy_probe(struct platform_device *pdev)
@@ -1043,6 +901,7 @@ static int inno_dsidphy_probe(struct platform_device *pdev)
 	inno->pdata = of_device_get_match_data(inno->dev);
 	if (soc_is_px30s())
 		inno->pdata = &px30s_video_phy_plat_data;
+
 	platform_set_drvdata(pdev, inno);
 
 	inno->phy_base = devm_platform_ioremap_resource_byname(pdev, "phy");
@@ -1094,16 +953,8 @@ static int inno_dsidphy_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	if (device_property_read_u32(dev, "inno,lanes", &inno->lanes))
-		inno->lanes = inno->pdata->max_lanes;
-	else if (inno->lanes > inno->pdata->max_lanes)
-		inno->lanes = inno->pdata->max_lanes;
-
-	if (device_property_read_u32(dev, "inno,lvds-vcom", &inno->lvds_vcom))
-		inno->lvds_vcom = 950;
-
-	if (device_property_read_u32(dev, "inno,lvds-vod", &inno->lvds_vod))
-		inno->lvds_vod = 350;
+	if (of_property_read_u32(dev->of_node, "inno,lanes", &inno->lanes))
+		inno->lanes = 4;
 
 	phy_set_drvdata(phy, inno);
 
@@ -1142,16 +993,13 @@ static const struct of_device_id inno_dsidphy_of_match[] = {
 		.compatible = "rockchip,rk3368-dsi-dphy",
 		.data = &rk3368_video_phy_plat_data,
 	}, {
-		.compatible = "rockchip,rk3506-dsi-dphy",
-		.data = &rk3506_video_phy_plat_data,
-	}, {
 		.compatible = "rockchip,rk3562-dsi-dphy",
 		.data = &rk3562_video_phy_plat_data,
 	}, {
 		.compatible = "rockchip,rk3568-dsi-dphy",
 		.data = &rk3568_video_phy_plat_data,
 	}, {
-		.compatible = "rockchip,rv1126-dsi-dphy",
+		.compatible = "rockchip,rv1126-mipi-dphy",
 		.data = &rv1126_video_phy_plat_data,
 	},
 	{}

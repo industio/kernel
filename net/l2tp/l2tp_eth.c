@@ -257,7 +257,7 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 	int rc;
 
 	if (cfg->ifname) {
-		strscpy(name, cfg->ifname, IFNAMSIZ);
+		strlcpy(name, cfg->ifname, IFNAMSIZ);
 		name_assign_type = NET_NAME_USER;
 	} else {
 		strcpy(name, L2TP_ETH_DEV_NAME);
@@ -317,7 +317,7 @@ static int l2tp_eth_create(struct net *net, struct l2tp_tunnel *tunnel,
 		return rc;
 	}
 
-	strscpy(session->ifname, dev->name, IFNAMSIZ);
+	strlcpy(session->ifname, dev->name, IFNAMSIZ);
 	rcu_assign_pointer(spriv->dev, dev);
 
 	rtnl_unlock();

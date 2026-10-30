@@ -151,11 +151,14 @@ int sctp_sched_set_sched(struct sctp_association *asoc,
 
 		/* Give the next scheduler a clean slate. */
 		for (i = 0; i < asoc->stream.outcnt; i++) {
-			struct sctp_stream_out_ext *ext = SCTP_SO(&asoc->stream, i)->ext;
+			void *p = SCTP_SO(&asoc->stream, i)->ext;
 
-			if (!ext)
+			if (!p)
 				continue;
-			memset_after(ext, 0, outq);
+
+			p += offsetofend(struct sctp_stream_out_ext, outq);
+			memset(p, 0, sizeof(struct sctp_stream_out_ext) -
+				     offsetofend(struct sctp_stream_out_ext, outq));
 		}
 	}
 

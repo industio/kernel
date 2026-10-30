@@ -1532,7 +1532,7 @@ err_input_init:
 *  Output:
 *  Return:
 *****************************************************************************/
-static void fts_ts_remove(struct i2c_client *client)
+static int fts_ts_remove(struct i2c_client *client)
 {
     struct fts_ts_data *ts_data = i2c_get_clientdata(client);
 
@@ -1601,6 +1601,7 @@ static void fts_ts_remove(struct i2c_client *client)
     devm_kfree(&client->dev, ts_data);
 
     FTS_FUNC_EXIT();
+    return 0;
 }
 
 /*****************************************************************************

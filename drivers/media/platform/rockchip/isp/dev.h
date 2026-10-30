@@ -46,8 +46,6 @@
 #include "isp_mipi_luma.h"
 #include "procfs.h"
 #include "isp_external.h"
-#include "isp_pdaf.h"
-#include "isp_sditf.h"
 #include "version.h"
 
 #define DRIVER_NAME "rkisp"
@@ -72,20 +70,18 @@
 
 enum rkisp_isp_state {
 	ISP_FRAME_END = BIT(0),
-	ISP_FRAME_BNR = BIT(1),
+	ISP_FRAME_IN = BIT(1),
 	ISP_FRAME_VS = BIT(2),
 	ISP_FRAME_MP = BIT(3),
 	ISP_FRAME_SP = BIT(4),
 	ISP_FRAME_MPFBC = BIT(5),
 	ISP_FRAME_BP = BIT(6),
-	ISP_FRAME_LDC = BIT(7),
-	ISP_FRAME_VPSS = BIT(8),
 
-	ISP_STOP = BIT(16),
-	ISP_START = BIT(17),
-	ISP_ERROR = BIT(18),
-	ISP_MIPI_ERROR = BIT(19),
-	ISP_CIF_RESET = BIT(20),
+	ISP_STOP = BIT(8),
+	ISP_START = BIT(9),
+	ISP_ERROR = BIT(10),
+	ISP_MIPI_ERROR = BIT(11),
+	ISP_CIF_RESET = BIT(12),
 };
 
 enum rkisp_isp_inp {
@@ -168,7 +164,7 @@ struct rkisp_sensor_info {
 	struct v4l2_mbus_config mbus;
 	struct v4l2_subdev_frame_interval fi;
 	struct v4l2_subdev_format fmt[CSI_PAD_MAX - 1];
-	struct v4l2_subdev_state state;
+	struct v4l2_subdev_pad_config cfg;
 };
 
 /* struct rkisp_hdr - hdr configured
@@ -229,7 +225,6 @@ struct rkisp_device {
 	struct rkisp_csi_device csi_dev;
 	struct rkisp_bridge_device br_dev;
 	struct rkisp_luma_vdev luma_vdev;
-	struct rkisp_pdaf_vdev pdaf_vdev;
 	struct rkisp_procfs procfs;
 	struct rkisp_pipeline pipe;
 	enum rkisp_isp_ver isp_ver;
@@ -248,8 +243,6 @@ struct rkisp_device {
 	struct mutex iqlock; /* mutex to serialize the calls of iq */
 	wait_queue_head_t sync_onoff;
 
-	struct rkisp_sditf_device *sditf_dev;
-
 	dma_addr_t resmem_addr;
 	phys_addr_t resmem_pa;
 	size_t resmem_size;
@@ -266,8 +259,6 @@ struct rkisp_device {
 	unsigned int skip_frame;
 	unsigned int irq_ends;
 	unsigned int irq_ends_mask;
-	unsigned int irq_f_ends;
-	unsigned int irq_f_ends_mask;
 	bool send_fbcgain;
 	struct rkisp_ispp_buf *cur_fbcgain;
 	struct rkisp_buffer *cur_spbuf;
@@ -276,7 +267,6 @@ struct rkisp_device {
 
 	struct work_struct rdbk_work;
 	struct kfifo rdbk_kfifo;
-	struct kfifo rdbk_be_kfifo;
 	spinlock_t rdbk_lock;
 	int rdbk_cnt;
 	int rdbk_cnt_x1;
@@ -309,7 +299,6 @@ struct rkisp_device {
 	bool is_suspend_one_frame;
 	bool is_aiisp_en;
 	bool is_aiisp_upd;
-	bool is_aiisp_sync;
 	bool is_frm_rd;
 	bool is_multi_one_sync;
 	bool is_wait_aiq;

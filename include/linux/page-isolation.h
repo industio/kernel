@@ -33,6 +33,8 @@ static inline bool is_migrate_isolate(int migratetype)
 #define MEMORY_OFFLINE	0x1
 #define REPORT_FAILURE	0x2
 
+struct page *has_unmovable_pages(struct zone *zone, struct page *page,
+				 int migratetype, int flags);
 void set_pageblock_migratetype(struct page *page, int migratetype);
 int move_freepages_block(struct zone *zone, struct page *page,
 				int migratetype, int *num_movable);
@@ -42,7 +44,8 @@ int move_freepages_block(struct zone *zone, struct page *page,
  */
 int
 start_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
-			 int migratetype, int flags, gfp_t gfp_flags);
+			 unsigned migratetype, int flags,
+			 unsigned long *failed_pfn);
 
 /*
  * Changes MIGRATE_ISOLATE to MIGRATE_MOVABLE.
@@ -50,13 +53,13 @@ start_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
  */
 void
 undo_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
-			int migratetype);
+			unsigned migratetype);
 
 /*
  * Test all pages in [start_pfn, end_pfn) are isolated or not.
  */
 int test_pages_isolated(unsigned long start_pfn, unsigned long end_pfn,
-			int isol_flags);
+			int isol_flags, unsigned long *failed_pfn);
 
 struct page *alloc_migrate_target(struct page *page, unsigned long private);
 

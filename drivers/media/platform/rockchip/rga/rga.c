@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  * Author: Jacob Chen <jacob-chen@iotwrt.com>
  */
 
@@ -791,6 +791,7 @@ static int rga_probe(struct platform_device *pdev)
 {
 	struct rockchip_rga *rga;
 	struct video_device *vfd;
+	struct resource *res;
 	int ret = 0;
 	int irq;
 
@@ -807,11 +808,13 @@ static int rga_probe(struct platform_device *pdev)
 
 	ret = rga_parse_dt(rga);
 	if (ret)
-		return dev_err_probe(&pdev->dev, ret, "Unable to parse OF data\n");
+		dev_err(&pdev->dev, "Unable to parse OF data\n");
 
 	pm_runtime_enable(rga->dev);
 
-	rga->regs = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	rga->regs = devm_ioremap_resource(rga->dev, res);
 	if (IS_ERR(rga->regs)) {
 		ret = PTR_ERR(rga->regs);
 		goto err_put_clk;

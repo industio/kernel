@@ -160,16 +160,11 @@
 /* max sclk of driver strength 4mA */
 #define IO_DRIVER_4MA_MAX_SCLK_OUT	24000000U
 
-/*
- * SPI_CTRLR1 is 16-bits, so we should support lengths of 0xffff + 1. However,
- * the controller seems to hang when given 0x10000, so stick with this for now.
- */
-#define ROCKCHIP_SPI_MAX_TRANLEN		0xffff
-
 /* 2 for native cs, 2 for cs-gpio */
 #define ROCKCHIP_SPI_MAX_CS_NUM			4
 #define ROCKCHIP_SPI_VER2_TYPE1			0x05EC0002
 #define ROCKCHIP_SPI_VER2_TYPE2			0x00110002
+#define ROCKCHIP_SPI_VER3			0x03110003
 
 #define ROCKCHIP_SPI_REGISTER_SIZE		0x1000
 
@@ -212,6 +207,8 @@ struct rockchip_spi {
 	u32 freq;
 	/* speed of io rate */
 	u32 speed_hz;
+	u32 max_transfer_size;
+	u8 tx_idle_type;
 
 	u8 n_bytes;
 	u8 rsd;
@@ -248,7 +245,7 @@ static inline void wait_for_tx_idle(struct rockchip_spi *rs, bool slave_mode)
 	u32 idle_val = 0;
 	uint32_t speed, us;
 
-	if (slave_mode && rs->version == ROCKCHIP_SPI_VER2_TYPE2) {
+	if (rs->tx_idle_type == 1) {
 		bit_field = SR_SLAVE_TX_BUSY;
 		idle_val = 0;
 	} else if (slave_mode) {
@@ -270,17 +267,6 @@ static inline void wait_for_tx_idle(struct rockchip_spi *rs, bool slave_mode)
 	dev_warn(rs->dev, "spi controller is in busy state!\n");
 }
 
-static u32 get_fifo_len(struct rockchip_spi *rs)
-{
-	switch (rs->version) {
-	case ROCKCHIP_SPI_VER2_TYPE1:
-	case ROCKCHIP_SPI_VER2_TYPE2:
-		return 64;
-	default:
-		return 32;
-	}
-}
-
 static void rockchip_spi_set_cs(struct spi_device *spi, bool enable)
 {
 	struct spi_controller *ctlr = spi->controller;
@@ -295,12 +281,12 @@ static void rockchip_spi_set_cs(struct spi_device *spi, bool enable)
 		/* Keep things powered as long as CS is asserted */
 		pm_runtime_get_sync(rs->dev);
 
-		if (spi_get_csgpiod(spi, 0))
+		if (spi->cs_gpiod)
 			ROCKCHIP_SPI_SET_BITS(rs->regs + ROCKCHIP_SPI_SER, 1);
 		else
 			ROCKCHIP_SPI_SET_BITS(rs->regs + ROCKCHIP_SPI_SER, BIT(spi->chip_select));
 	} else {
-		if (spi_get_csgpiod(spi, 0))
+		if (spi->cs_gpiod)
 			ROCKCHIP_SPI_CLR_BITS(rs->regs + ROCKCHIP_SPI_SER, 1);
 		else
 			ROCKCHIP_SPI_CLR_BITS(rs->regs + ROCKCHIP_SPI_SER, BIT(spi->chip_select));
@@ -642,7 +628,7 @@ static int rockchip_spi_config(struct rockchip_spi *rs,
 	cr0 |= (spi->mode & 0x3U) << CR0_SCPH_OFFSET;
 	if (spi->mode & SPI_LSB_FIRST)
 		cr0 |= CR0_FBM_LSB << CR0_FBM_OFFSET;
-	if (spi->mode & SPI_CS_HIGH && !spi_get_csgpiod(spi, 0))
+	if (spi->mode & SPI_CS_HIGH && !spi->cs_gpiod)
 		cr0 |= BIT(spi->chip_select) << CR0_SOI_OFFSET;
 
 	if (xfer->rx_buf && xfer->tx_buf) {
@@ -749,7 +735,9 @@ static int rockchip_spi_config(struct rockchip_spi *rs,
 
 static size_t rockchip_spi_max_transfer_size(struct spi_device *spi)
 {
-	return ROCKCHIP_SPI_MAX_TRANLEN;
+	struct rockchip_spi *rs = spi_controller_get_devdata(spi->controller);
+
+	return rs->max_transfer_size;
 }
 
 static int rockchip_spi_slave_abort(struct spi_controller *ctlr)
@@ -832,7 +820,7 @@ static int rockchip_spi_transfer_one(
 		return -EINVAL;
 	}
 
-	if (xfer->len > ROCKCHIP_SPI_MAX_TRANLEN) {
+	if (xfer->len > rs->max_transfer_size) {
 		dev_err(rs->dev, "Transfer is too long (%d)\n", xfer->len);
 		return -EINVAL;
 	}
@@ -907,12 +895,9 @@ static int rockchip_spi_setup(struct spi_device *spi)
 
 	cr0 = readl_relaxed(rs->regs + ROCKCHIP_SPI_CTRLR0);
 
-	cr0 &= ~(0x3 << CR0_SCPH_OFFSET);
 	cr0 |= ((spi->mode & 0x3) << CR0_SCPH_OFFSET);
-	if (spi->mode & SPI_CS_HIGH && spi->chip_select <= 1 && !spi_get_csgpiod(spi, 0))
+	if (spi->mode & SPI_CS_HIGH && !spi->cs_gpiod)
 		cr0 |= BIT(spi->chip_select) << CR0_SOI_OFFSET;
-	else if (spi->chip_select <= 1 && !spi_get_csgpiod(spi, 0))
-		cr0 &= ~(BIT(spi->chip_select) << CR0_SOI_OFFSET);
 	if (spi_controller_is_slave(spi->controller))
 		cr0 |= CR0_OPM_SLAVE << CR0_OPM_OFFSET;
 
@@ -1106,12 +1091,30 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 	}
 
 	rs->version = readl_relaxed(rs->regs + ROCKCHIP_SPI_VERSION);
-	rs->fifo_len = get_fifo_len(rs);
-	if (!rs->fifo_len) {
-		dev_err(&pdev->dev, "Failed to get fifo length\n");
-		ret = -EINVAL;
-		goto err_disable_sclk_in;
+	switch (rs->version) {
+	case ROCKCHIP_SPI_VER3:
+	case ROCKCHIP_SPI_VER2_TYPE2:
+		rs->tx_idle_type = 1;
+		rs->cs_inactive = true;
+		rs->fifo_len = 64;
+		rs->cs_high_supported = true;
+		rs->max_transfer_size = 0xffffffff;
+		break;
+	case ROCKCHIP_SPI_VER2_TYPE1:
+		rs->tx_idle_type = 0;
+		rs->cs_inactive = true;
+		rs->fifo_len = 64;
+		rs->cs_high_supported = false;
+		rs->max_transfer_size = 0xffff;
+		break;
+	default:
+		rs->tx_idle_type = 0;
+		rs->cs_inactive = false;
+		rs->fifo_len = 32;
+		rs->cs_high_supported = false;
+		rs->max_transfer_size = 0xffff;
 	}
+
 	quirks_cfg = device_get_match_data(&pdev->dev);
 	if (quirks_cfg)
 		rs->max_baud_div_in_cpha = quirks_cfg->max_baud_div_in_cpha;
@@ -1127,6 +1130,8 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 	ctlr->auto_runtime_pm = true;
 	ctlr->bus_num = pdev->id;
 	ctlr->mode_bits = SPI_CPOL | SPI_CPHA | SPI_LOOP | SPI_LSB_FIRST;
+	if (rs->cs_high_supported)
+		ctlr->mode_bits |= SPI_CS_HIGH;
 	if (slave_mode) {
 		ctlr->mode_bits |= SPI_NO_CS;
 		ctlr->slave_abort = rockchip_spi_slave_abort;
@@ -1189,20 +1194,7 @@ static int rockchip_spi_probe(struct platform_device *pdev)
 		goto err_free_dma_rx;
 	}
 
-	switch (rs->version) {
-	case ROCKCHIP_SPI_VER2_TYPE2:
-		rs->cs_high_supported = true;
-		ctlr->mode_bits |= SPI_CS_HIGH;
-		if (slave_mode)
-			rs->cs_inactive = true;
-		else
-			rs->cs_inactive = false;
-		break;
-	default:
-		rs->cs_inactive = false;
-		break;
-	}
-	if (device_property_read_bool(&pdev->dev, "rockchip,cs-inactive-disable"))
+	if (!slave_mode || device_property_read_bool(&pdev->dev, "rockchip,cs-inactive-disable"))
 		rs->cs_inactive = false;
 
 	pinctrl = devm_pinctrl_get(&pdev->dev);
@@ -1339,11 +1331,9 @@ static int rockchip_spi_suspend(struct device *dev)
 	if (ret < 0)
 		return ret;
 
-	ret = pm_runtime_force_suspend(dev);
-	if (ret < 0) {
-		spi_controller_resume(ctlr);
-		return ret;
-	}
+	/* Avoid redundant clock disable */
+	if (!pm_runtime_status_suspended(dev))
+		rockchip_spi_runtime_suspend(dev);
 
 	pinctrl_pm_select_sleep_state(dev);
 
@@ -1357,11 +1347,17 @@ static int rockchip_spi_resume(struct device *dev)
 
 	pinctrl_pm_select_default_state(dev);
 
-	ret = pm_runtime_force_resume(dev);
-	if (ret < 0)
-		return ret;
+	if (!pm_runtime_status_suspended(dev)) {
+		ret = rockchip_spi_runtime_resume(dev);
+		if (ret < 0)
+			return ret;
+	}
 
-	return spi_controller_resume(ctlr);
+	ret = spi_controller_resume(ctlr);
+	if (ret < 0)
+		rockchip_spi_runtime_suspend(dev);
+
+	return 0;
 }
 #endif /* CONFIG_PM_SLEEP */
 

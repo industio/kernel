@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Rockchip Electronics Co.Ltd
  * Author:
  *      Guochun Huang <hero.huang@rock-chips.com>
  */
@@ -14,7 +14,6 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
-#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/mfd/syscon.h>
@@ -23,6 +22,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_crtc_helper.h>
+#include <drm/drm_dsc.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_of.h>
 #include <drm/drm_panel.h>
@@ -151,7 +151,7 @@
 #define DSI2_IPI_VID_VACT_MAN_CFG	0X0334
 #define VID_VACT_LINES(x)		UPDATE(x, 13, 0)
 #define DSI2_IPI_VID_VFP_MAN_CFG	0X033C
-#define VID_VFP_LINES(x)		UPDATE(x, 12, 0)
+#define VID_VFP_LINES(x)		UPDATE(x, 9, 0)
 #define DSI2_IPI_PIX_PKT_CFG		0x0344
 #define MAX_PIX_PKT(x)			UPDATE(x, 15, 0)
 
@@ -222,14 +222,11 @@ struct cmd_header {
 };
 
 struct dw_mipi_dsi2_plat_data {
-	bool dsc;
 	const u32 *dsi0_grf_reg_fields;
 	const u32 *dsi1_grf_reg_fields;
 	unsigned long long dphy_max_bit_rate_per_lane;
 	unsigned long long cphy_max_symbol_rate_per_lane;
-	const u32 max_vfp;
-	const u32 max_vsync;
-	const u32 max_vbp;
+
 };
 
 struct dw_mipi_dsi2 {
@@ -397,13 +394,13 @@ static void dw_mipi_dsi2_set_vid_mode(struct dw_mipi_dsi2 *dsi2)
 	u32 val = 0, mode;
 	int ret;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HFP)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HFP)
 		val |= BLK_HFP_HS_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HBP)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HBP)
 		val |= BLK_HBP_HS_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_NO_HSA)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_HSA)
 		val |= BLK_HSA_HS_EN;
 
 	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
@@ -502,7 +499,6 @@ static void dw_mipi_dsi2_encoder_atomic_disable(struct drm_encoder *encoder,
 	struct rockchip_crtc_state *s = to_rockchip_crtc_state(encoder->crtc->state);
 	struct drm_crtc *new_crtc;
 	struct drm_crtc_state *new_crtc_state = NULL;
-	int output_if;
 
 	new_crtc = dw_mipi_dsi2_get_new_crtc(dsi2, old_state);
 	if (new_crtc)
@@ -531,13 +527,6 @@ static void dw_mipi_dsi2_encoder_atomic_disable(struct drm_encoder *encoder,
 
 	dw_mipi_dsi2_post_disable(dsi2);
 
-	if (dsi2->slave)
-		output_if = VOP_OUTPUT_IF_MIPI0 | VOP_OUTPUT_IF_MIPI1;
-	else
-		output_if = dsi2->id ? VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0;
-
-	rockchip_drm_crtc_output_pre_disable(encoder->crtc, output_if);
-
 	dsi2->enabled = false;
 	if (dsi2->slave)
 		dsi2->slave->enabled = false;
@@ -549,8 +538,6 @@ static void dw_mipi_dsi2_encoder_atomic_disable(struct drm_encoder *encoder,
 		s->output_if &= ~(VOP_OUTPUT_IF_MIPI1 | VOP_OUTPUT_IF_MIPI0);
 	else
 		s->output_if &= ~(dsi2->id ? VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0);
-
-	s->output_if_left_panel &= ~(dsi2->id ? VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0);
 }
 
 static void dw_mipi_dsi2_get_lane_rate(struct dw_mipi_dsi2 *dsi2)
@@ -750,7 +737,7 @@ static void dw_mipi_dsi2_tx_option_set(struct dw_mipi_dsi2 *dsi2)
 
 	val = BTA_EN | EOTP_TX_EN;
 
-	if (dsi2->mode_flags & MIPI_DSI_MODE_NO_EOT_PACKET)
+	if (dsi2->mode_flags & MIPI_DSI_MODE_EOT_PACKET)
 		val &= ~EOTP_TX_EN;
 
 	regmap_write(dsi2->regmap, DSI2_DSI_GENERAL_CFG, val);
@@ -816,14 +803,14 @@ static void dw_mipi_dsi2_ipi_set(struct dw_mipi_dsi2 *dsi2)
 	if (dw_mipi_dsi2_is_cmd_mode(dsi2))
 		return;
 
-	vact = mode->crtc_vdisplay;
-	vsa = mode->crtc_vsync_end - mode->crtc_vsync_start;
-	vfp = mode->crtc_vsync_start - mode->crtc_vdisplay;
-	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
-	hact = mode->crtc_hdisplay;
-	hsa = mode->crtc_hsync_end - mode->crtc_hsync_start;
-	hbp = mode->crtc_htotal - mode->crtc_hsync_end;
-	hline = mode->crtc_htotal;
+	vact = mode->vdisplay;
+	vsa = mode->vsync_end - mode->vsync_start;
+	vfp = mode->vsync_start - mode->vdisplay;
+	vbp = mode->vtotal - mode->vsync_end;
+	hact = mode->hdisplay;
+	hsa = mode->hsync_end - mode->hsync_start;
+	hbp = mode->htotal - mode->hsync_end;
+	hline = mode->htotal;
 
 	pixel_clk = mode->crtc_clock * MSEC_PER_SEC;
 
@@ -928,16 +915,12 @@ static void dw_mipi_dsi2_enable(struct dw_mipi_dsi2 *dsi2)
 	dw_mipi_dsi2_ipi_set(dsi2);
 
 	if (dsi2->auto_calc_mode) {
-		regmap_update_bits(dsi2->regmap, DSI2_DSI_GENERAL_CFG, BTA_EN, 0);
-
 		regmap_write(dsi2->regmap, DSI2_MODE_CTRL, AUTOCALC_MODE);
 		ret = regmap_read_poll_timeout(dsi2->regmap, DSI2_MODE_STATUS,
 					       mode, mode == IDLE_MODE,
 					       1000, MODE_STATUS_TIMEOUT_US);
 		if (ret < 0)
 			dev_err(dsi2->dev, "auto calculation training failed\n");
-
-		regmap_update_bits(dsi2->regmap, DSI2_DSI_GENERAL_CFG, BTA_EN, BTA_EN);
 	}
 
 	if (dsi2->mode_flags & MIPI_DSI_MODE_VIDEO)
@@ -1021,7 +1004,7 @@ static void dw_mipi_dsi2_encoder_atomic_enable(struct drm_encoder *encoder,
 	struct dw_mipi_dsi2 *dsi2 = encoder_to_dsi2(encoder);
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *old_crtc_state = NULL;
-	int output_if, ret;
+	int ret;
 
 	crtc = dw_mipi_dsi2_get_new_crtc(dsi2, state);
 	if (crtc)
@@ -1057,13 +1040,6 @@ static void dw_mipi_dsi2_encoder_atomic_enable(struct drm_encoder *encoder,
 
 	if (old_crtc_state && old_crtc_state->self_refresh_active)
 		rockchip_drm_crtc_standby(encoder->crtc, 0);
-
-	if (dsi2->slave)
-		output_if = VOP_OUTPUT_IF_MIPI0 | VOP_OUTPUT_IF_MIPI1;
-	else
-		output_if = dsi2->id ? VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0;
-
-	rockchip_drm_crtc_output_post_enable(encoder->crtc, output_if);
 
 	dsi2->enabled = true;
 	if (dsi2->slave)
@@ -1116,8 +1092,7 @@ dw_mipi_dsi2_encoder_atomic_check(struct drm_encoder *encoder,
 	s->bus_flags = info->bus_flags;
 
 	s->tv_state = &conn_state->tv;
-	s->color_encoding = DRM_COLOR_YCBCR_BT709;
-	s->color_range = DRM_COLOR_YCBCR_FULL_RANGE;
+	s->color_space = V4L2_COLORSPACE_DEFAULT;
 
 	if (dw_mipi_dsi2_is_cmd_mode(dsi2)) {
 		s->output_flags |= ROCKCHIP_OUTPUT_MIPI_DS_MODE;
@@ -1131,8 +1106,6 @@ dw_mipi_dsi2_encoder_atomic_check(struct drm_encoder *encoder,
 			s->output_flags |= ROCKCHIP_OUTPUT_DATA_SWAP;
 
 		s->output_if |= VOP_OUTPUT_IF_MIPI1;
-		s->output_if_left_panel |= dsi2->id ?
-				VOP_OUTPUT_IF_MIPI1 : VOP_OUTPUT_IF_MIPI0;
 	}
 
 	if (dsi2->dual_connector_split) {
@@ -1162,10 +1135,6 @@ dw_mipi_dsi2_encoder_atomic_check(struct drm_encoder *encoder,
 
 static void dw_mipi_dsi2_loader_protect(struct dw_mipi_dsi2 *dsi2, bool on)
 {
-	if (dsi2->dcphy)
-		if (!dsi2->c_option)
-			phy_set_mode(dsi2->dcphy, PHY_MODE_MIPI_DPHY);
-
 	if (on) {
 		pm_runtime_get_sync(dsi2->dev);
 		phy_init(dsi2->dcphy);
@@ -1234,11 +1203,10 @@ dw_mipi_dsi2_connector_mode_valid(struct drm_connector *connector,
 	if (vm.vactive > 16383)
 		return MODE_VIRTUAL_Y;
 
-	if (vm.vsync_len > dsi2->pdata->max_vsync)
+	if (vm.vsync_len > 1023)
 		return MODE_VSYNC_WIDE;
 
-	if (vm.vback_porch > dsi2->pdata->max_vbp ||
-	    vm.vfront_porch > dsi2->pdata->max_vfp)
+	if (vm.vback_porch > 1023 || vm.vfront_porch > 1023)
 		return MODE_VBLANK_WIDE;
 
 	/*
@@ -1351,42 +1319,19 @@ static const struct drm_connector_funcs dw_mipi_dsi2_atomic_connector_funcs = {
 	.atomic_get_property = dw_mipi_dsi2_atomic_connector_get_property,
 };
 
-static int dw_mipi_dsi2_match_by_id(struct device *dev, const void *data)
-{
-	unsigned int *id = (unsigned int *)data;
-	struct dw_mipi_dsi2 *dsi2;
-
-	dsi2 = dev_get_drvdata(dev);
-	if (!dsi2)
-		return 0;
-
-	return dsi2->id == *id;
-}
-
-static struct dw_mipi_dsi2 *dw_mipi_dsi2_find_by_id(struct device_driver *drv,
-						    unsigned int id)
-{
-	struct device *dev;
-	struct dw_mipi_dsi2 *dsi2;
-
-	dev = driver_find_device(drv, NULL, &id, dw_mipi_dsi2_match_by_id);
-	if (!dev)
-		return NULL;
-
-	dsi2 = dev_get_drvdata(dev);
-
-	put_device(dev);
-
-	return dsi2;
-}
-
 static int dw_mipi_dsi2_dual_channel_probe(struct dw_mipi_dsi2 *dsi2)
 {
-	if (of_property_read_bool(dsi2->dev->of_node, "rockchip,dual-channel")) {
-		dsi2->data_swap = of_property_read_bool(dsi2->dev->of_node,
-							"rockchip,data-swap");
+	struct device_node *np;
+	struct platform_device *secondary;
 
-		dsi2->slave = dw_mipi_dsi2_find_by_id(dsi2->dev->driver, 1);
+	np = of_parse_phandle(dsi2->dev->of_node, "rockchip,dual-channel", 0);
+	if (np) {
+		dsi2->data_swap = of_property_read_bool(dsi2->dev->of_node,
+						       "rockchip,data-swap");
+		secondary = of_find_device_by_node(np);
+		dsi2->slave = platform_get_drvdata(secondary);
+		of_node_put(np);
+
 		if (!dsi2->slave)
 			return -EPROBE_DEFER;
 
@@ -1437,8 +1382,7 @@ static int dw_mipi_dsi2_get_dsc_params_from_sink(struct dw_mipi_dsi2 *dsi2,
 
 	dsi2->c_option = of_property_read_bool(np, "phy-c-option");
 	dsi2->scrambling_en = of_property_read_bool(np, "scrambling-enable");
-	dsi2->dsc_enable = dsi2->pdata->dsc ?
-			   of_property_read_bool(np, "compressed-data") : false;
+	dsi2->dsc_enable = of_property_read_bool(np, "compressed-data");
 
 	if (dsi2->slave) {
 		dsi2->slave->c_option = dsi2->c_option;
@@ -1567,6 +1511,9 @@ static int dw_mipi_dsi2_bind(struct device *dev, struct device *master,
 	int ret;
 
 	dsi2->drm_dev = drm_dev;
+	ret = dw_mipi_dsi2_dual_channel_probe(dsi2);
+	if (ret)
+		return ret;
 
 	if (dsi2->master)
 		return 0;
@@ -1617,10 +1564,6 @@ static int dw_mipi_dsi2_bind(struct device *dev, struct device *master,
 		ret = dw_mipi_dsi2_connector_init(dsi2);
 		if (ret)
 			goto encoder_cleanup;
-
-		if (dsi2->bridge && (dsi2->bridge->ops & DRM_BRIDGE_OP_DETECT))
-			dsi2->connector.polled = DRM_CONNECTOR_POLL_CONNECT |
-						 DRM_CONNECTOR_POLL_DISCONNECT;
 
 		connector = &dsi2->connector;
 	}
@@ -1712,7 +1655,6 @@ static int dw_mipi_dsi2_host_attach(struct mipi_dsi_host *host,
 				   struct mipi_dsi_device *device)
 {
 	struct dw_mipi_dsi2 *dsi2 = host_to_dsi2(host);
-	int ret;
 
 	if (dsi2->master)
 		return 0;
@@ -1726,40 +1668,12 @@ static int dw_mipi_dsi2_host_attach(struct mipi_dsi_host *host,
 	dsi2->format = device->format;
 	dsi2->mode_flags = device->mode_flags;
 
-	ret = dw_mipi_dsi2_dual_channel_probe(dsi2);
-	if (ret)
-		return ret;
-
-	ret = component_add(dsi2->dev, &dw_mipi_dsi2_ops);
-	if (ret)
-		return ret;
-
-	if (dsi2->slave) {
-		ret = component_add(dsi2->slave->dev, &dw_mipi_dsi2_ops);
-		if (ret)
-			goto err;
-	}
-
 	return 0;
-
-err:
-	component_del(dsi2->dev, &dw_mipi_dsi2_ops);
-	return ret;
 }
 
 static int dw_mipi_dsi2_host_detach(struct mipi_dsi_host *host,
 				   struct mipi_dsi_device *device)
 {
-	struct dw_mipi_dsi2 *dsi2 = host_to_dsi2(host);
-
-	if (dsi2->master)
-		return 0;
-
-	if (dsi2->slave)
-		component_del(dsi2->slave->dev, &dw_mipi_dsi2_ops);
-
-	component_del(dsi2->dev, &dw_mipi_dsi2_ops);
-
 	return 0;
 }
 
@@ -1913,10 +1827,10 @@ static int dw_mipi_dsi2_probe(struct platform_device *pdev)
 	if (device_property_read_bool(dev, "disable-hold-mode"))
 		dsi2->disable_hold_mode = true;
 
-	if (device_property_read_bool(dev, "rockchip,dual-connector-split")) {
+	if (device_property_read_bool(dev, "dual-connector-split")) {
 		dsi2->dual_connector_split = true;
 
-		if (device_property_read_bool(dev, "rockchip,left-display"))
+		if (device_property_read_bool(dev, "left-display"))
 			dsi2->left_display = true;
 	}
 
@@ -2013,7 +1927,7 @@ static int dw_mipi_dsi2_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	return 0;
+	return component_add(&pdev->dev, &dw_mipi_dsi2_ops);
 }
 
 static int dw_mipi_dsi2_remove(struct platform_device *pdev)
@@ -2046,15 +1960,6 @@ static const struct dev_pm_ops dw_mipi_dsi2_rockchip_pm_ops = {
 			   dw_mipi_dsi2_runtime_resume, NULL)
 };
 
-static const u32 rk3576_dsi_grf_reg_fields[MAX_FIELDS] = {
-	[TXREQCLKHS_EN]		= GRF_REG_FIELD(0x0028, 1, 1),
-	[GATING_EN]		= GRF_REG_FIELD(0x0028, 0, 0),
-	[IPI_SHUTDN]		= GRF_REG_FIELD(0x0028, 3, 3),
-	[IPI_COLORM]		= GRF_REG_FIELD(0x0028, 2, 2),
-	[IPI_COLOR_DEPTH]	= GRF_REG_FIELD(0x0028, 8, 11),
-	[IPI_FORMAT]		= GRF_REG_FIELD(0x0028, 4, 7),
-};
-
 static const u32 rk3588_dsi0_grf_reg_fields[MAX_FIELDS] = {
 	[TXREQCLKHS_EN]		= GRF_REG_FIELD(0x0000, 11, 11),
 	[GATING_EN]		= GRF_REG_FIELD(0x0000, 10, 10),
@@ -2073,40 +1978,18 @@ static const u32 rk3588_dsi1_grf_reg_fields[MAX_FIELDS] = {
 	[IPI_FORMAT]		= GRF_REG_FIELD(0x0004,  0,  3),
 };
 
-static const struct dw_mipi_dsi2_plat_data rk3576_mipi_dsi2_plat_data = {
-	.dsc = false,
-	.dsi0_grf_reg_fields = rk3576_dsi_grf_reg_fields,
-	.dphy_max_bit_rate_per_lane = 2500000000ULL,
-	.cphy_max_symbol_rate_per_lane = 1700000000ULL,
-	.max_vfp = 8191,
-	.max_vsync = 1023,
-	.max_vbp = 1023,
-};
-
 static const struct dw_mipi_dsi2_plat_data rk3588_mipi_dsi2_plat_data = {
-	.dsc = true,
 	.dsi0_grf_reg_fields = rk3588_dsi0_grf_reg_fields,
 	.dsi1_grf_reg_fields = rk3588_dsi1_grf_reg_fields,
 	.dphy_max_bit_rate_per_lane = 4500000000ULL,
 	.cphy_max_symbol_rate_per_lane = 2000000000ULL,
-	.max_vfp = 1023,
-	.max_vsync = 1023,
-	.max_vbp = 1023,
 };
 
 static const struct of_device_id dw_mipi_dsi2_dt_ids[] = {
-#if IS_ENABLED(CONFIG_CPU_RK3576)
-	{
-		.compatible = "rockchip,rk3576-mipi-dsi2",
-		.data = &rk3576_mipi_dsi2_plat_data,
-	},
-#endif
-#if IS_ENABLED(CONFIG_CPU_RK3588)
 	{
 		.compatible = "rockchip,rk3588-mipi-dsi2",
 		.data = &rk3588_mipi_dsi2_plat_data,
 	},
-#endif
 	{}
 };
 MODULE_DEVICE_TABLE(of, dw_mipi_dsi2_dt_ids);

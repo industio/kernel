@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2022 Rockchip Electronics Co. Ltd.
  * Rk3562 CAN driver
  */
 
@@ -24,6 +24,7 @@
 #include <linux/types.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
+#include <linux/can/led.h>
 #include <linux/reset.h>
 #include <linux/pm_runtime.h>
 
@@ -522,7 +523,7 @@ static netdev_tx_t rk3562_can_start_xmit(struct sk_buff *skb,
 	if (cf->can_id & CAN_EFF_FLAG) {
 		/* Extended CAN ID format */
 		id = cf->can_id & CAN_EFF_MASK;
-		dlc = can_fd_len2dlc(cf->len) & DLC_MASK;
+		dlc = can_len2dlc(cf->len) & DLC_MASK;
 		dlc |= FORMAT_MASK;
 
 		/* Extended frames remote TX request */
@@ -531,7 +532,7 @@ static netdev_tx_t rk3562_can_start_xmit(struct sk_buff *skb,
 	} else {
 		/* Standard CAN ID format */
 		id = cf->can_id & CAN_SFF_MASK;
-		dlc = can_fd_len2dlc(cf->len) & DLC_MASK;
+		dlc = can_len2dlc(cf->len) & DLC_MASK;
 
 		/* Standard frames remote TX request */
 		if (cf->can_id & CAN_RTR_FLAG)
@@ -551,7 +552,7 @@ static netdev_tx_t rk3562_can_start_xmit(struct sk_buff *skb,
 		rk3562_can_write(rcan, CAN_TXDAT0 + i,
 				 *(u32 *)(cf->data + i));
 
-	can_put_echo_skb(skb, ndev, 0, 0);
+	can_put_echo_skb(skb, ndev, 0);
 
 	rk3562_can_write(rcan, CAN_CMD, cmd);
 
@@ -566,6 +567,7 @@ static int rk3562_can_rx(struct net_device *ndev)
 	struct sk_buff *skb;
 	u32 id_rk3562_can, dlc;
 	int i = 0;
+	u32 __maybe_unused ts, ret;
 	u32 data[16] = {0};
 
 	dlc = rk3562_can_read(rcan, CAN_RXFRD);
@@ -585,9 +587,9 @@ static int rk3562_can_rx(struct net_device *ndev)
 
 	/* Change CAN data length format to socketCAN data format */
 	if (dlc & FDF_MASK)
-		cf->len = can_fd_dlc2len(dlc & DLC_MASK);
+		cf->len = can_dlc2len(dlc & DLC_MASK);
 	else
-		cf->len = can_cc_dlc2len(dlc & DLC_MASK);
+		cf->len = get_can_dlc(dlc & DLC_MASK);
 
 	/* Change CAN ID format to socketCAN ID format */
 	if (dlc & FORMAT_MASK) {
@@ -615,6 +617,8 @@ static int rk3562_can_rx(struct net_device *ndev)
 	stats->rx_packets++;
 	stats->rx_bytes += cf->len;
 	netif_rx(skb);
+
+	can_led_event(ndev, CAN_LED_EVENT_RX);
 
 	return 1;
 }
@@ -645,7 +649,10 @@ static int rk3562_can_rx_poll(struct napi_struct *napi, int quota)
 	while (work_done < quota)
 		work_done += rk3562_can_rx(ndev);
 
-	if (work_done <= rcan->rx_fifo_depth) {
+	if (work_done)
+		can_led_event(ndev, CAN_LED_EVENT_RX);
+
+	if (work_done < rcan->rx_fifo_depth) {
 		napi_complete_done(napi, work_done);
 		rk3562_can_write(rcan, CAN_INT_MASK, 0);
 	}
@@ -729,6 +736,7 @@ static irqreturn_t rk3562_can_interrupt(int irq, void *dev_id)
 	u32 err_int = ERR_WARN_INT | RX_BUF_OV_INT | PASSIVE_ERR_INT |
 		      TX_LOSTARB_INT | BUS_ERR_INT | BUS_OFF_INT;
 	u32 isr;
+	u32 dlc = 0;
 
 	isr = rk3562_can_read(rcan, CAN_INT);
 	if (isr & RX_FINISH_INT) {
@@ -737,10 +745,17 @@ static irqreturn_t rk3562_can_interrupt(int irq, void *dev_id)
 		napi_schedule(&rcan->napi);
 	}
 	if (isr & TX_FINISH_INT) {
-		rk3562_can_write(rcan, CAN_CMD, 0);
-		stats->tx_bytes += can_get_echo_skb(ndev, 0, NULL);
+		dlc = rk3562_can_read(rcan, CAN_TXFIC);
+		/* transmission complete interrupt */
+		if (dlc & FDF_MASK)
+			stats->tx_bytes += can_dlc2len(dlc & DLC_MASK);
+		else
+			stats->tx_bytes += (dlc & DLC_MASK);
 		stats->tx_packets++;
+		rk3562_can_write(rcan, CAN_CMD, 0);
+		can_get_echo_skb(ndev, 0);
 		netif_wake_queue(ndev);
+		can_led_event(ndev, CAN_LED_EVENT_TX);
 	}
 
 	if (isr & err_int) {
@@ -776,6 +791,7 @@ static int rk3562_can_open(struct net_device *ndev)
 		goto exit_can_start;
 	}
 
+	can_led_event(ndev, CAN_LED_EVENT_OPEN);
 	napi_enable(&rcan->napi);
 	netif_start_queue(ndev);
 
@@ -797,6 +813,7 @@ static int rk3562_can_close(struct net_device *ndev)
 	napi_disable(&rcan->napi);
 	rk3562_can_stop(ndev);
 	close_candev(ndev);
+	can_led_event(ndev, CAN_LED_EVENT_STOP);
 	pm_runtime_put(rcan->dev);
 
 	netdev_dbg(ndev, "%s\n", __func__);
@@ -817,7 +834,7 @@ static const struct net_device_ops rk3562_can_netdev_ops = {
  * Put the driver into low power mode.
  * Return: 0 on success and failure value on error
  */
-static int rk3562_can_suspend(struct device *dev)
+static int __maybe_unused rk3562_can_suspend(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 
@@ -837,7 +854,7 @@ static int rk3562_can_suspend(struct device *dev)
  * Resume operation after suspend.
  * Return: 0 on success and failure value on error
  */
-static int rk3562_can_resume(struct device *dev)
+static int __maybe_unused rk3562_can_resume(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	int ret;
@@ -869,7 +886,7 @@ static int rk3562_can_resume(struct device *dev)
  * Put the driver into low power mode.
  * Return: 0 always
  */
-static int rk3562_can_runtime_suspend(struct device *dev)
+static int __maybe_unused rk3562_can_runtime_suspend(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct rk3562_can *rcan = netdev_priv(ndev);
@@ -886,7 +903,7 @@ static int rk3562_can_runtime_suspend(struct device *dev)
  * Resume operation after suspend.
  * Return: 0 on success and failure value on error
  */
-static int rk3562_can_runtime_resume(struct device *dev)
+static int __maybe_unused rk3562_can_runtime_resume(struct device *dev)
 {
 	struct net_device *ndev = dev_get_drvdata(dev);
 	struct rk3562_can *rcan = netdev_priv(ndev);
@@ -902,9 +919,9 @@ static int rk3562_can_runtime_resume(struct device *dev)
 }
 
 static const struct dev_pm_ops rk3562_can_dev_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(rk3562_can_suspend, rk3562_can_resume)
-	RUNTIME_PM_OPS(rk3562_can_runtime_suspend,
-		       rk3562_can_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(rk3562_can_suspend, rk3562_can_resume)
+	SET_RUNTIME_PM_OPS(rk3562_can_runtime_suspend,
+			   rk3562_can_runtime_resume, NULL)
 };
 
 static const struct of_device_id rk3562_can_of_match[] = {
@@ -924,6 +941,7 @@ static int rk3562_can_probe(struct platform_device *pdev)
 {
 	struct net_device *ndev;
 	struct rk3562_can *rcan;
+	struct resource *res;
 	void __iomem *addr;
 	int err, irq;
 
@@ -933,7 +951,8 @@ static int rk3562_can_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	addr = devm_platform_ioremap_resource(pdev, 0);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	addr = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(addr))
 		return -EBUSY;
 
@@ -949,22 +968,20 @@ static int rk3562_can_probe(struct platform_device *pdev)
 			       0, ndev->name, ndev);
 	if (err) {
 		dev_err(&pdev->dev, "request_irq err: %d\n", err);
-		goto err_free_candev;
+		return err;
 	}
 
-	rcan->reset = devm_reset_control_array_get_exclusive(&pdev->dev);
+	rcan->reset = devm_reset_control_array_get(&pdev->dev, false, false);
 	if (IS_ERR(rcan->reset)) {
-		err = dev_err_probe(&pdev->dev, PTR_ERR(rcan->reset),
-				    "failed to get canfd reset lines\n");
-		goto err_free_candev;
+		if (PTR_ERR(rcan->reset) != -EPROBE_DEFER)
+			dev_err(&pdev->dev, "failed to get canfd reset lines\n");
+		return PTR_ERR(rcan->reset);
 	}
 	rcan->num_clks = devm_clk_bulk_get_all(&pdev->dev, &rcan->clks);
-	if (rcan->num_clks < 1) {
-		err = -ENODEV;
-		goto err_free_candev;
-	}
+	if (rcan->num_clks < 1)
+		return -ENODEV;
 
-	rcan->mode = (uintptr_t)device_get_match_data(&pdev->dev);
+	rcan->mode = (unsigned long)of_device_get_match_data(&pdev->dev);
 
 	rcan->base = addr;
 	rcan->can.clock.freq = clk_get_rate(rcan->clks[0].clk);
@@ -1001,8 +1018,7 @@ static int rk3562_can_probe(struct platform_device *pdev)
 		rcan->rx_max_data = 18;
 		break;
 	default:
-		err = -EINVAL;
-		goto err_free_candev;
+		return -EINVAL;
 	}
 
 	ndev->netdev_ops = &rk3562_can_netdev_ops;
@@ -1020,7 +1036,8 @@ static int rk3562_can_probe(struct platform_device *pdev)
 			__func__, err);
 		goto err_pmdisable;
 	}
-	netif_napi_add(ndev, &rcan->napi, rk3562_can_rx_poll);
+	netif_napi_add(ndev, &rcan->napi, rk3562_can_rx_poll,
+		       rcan->rx_fifo_depth);
 	err = register_candev(ndev);
 	if (err) {
 		dev_err(&pdev->dev, "registering %s failed (err=%d)\n",
@@ -1028,14 +1045,14 @@ static int rk3562_can_probe(struct platform_device *pdev)
 		goto err_disableclks;
 	}
 
-	pm_runtime_put(&pdev->dev);
+	devm_can_led_init(ndev);
+
 	return 0;
 
 err_disableclks:
 	pm_runtime_put(&pdev->dev);
 err_pmdisable:
 	pm_runtime_disable(&pdev->dev);
-err_free_candev:
 	free_candev(ndev);
 
 	return err;
@@ -1057,7 +1074,7 @@ static int rk3562_can_remove(struct platform_device *pdev)
 static struct platform_driver rk3562_can_driver = {
 	.driver = {
 		.name = DRV_NAME,
-		.pm = pm_ptr(&rk3562_can_dev_pm_ops),
+		.pm = &rk3562_can_dev_pm_ops,
 		.of_match_table = rk3562_can_of_match,
 	},
 	.probe = rk3562_can_probe,

@@ -14,7 +14,8 @@
 
 #include "pcm179x.h"
 
-static int pcm179x_i2c_probe(struct i2c_client *client)
+static int pcm179x_i2c_probe(struct i2c_client *client,
+			      const struct i2c_device_id *id)
 {
 	struct regmap *regmap;
 	int ret;
@@ -29,13 +30,11 @@ static int pcm179x_i2c_probe(struct i2c_client *client)
 	return pcm179x_common_init(&client->dev, regmap);
 }
 
-#ifdef CONFIG_OF
 static const struct of_device_id pcm179x_of_match[] = {
 	{ .compatible = "ti,pcm1792a", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, pcm179x_of_match);
-#endif
 
 static const struct i2c_device_id pcm179x_i2c_ids[] = {
 	{ "pcm179x", 0 },
@@ -49,7 +48,7 @@ static struct i2c_driver pcm179x_i2c_driver = {
 		.of_match_table = of_match_ptr(pcm179x_of_match),
 	},
 	.id_table	= pcm179x_i2c_ids,
-	.probe_new	= pcm179x_i2c_probe,
+	.probe		= pcm179x_i2c_probe,
 };
 
 module_i2c_driver(pcm179x_i2c_driver);

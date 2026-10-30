@@ -12,11 +12,6 @@
 / {
 	compatible = "rockchip,rk3399-sapphire", "rockchip,rk3399";
 
-	aliases {
-		mmc0 = &sdmmc;
-		mmc1 = &sdhci;
-	};
-
 	chosen {
 		stdout-path = "serial2:1500000n8";
 	};
@@ -81,26 +76,6 @@
 		regulator-max-microvolt = <12000000>;
 	};
 
-	vcc_sys: vcc-sys {
-		compatible = "regulator-fixed";
-		regulator-name = "vcc_sys";
-		regulator-always-on;
-		regulator-boot-on;
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		vin-supply = <&dc_12v>;
-	};
-
-	vcc3v3_sys: vcc3v3-sys {
-		compatible = "regulator-fixed";
-		regulator-name = "vcc3v3_sys";
-		regulator-always-on;
-		regulator-boot-on;
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		vin-supply = <&vcc_sys>;
-	};
-
 	/*
 	 * The fan power supply comes from the baseboard.
 	 * For the standalone Sapphire one option is to connect a wire
@@ -118,7 +93,7 @@
 		compatible = "gpio-keys";
 		autorepeat;
 
-		key-power {
+		power {
 			debounce-interval = <100>;
 			gpios = <&gpio0 RK_PA5 GPIO_ACTIVE_LOW>;
 			label = "GPIO Power";
@@ -154,6 +129,16 @@
 		vin-supply = <&vcc3v3_sys>;
 	};
 
+	vcc3v3_sys: vcc3v3-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_sys>;
+	};
+
 	vcc5v0_host: vcc5v0-host-regulator {
 		compatible = "regulator-fixed";
 		enable-active-high;
@@ -175,15 +160,25 @@
 		vin-supply = <&vcc_sys>;
 	};
 
+	vcc_sys: vcc-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&dc_12v>;
+	};
+
 	vdd_log: vdd-log {
 		compatible = "pwm-regulator";
 		pwms = <&pwm2 0 25000 1>;
-		pwm-supply = <&vcc_sys>;
 		regulator-name = "vdd_log";
 		regulator-always-on;
 		regulator-boot-on;
 		regulator-min-microvolt = <800000>;
 		regulator-max-microvolt = <1400000>;
+		vin-supply = <&vcc_sys>;
 	};
 };
 

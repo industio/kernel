@@ -789,13 +789,15 @@ err_cleanup:
 	return ret;
 }
 
-static void gt9760s_remove(struct i2c_client *client)
+static int gt9760s_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct gt9760s_device *dev_vcm = sd_to_vcm_dev(sd);
 
 	pm_runtime_disable(&client->dev);
 	gt9760s_subdev_cleanup(dev_vcm);
+
+	return 0;
 }
 
 static int __maybe_unused gt9760s_vcm_suspend(struct device *dev)

@@ -1,24 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Author:
- * Felix Matouschek <felix@matouschek.org>
+ * Copyright (c) 2020 Rockchip Electronics Co., Ltd
+ *
+ * Authors:
+ *	Dingqiang Lin <jon.lin@rock-chips.com>
  */
 
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/mtd/spinand.h>
 
-#define SPINAND_MFR_XTX	0x0B
-
-#define XT26G0XA_STATUS_ECC_MASK	GENMASK(5, 2)
-#define XT26G0XA_STATUS_ECC_NO_DETECTED	(0 << 2)
-#define XT26G0XA_STATUS_ECC_8_CORRECTED	(3 << 4)
-#define XT26G0XA_STATUS_ECC_UNCOR_ERROR	(2 << 4)
+#define SPINAND_MFR_XTX			0x0B
 
 static SPINAND_OP_VARIANTS(read_cache_variants,
-		SPINAND_PAGE_READ_FROM_CACHE_QUADIO_OP(0, 1, NULL, 0),
 		SPINAND_PAGE_READ_FROM_CACHE_X4_OP(0, 1, NULL, 0),
-		SPINAND_PAGE_READ_FROM_CACHE_DUALIO_OP(0, 1, NULL, 0),
 		SPINAND_PAGE_READ_FROM_CACHE_X2_OP(0, 1, NULL, 0),
 		SPINAND_PAGE_READ_FROM_CACHE_OP(true, 0, 1, NULL, 0),
 		SPINAND_PAGE_READ_FROM_CACHE_OP(false, 0, 1, NULL, 0));
@@ -32,7 +27,7 @@ static SPINAND_OP_VARIANTS(update_cache_variants,
 		SPINAND_PROG_LOAD(false, 0, NULL, 0));
 
 static int xt26g0xa_ooblayout_ecc(struct mtd_info *mtd, int section,
-				   struct mtd_oob_region *region)
+				  struct mtd_oob_region *region)
 {
 	if (section)
 		return -ERANGE;
@@ -49,8 +44,8 @@ static int xt26g0xa_ooblayout_free(struct mtd_info *mtd, int section,
 	if (section)
 		return -ERANGE;
 
-	region->offset = 1;
-	region->length = 47;
+	region->offset = 2;
+	region->length = mtd->oobsize - 18;
 
 	return 0;
 }
@@ -153,27 +148,16 @@ static const struct mtd_ooblayout_ops xt26g01c_ooblayout = {
  * else, reserved
  */
 static int xt26g0xa_ecc_get_status(struct spinand_device *spinand,
-					 u8 status)
+				   u8 status)
 {
-	status = status & XT26G0XA_STATUS_ECC_MASK;
+	u8 eccsr = (status & GENMASK(5, 2)) >> 2;
 
-	switch (status) {
-	case XT26G0XA_STATUS_ECC_NO_DETECTED:
-		return 0;
-	case XT26G0XA_STATUS_ECC_8_CORRECTED:
+	if (eccsr <= 7)
+		return eccsr;
+	else if (eccsr == 12)
 		return 8;
-	case XT26G0XA_STATUS_ECC_UNCOR_ERROR:
+	else
 		return -EBADMSG;
-	default:
-		break;
-	}
-
-	/* At this point values greater than (2 << 4) are invalid  */
-	if (status > XT26G0XA_STATUS_ECC_UNCOR_ERROR)
-		return -EINVAL;
-
-	/* (1 << 2) through (7 << 2) are 1-7 corrected errors */
-	return status >> 2;
 }
 
 /*
@@ -404,42 +388,6 @@ static const struct spinand_info xtx_spinand_table[] = {
 					      &update_cache_variants),
 		     SPINAND_HAS_QE_BIT,
 		     SPINAND_ECCINFO(&xt26g01c_ooblayout, xt26g11c_ecc_get_status)),
-	SPINAND_INFO("XT26G12DWSIGA",
-		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_DUMMY, 0x35),
-		     NAND_MEMORG(1, 2048, 128, 64, 2048, 40, 1, 1, 1),
-		     NAND_ECCREQ(8, 512),
-		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
-					      &write_cache_variants,
-					      &update_cache_variants),
-		     SPINAND_HAS_QE_BIT,
-		     SPINAND_ECCINFO(&xt26g01c_ooblayout, xt26g11c_ecc_get_status)),
-	SPINAND_INFO("XT26Q12DWSIGA",
-		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_DUMMY, 0x55),
-		     NAND_MEMORG(1, 2048, 128, 64, 2048, 40, 1, 1, 1),
-		     NAND_ECCREQ(8, 512),
-		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
-					      &write_cache_variants,
-					      &update_cache_variants),
-		     SPINAND_HAS_QE_BIT,
-		     SPINAND_ECCINFO(&xt26g01c_ooblayout, xt26g11c_ecc_get_status)),
-	SPINAND_INFO("XT26G11DWSIGA",
-		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_DUMMY, 0x34),
-		     NAND_MEMORG(1, 2048, 128, 64, 1024, 20, 1, 1, 1),
-		     NAND_ECCREQ(8, 512),
-		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
-					      &write_cache_variants,
-					      &update_cache_variants),
-		     SPINAND_HAS_QE_BIT,
-		     SPINAND_ECCINFO(&xt26g01c_ooblayout, xt26g11c_ecc_get_status)),
-	SPINAND_INFO("XT26Q14DWSIGA",
-		     SPINAND_ID(SPINAND_READID_METHOD_OPCODE_DUMMY, 0x56),
-		     NAND_MEMORG(1, 4096, 256, 64, 2048, 40, 1, 1, 1),
-		     NAND_ECCREQ(8, 512),
-		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
-					      &write_cache_variants,
-					      &update_cache_variants),
-		     SPINAND_HAS_QE_BIT,
-		     SPINAND_ECCINFO(&xt26g01c_ooblayout, xt26g11c_ecc_get_status)),
 };
 
 static const struct spinand_manufacturer_ops xtx_spinand_manuf_ops = {
@@ -447,7 +395,7 @@ static const struct spinand_manufacturer_ops xtx_spinand_manuf_ops = {
 
 const struct spinand_manufacturer xtx_spinand_manufacturer = {
 	.id = SPINAND_MFR_XTX,
-	.name = "XTX",
+	.name = "xtx",
 	.chips = xtx_spinand_table,
 	.nchips = ARRAY_SIZE(xtx_spinand_table),
 	.ops = &xtx_spinand_manuf_ops,

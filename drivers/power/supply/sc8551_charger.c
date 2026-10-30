@@ -1191,7 +1191,7 @@ static int sc8551_set_adc_scanrate(struct sc8551 *sc, bool oneshot)
 static int sc8551_get_adc_data(struct sc8551 *sc, int channel,  int *result)
 {
 	u8 val_l = 0, val_h = 0;
-	u32 val = 0;
+	u16 val = 0;
 	int ret = 0;
 
 	if (channel >= ADC_MAX_NUM)
@@ -2167,7 +2167,7 @@ err_1:
 	return ret;
 }
 
-static void sc8551_charger_remove(struct i2c_client *client)
+static int sc8551_charger_remove(struct i2c_client *client)
 {
 	struct sc8551 *sc = i2c_get_clientdata(client);
 
@@ -2178,6 +2178,8 @@ static void sc8551_charger_remove(struct i2c_client *client)
 
 	mutex_destroy(&sc->data_lock);
 	mutex_destroy(&sc->i2c_rw_lock);
+
+	return 0;
 }
 
 static void sc8551_charger_shutdown(struct i2c_client *client)

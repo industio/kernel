@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Chen Shunqing <csq@rock-chips.com>
  */
@@ -363,8 +363,7 @@ static void rk628_hdmirx_delayed_work_audio(struct work_struct *work)
 	}
 	audio_state->pre_state = fifo_status;
 exit:
-	queue_delayed_work(system_freezable_wq, &hdmirx->delayed_work_audio,
-			   msecs_to_jiffies(delay));
+	schedule_delayed_work(&hdmirx->delayed_work_audio, msecs_to_jiffies(delay));
 }
 
 static void rk628_hdmirx_audio_setup(struct rk628 *rk628)
@@ -418,8 +417,7 @@ static void rk628_hdmirx_audio_setup(struct rk628 *rk628)
 	rk628_i2c_write(rk628, HDMI_RX_AUD_CHEXTR_CTRL, AUD_LAYOUT_CTRL(1));
 	/* audio detect */
 	rk628_i2c_write(rk628, HDMI_RX_PDEC_AUDIODET_CTRL, AUDIODET_THRESHOLD(0));
-	queue_delayed_work(system_freezable_wq, &hdmirx->delayed_work_audio,
-			   msecs_to_jiffies(1000));
+	schedule_delayed_work(&hdmirx->delayed_work_audio, msecs_to_jiffies(1000));
 }
 
 static void rk628_hdmirx_ctrl_enable(struct rk628 *rk628)

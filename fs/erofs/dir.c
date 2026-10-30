@@ -2,7 +2,7 @@
 /*
  * Copyright (C) 2017-2018 HUAWEI, Inc.
  *             https://www.huawei.com/
- * Copyright (C) 2022, Alibaba Cloud
+ * Created by Gao Xiang <gaoxiang25@huawei.com>
  */
 #include "internal.h"
 
@@ -22,9 +22,10 @@ static void debug_one_dentry(unsigned char d_type, const char *de_name,
 }
 
 static int erofs_fill_dentries(struct inode *dir, struct dir_context *ctx,
-			       void *dentry_blk, struct erofs_dirent *de,
+			       void *dentry_blk, unsigned int *ofs,
 			       unsigned int nameoff, unsigned int maxsize)
 {
+	struct erofs_dirent *de = dentry_blk + *ofs;
 	const struct erofs_dirent *end = dentry_blk + nameoff;
 
 	while (de < end) {
@@ -58,65 +59,78 @@ static int erofs_fill_dentries(struct inode *dir, struct dir_context *ctx,
 			/* stopped by some reason */
 			return 1;
 		++de;
-		ctx->pos += sizeof(struct erofs_dirent);
+		*ofs += sizeof(struct erofs_dirent);
 	}
+	*ofs = maxsize;
 	return 0;
 }
 
 static int erofs_readdir(struct file *f, struct dir_context *ctx)
 {
 	struct inode *dir = file_inode(f);
-	struct erofs_buf buf = __EROFS_BUF_INITIALIZER;
-	struct super_block *sb = dir->i_sb;
-	unsigned long bsz = sb->s_blocksize;
+	struct address_space *mapping = dir->i_mapping;
 	const size_t dirsize = i_size_read(dir);
-	unsigned int i = erofs_blknr(sb, ctx->pos);
-	unsigned int ofs = erofs_blkoff(sb, ctx->pos);
+	unsigned int i = ctx->pos / EROFS_BLKSIZ;
+	unsigned int ofs = ctx->pos % EROFS_BLKSIZ;
 	int err = 0;
 	bool initial = true;
 
 	while (ctx->pos < dirsize) {
+		struct page *dentry_page;
 		struct erofs_dirent *de;
 		unsigned int nameoff, maxsize;
 
-		de = erofs_bread(&buf, dir, i, EROFS_KMAP);
-		if (IS_ERR(de)) {
-			erofs_err(sb, "fail to readdir of logical block %u of nid %llu",
-				  i, EROFS_I(dir)->nid);
-			err = PTR_ERR(de);
+		dentry_page = read_mapping_page(mapping, i, NULL);
+		if (dentry_page == ERR_PTR(-ENOMEM)) {
+			err = -ENOMEM;
 			break;
-		}
-
-		nameoff = le16_to_cpu(de->nameoff);
-		if (nameoff < sizeof(struct erofs_dirent) || nameoff >= bsz) {
-			erofs_err(sb, "invalid de[0].nameoff %u @ nid %llu",
-				  nameoff, EROFS_I(dir)->nid);
+		} else if (IS_ERR(dentry_page)) {
+			erofs_err(dir->i_sb,
+				  "fail to readdir of logical block %u of nid %llu",
+				  i, EROFS_I(dir)->nid);
 			err = -EFSCORRUPTED;
 			break;
 		}
 
-		maxsize = min_t(unsigned int, dirsize - ctx->pos + ofs, bsz);
+		de = (struct erofs_dirent *)kmap(dentry_page);
+
+		nameoff = le16_to_cpu(de->nameoff);
+
+		if (nameoff < sizeof(struct erofs_dirent) ||
+		    nameoff >= PAGE_SIZE) {
+			erofs_err(dir->i_sb,
+				  "invalid de[0].nameoff %u @ nid %llu",
+				  nameoff, EROFS_I(dir)->nid);
+			err = -EFSCORRUPTED;
+			goto skip_this;
+		}
+
+		maxsize = min_t(unsigned int,
+				dirsize - ctx->pos + ofs, PAGE_SIZE);
 
 		/* search dirents at the arbitrary position */
 		if (initial) {
 			initial = false;
 
 			ofs = roundup(ofs, sizeof(struct erofs_dirent));
-			ctx->pos = erofs_pos(sb, i) + ofs;
 			if (ofs >= nameoff)
 				goto skip_this;
 		}
 
-		err = erofs_fill_dentries(dir, ctx, de, (void *)de + ofs,
+		err = erofs_fill_dentries(dir, ctx, de, &ofs,
 					  nameoff, maxsize);
+skip_this:
+		kunmap(dentry_page);
+
+		put_page(dentry_page);
+
+		ctx->pos = blknr_to_addr(i) + ofs;
+
 		if (err)
 			break;
-skip_this:
-		ctx->pos = erofs_pos(sb, i) + maxsize;
 		++i;
 		ofs = 0;
 	}
-	erofs_put_metabuf(&buf);
 	return err < 0 ? err : 0;
 }
 
@@ -125,3 +139,4 @@ const struct file_operations erofs_dir_fops = {
 	.read		= generic_read_dir,
 	.iterate_shared	= erofs_readdir,
 };
+

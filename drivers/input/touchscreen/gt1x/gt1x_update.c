@@ -196,7 +196,7 @@ check_fs_fail:
 }
 #endif
 
-static int gt1x_i2c_write_with_readback(u16 addr, u8 *buffer, int length)
+int gt1x_i2c_write_with_readback(u16 addr, u8 *buffer, int length)
 {
 	u8 buf[100];
 	int ret = gt1x_i2c_write(addr, buffer, length);
@@ -213,10 +213,9 @@ static int gt1x_i2c_write_with_readback(u16 addr, u8 *buffer, int length)
 	return 0;
 }
 
-#if 0
 #define getU32(a) ((u32)getUint((u8 *)(a), 4))
 #define getU16(a) ((u16)getUint((u8 *)(a), 2))
-static u32 getUint(u8 *buffer, int len)
+u32 getUint(u8 *buffer, int len)
 {
 	u32 num = 0;
 	int i;
@@ -226,7 +225,6 @@ static u32 getUint(u8 *buffer, int len)
 	}
 	return num;
 }
-#endif
 
 int gt1x_auto_update_proc(void *data)
 {
@@ -749,7 +747,7 @@ _reset:
 	return 0;
 }
 
-static int __gt1x_hold_ss51_dsp_20(void)
+int __gt1x_hold_ss51_dsp_20(void)
 {
 	int ret = -1;
 	int retry = 0;

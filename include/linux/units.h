@@ -2,7 +2,7 @@
 #ifndef _LINUX_UNITS_H
 #define _LINUX_UNITS_H
 
-#include <linux/math.h>
+#include <linux/kernel.h>
 
 /* Metric prefixes in accordance with Système international (d'unités) */
 #define PETA	1000000000000000ULL
@@ -20,9 +20,6 @@
 #define PICO	1000000000000ULL
 #define FEMTO	1000000000000000ULL
 
-#define NANOHZ_PER_HZ		1000000000UL
-#define MICROHZ_PER_HZ		1000000UL
-#define MILLIHZ_PER_HZ		1000UL
 #define HZ_PER_KHZ		1000UL
 #define KHZ_PER_MHZ		1000UL
 #define HZ_PER_MHZ		1000000UL

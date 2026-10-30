@@ -1456,6 +1456,11 @@ static const struct i2c_algorithm rk3x_i2c_algorithm = {
 	.functionality		= rk3x_i2c_func,
 };
 
+static const struct rk3x_i2c_soc_data rv1103b_soc_data = {
+	.grf_offset = 0x50008,
+	.calc_timings = rk3x_i2c_v1_calc_timings,
+};
+
 static const struct rk3x_i2c_soc_data rv1108_soc_data = {
 	.grf_offset = 0x408,
 	.calc_timings = rk3x_i2c_v1_calc_timings,
@@ -1492,6 +1497,10 @@ static const struct rk3x_i2c_soc_data rk3399_soc_data = {
 };
 
 static const struct of_device_id rk3x_i2c_match[] = {
+	{
+		.compatible = "rockchip,rv1103b-i2c",
+		.data = &rv1103b_soc_data
+	},
 	{
 		.compatible = "rockchip,rv1108-i2c",
 		.data = &rv1108_soc_data
@@ -1579,7 +1588,7 @@ static int rk3x_i2c_probe(struct platform_device *pdev)
 	/* use common interface to get I2C timing properties */
 	i2c_parse_fw_timings(&pdev->dev, &i2c->t, true);
 
-	strscpy(i2c->adap.name, "rk3x-i2c", sizeof(i2c->adap.name));
+	strlcpy(i2c->adap.name, "rk3x-i2c", sizeof(i2c->adap.name));
 	i2c->adap.owner = THIS_MODULE;
 	i2c->adap.algo = &rk3x_i2c_algorithm;
 	i2c->adap.retries = 3;
@@ -1592,6 +1601,14 @@ static int rk3x_i2c_probe(struct platform_device *pdev)
 
 	spin_lock_init(&i2c->lock);
 	init_waitqueue_head(&i2c->wait);
+
+	i2c->i2c_restart_nb.notifier_call = rk3x_i2c_restart_notify;
+	i2c->i2c_restart_nb.priority = 128;
+	ret = register_pre_restart_handler(&i2c->i2c_restart_nb);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to setup i2c restart handler.\n");
+		return ret;
+	}
 
 	i2c->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(i2c->regs))
@@ -1608,7 +1625,10 @@ static int rk3x_i2c_probe(struct platform_device *pdev)
 		if (!IS_ERR(grf)) {
 			int bus_nr = i2c->adap.nr;
 
-			if (i2c->soc_data == &rv1108_soc_data && bus_nr == 2)
+			if (i2c->soc_data == &rv1103b_soc_data && bus_nr == 4)
+				/* rv1103b i2c4 set grf offset-0x8, bit-8 */
+				value = BIT(24) | BIT(8);
+			else if (i2c->soc_data == &rv1108_soc_data && bus_nr == 2)
 				/* rv1108 i2c2 set grf offset-0x408, bit-10 */
 				value = BIT(26) | BIT(10);
 			else if (i2c->soc_data == &rv1126_soc_data &&
@@ -1695,39 +1715,22 @@ static int rk3x_i2c_probe(struct platform_device *pdev)
 			}
 		}
 
-		ret = clk_enable(i2c->clk);
-		if (ret < 0) {
-			dev_err(&pdev->dev, "Can't enable bus clk: %d\n", ret);
-			goto err_clk_notifier;
-		}
-
 		clk_rate = clk_get_rate(i2c->clk);
 		if (!clk_rate)
 			device_property_read_u32(&pdev->dev, "i2c,clk-rate", (u32 *)&clk_rate);
 
 		rk3x_i2c_adapt_div(i2c, clk_rate);
-		clk_disable(i2c->clk);
 
 		if (rk3x_i2c_get_version(i2c) >= RK_I2C_VERSION5)
 			i2c->autostop_supported = true;
 	}
 
-	i2c->i2c_restart_nb.notifier_call = rk3x_i2c_restart_notify;
-	i2c->i2c_restart_nb.priority = 255;
-	ret = register_restart_handler(&i2c->i2c_restart_nb);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to setup i2c restart handler.\n");
-		goto err_clk_notifier;
-	}
-
 	ret = i2c_add_numbered_adapter(&i2c->adap);
 	if (ret < 0)
-		goto err_register_restart_handler;
+		goto err_clk_notifier;
 
 	return 0;
 
-err_register_restart_handler:
-	unregister_restart_handler(&i2c->i2c_restart_nb);
 err_clk_notifier:
 	clk_notifier_unregister(i2c->clk, &i2c->clk_rate_nb);
 err_pclk:
@@ -1743,8 +1746,8 @@ static int rk3x_i2c_remove(struct platform_device *pdev)
 
 	i2c_del_adapter(&i2c->adap);
 
-	unregister_restart_handler(&i2c->i2c_restart_nb);
 	clk_notifier_unregister(i2c->clk, &i2c->clk_rate_nb);
+	unregister_pre_restart_handler(&i2c->i2c_restart_nb);
 	clk_unprepare(i2c->pclk);
 	clk_unprepare(i2c->clk);
 

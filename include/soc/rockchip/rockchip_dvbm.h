@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd
  */
 #ifndef __SOC_ROCKCHIP_DVBM_H
 #define __SOC_ROCKCHIP_DVBM_H
@@ -60,7 +60,7 @@ struct dvbm_port {
 
 struct dvbm_isp_cfg_t {
 	u32 chan_id;
-	struct dma_buf *buf;
+	struct dmabuf *buf;
 	dma_addr_t dma_addr;
 	u32 ybuf_top;
 	u32 ybuf_bot;

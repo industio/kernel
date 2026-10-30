@@ -68,8 +68,7 @@ struct is31fl32xx_priv {
  * @pwm_registers_reversed: : true if PWM registers count down instead of up
  * @led_control_register_base : address of first LED control register (optional)
  * @enable_bits_per_led_control_register: number of LEDs enable bits in each
- * @reset_func          : pointer to reset function
- * @sw_shutdown_func    : pointer to software shutdown function
+ * @reset_func:         : pointer to reset function
  *
  * For all optional register addresses, the sentinel value %IS31FL32XX_REG_NONE
  * indicates that this chip has no such register.
@@ -220,6 +219,7 @@ static void is31fl32xx_brightness_work(struct work_struct *work)
 				     brightness_work);
 	const struct is31fl32xx_chipdef *cdef = led_data->priv->cdef;
 	u8 pwm_register_offset;
+	int ret;
 
 	dev_dbg(led_data->cdev.dev, "%s: %d\n",
 		__func__, led_data->new_brightness);
@@ -230,9 +230,9 @@ static void is31fl32xx_brightness_work(struct work_struct *work)
 	else
 		pwm_register_offset = led_data->channel - 1;
 
-	is31fl32xx_write(led_data->priv,
-			 cdef->pwm_register_base + pwm_register_offset,
-			 led_data->new_brightness);
+	ret = is31fl32xx_write(led_data->priv,
+			       cdef->pwm_register_base + pwm_register_offset,
+			       led_data->new_brightness);
 
 	is31fl32xx_write(led_data->priv, cdef->pwm_update_reg, 0);
 	mutex_unlock(&led_data->priv->led_mutex);
@@ -537,7 +537,7 @@ static int is31fl32xx_probe(struct i2c_client *client,
 	return 0;
 }
 
-static void is31fl32xx_remove(struct i2c_client *client)
+static int is31fl32xx_remove(struct i2c_client *client)
 {
 	int i;
 	struct is31fl32xx_priv *priv = i2c_get_clientdata(client);
@@ -550,7 +550,7 @@ static void is31fl32xx_remove(struct i2c_client *client)
 		cancel_work_sync(&led_data->brightness_work);
 	}
 
-	is31fl32xx_software_shutdown(priv, true);
+	return is31fl32xx_software_shutdown(priv, true);
 }
 
 static void is31fl32xx_shutdown(struct i2c_client *client)

@@ -1,6 +1,6 @@
 /* drivers/input/sensors/sensor-dev.c - handle all gsensor in this file
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: luowei <lw@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public

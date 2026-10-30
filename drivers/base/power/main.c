@@ -32,8 +32,10 @@
 #include <linux/suspend.h>
 #include <trace/events/power.h>
 #include <linux/cpufreq.h>
+#include <linux/cpuidle.h>
 #include <linux/devfreq.h>
 #include <linux/timer.h>
+#include <linux/wakeup_reason.h>
 
 #include "../base.h"
 #include "power.h"
@@ -219,13 +221,16 @@ static void initcall_debug_report(struct device *dev, ktime_t calltime,
 				  void *cb, int error)
 {
 	ktime_t rettime;
+	s64 nsecs;
 
 	if (!pm_print_times_enabled)
 		return;
 
 	rettime = ktime_get();
+	nsecs = (s64) ktime_to_ns(ktime_sub(rettime, calltime));
+
 	dev_info(dev, "%pS returned %d after %Ld usecs\n", cb, error,
-		 (unsigned long long)ktime_us_delta(rettime, calltime));
+		 (unsigned long long)nsecs >> 10);
 }
 
 /**
@@ -438,9 +443,9 @@ static pm_callback_t pm_noirq_op(const struct dev_pm_ops *ops, pm_message_t stat
 
 static void pm_dev_dbg(struct device *dev, pm_message_t state, const char *info)
 {
-	dev_dbg(dev, "%s%s%s driver flags: %x\n", info, pm_verb(state.event),
+	dev_dbg(dev, "%s%s%s\n", info, pm_verb(state.event),
 		((state.event & PM_EVENT_SLEEP) && device_may_wakeup(dev)) ?
-		", may wakeup" : "", dev->power.driver_flags);
+		", may wakeup" : "");
 }
 
 static void pm_dev_err(struct device *dev, pm_message_t state, const char *info,
@@ -485,7 +490,7 @@ static int dpm_run_callback(pm_callback_t cb, struct device *dev,
 	trace_device_pm_callback_start(dev, info, state.event);
 	error = cb(dev);
 	trace_device_pm_callback_end(dev, error);
-	suspend_report_result(dev, cb, error);
+	suspend_report_result(cb, error);
 
 	initcall_debug_report(dev, calltime, cb, error);
 
@@ -744,6 +749,8 @@ void dpm_resume_noirq(pm_message_t state)
 
 	resume_device_irqs();
 	device_wakeup_disarm_wake_irqs();
+
+	cpuidle_resume();
 }
 
 /**
@@ -1229,6 +1236,8 @@ Run:
 	error = dpm_run_callback(callback, dev, state, info);
 	if (error) {
 		async_error = error;
+		log_suspend_abort_reason("Device %s failed to %s noirq: error %d",
+					 dev_name(dev), pm_verb(state.event), error);
 		goto Complete;
 	}
 
@@ -1338,6 +1347,8 @@ int dpm_suspend_noirq(pm_message_t state)
 {
 	int ret;
 
+	cpuidle_pause();
+
 	device_wakeup_arm_wake_irqs();
 	suspend_device_irqs();
 
@@ -1357,7 +1368,7 @@ static void dpm_propagate_wakeup_to_parent(struct device *dev)
 
 	spin_lock_irq(&parent->power.lock);
 
-	if (device_wakeup_path(dev) && !parent->power.ignore_children)
+	if (dev->power.wakeup_path && !parent->power.ignore_children)
 		parent->power.wakeup_path = true;
 
 	spin_unlock_irq(&parent->power.lock);
@@ -1423,6 +1434,8 @@ Run:
 	error = dpm_run_callback(callback, dev, state, info);
 	if (error) {
 		async_error = error;
+		log_suspend_abort_reason("Device %s failed to %s late: error %d",
+					 dev_name(dev), pm_verb(state.event), error);
 		goto Complete;
 	}
 	dpm_propagate_wakeup_to_parent(dev);
@@ -1467,7 +1480,6 @@ int dpm_suspend_late(pm_message_t state)
 	int error = 0;
 
 	trace_suspend_resume(TPS("dpm_suspend_late"), state.event, true);
-	wake_up_all_idle_cpus();
 	mutex_lock(&dpm_list_mtx);
 	pm_transition = state;
 	async_error = 0;
@@ -1556,7 +1568,7 @@ static int legacy_suspend(struct device *dev, pm_message_t state,
 	trace_device_pm_callback_start(dev, info, state.event);
 	error = cb(dev, state);
 	trace_device_pm_callback_end(dev, error);
-	suspend_report_result(dev, cb, error);
+	suspend_report_result(cb, error);
 
 	initcall_debug_report(dev, calltime, cb, error);
 
@@ -1631,7 +1643,7 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 		goto Complete;
 
 	/* Avoid direct_complete to let wakeup_path propagate. */
-	if (device_may_wakeup(dev) || device_wakeup_path(dev))
+	if (device_may_wakeup(dev) || dev->power.wakeup_path)
 		dev->power.direct_complete = false;
 
 	if (dev->power.direct_complete) {
@@ -1699,6 +1711,9 @@ static int __device_suspend(struct device *dev, pm_message_t state, bool async)
 
 		dpm_propagate_wakeup_to_parent(dev);
 		dpm_clear_superiors_direct_complete(dev);
+	} else {
+		log_suspend_abort_reason("Device %s failed to %s: error %d",
+					 dev_name(dev), pm_verb(state.event), error);
 	}
 
 	device_unlock(dev);
@@ -1843,7 +1858,7 @@ unlock:
 	device_unlock(dev);
 
 	if (ret < 0) {
-		suspend_report_result(dev, callback, ret);
+		suspend_report_result(callback, ret);
 		pm_runtime_put(dev);
 		return ret;
 	}
@@ -1912,6 +1927,9 @@ int dpm_prepare(pm_message_t state)
 		} else {
 			dev_info(dev, "not prepared for power transition: code %d\n",
 				 error);
+			log_suspend_abort_reason("Device %s not prepared for power transition: code %d",
+						 dev_name(dev), error);
+			dpm_save_failed_dev(dev_name(dev));
 		}
 
 		mutex_unlock(&dpm_list_mtx);
@@ -1948,10 +1966,10 @@ int dpm_suspend_start(pm_message_t state)
 }
 EXPORT_SYMBOL_GPL(dpm_suspend_start);
 
-void __suspend_report_result(const char *function, struct device *dev, void *fn, int ret)
+void __suspend_report_result(const char *function, void *fn, int ret)
 {
 	if (ret)
-		dev_err(dev, "%s(): %pS returns %d\n", function, fn, ret);
+		pr_err("%s(): %pS returns %d\n", function, fn, ret);
 }
 EXPORT_SYMBOL_GPL(__suspend_report_result);
 

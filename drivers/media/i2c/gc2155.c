@@ -912,6 +912,10 @@ gc2155_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -986,7 +990,7 @@ static int gc2155_aec_ctrl(struct v4l2_subdev *sd,
 #endif
 
 static int gc2155_set_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct gc2155 *gc2155 = to_gc2155(sd);
@@ -1002,7 +1006,7 @@ static int gc2155_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.colorspace = V4L2_COLORSPACE_SRGB;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&gc2155->mutex);
 		return -ENOTTY;
@@ -1022,7 +1026,7 @@ static int gc2155_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc2155_get_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct gc2155 *gc2155 = to_gc2155(sd);
@@ -1031,7 +1035,7 @@ static int gc2155_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&gc2155->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&gc2155->mutex);
 		return -ENOTTY;
@@ -1059,7 +1063,7 @@ static void gc2155_get_default_format(struct gc2155 *gc2155,
 }
 
 static int gc2155_enum_mbus_code(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->index >= ARRAY_SIZE(supported_modes))
@@ -1071,7 +1075,7 @@ static int gc2155_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int gc2155_enum_frame_sizes(struct v4l2_subdev *sd,
-				    struct v4l2_subdev_state *sd_state,
+				    struct v4l2_subdev_pad_config *cfg,
 				    struct v4l2_subdev_frame_size_enum *fse)
 {
 	u32 index = fse->index;
@@ -1152,10 +1156,10 @@ static void gc2155_get_module_inf(struct gc2155 *gc2155,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, GC2155_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, gc2155->module_name,
+	strlcpy(inf->base.sensor, GC2155_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, gc2155->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, gc2155->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, gc2155->len_name, sizeof(inf->base.lens));
 }
 
 static long gc2155_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -1346,7 +1350,7 @@ static int gc2155_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct gc2155 *gc2155 = to_gc2155(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-		v4l2_subdev_get_try_format(sd, fh->state, 0);
+		v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct gc2155_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&gc2155->mutex);
@@ -1383,11 +1387,11 @@ static int gc2155_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int gc2155_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
+static int gc2155_g_mbus_config(struct v4l2_subdev *sd,
 				struct v4l2_mbus_config *config)
 {
 	config->type = V4L2_MBUS_PARALLEL;
-	config->bus.parallel.flags = V4L2_MBUS_HSYNC_ACTIVE_HIGH |
+	config->flags = V4L2_MBUS_HSYNC_ACTIVE_HIGH |
 			V4L2_MBUS_VSYNC_ACTIVE_LOW |
 			V4L2_MBUS_PCLK_SAMPLE_RISING;
 
@@ -1479,7 +1483,7 @@ unlock:
 }
 
 static int gc2155_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -1510,6 +1514,7 @@ static const struct v4l2_subdev_core_ops gc2155_core_ops = {
 
 static const struct v4l2_subdev_video_ops gc2155_video_ops = {
 	.s_stream = gc2155_s_stream,
+	.g_mbus_config = gc2155_g_mbus_config,
 	.g_frame_interval = gc2155_g_frame_interval,
 	.s_frame_interval = gc2155_s_frame_interval,
 };
@@ -1520,7 +1525,6 @@ static const struct v4l2_subdev_pad_ops gc2155_pad_ops = {
 	.enum_frame_interval = gc2155_enum_frame_interval,
 	.get_fmt = gc2155_get_fmt,
 	.set_fmt = gc2155_set_fmt,
-	.get_mbus_config = gc2155_g_mbus_config,
 };
 
 static const struct v4l2_subdev_ops gc2155_subdev_ops = {
@@ -1683,7 +1687,7 @@ static int gc2155_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 gc2155->module_index, facing,
 		 GC2155_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1707,7 +1711,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void gc2155_remove(struct i2c_client *client)
+static int gc2155_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct gc2155 *gc2155 = to_gc2155(sd);
@@ -1722,6 +1726,8 @@ static void gc2155_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__gc2155_power_off(gc2155);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

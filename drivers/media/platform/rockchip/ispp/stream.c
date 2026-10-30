@@ -1463,7 +1463,7 @@ static int rkispp_querycap(struct file *file, void *priv,
 	struct device *dev = stream->isppdev->dev;
 	struct video_device *vdev = video_devdata(file);
 
-	strscpy(cap->card, vdev->name, sizeof(cap->card));
+	strlcpy(cap->card, vdev->name, sizeof(cap->card));
 	snprintf(cap->driver, sizeof(cap->driver),
 		 "%s_v%d", dev->driver->name,
 		 stream->isppdev->ispp_ver >> 4);
@@ -1560,9 +1560,6 @@ static void dump_file(struct rkispp_device *dev, u32 restart_module)
 	struct file *fp = NULL;
 	char file[160], reg[48];
 	int i;
-
-	if (!IS_ENABLED(CONFIG_NO_GKI))
-		return;
 
 	snprintf(file, sizeof(file), "%s/%s%d.reg",
 		 rkispp_dump_path, DRIVER_NAME, dev->dev_id);
@@ -2014,7 +2011,7 @@ int rkispp_register_stream_vdevs(struct rkispp_device *dev)
 			v4l2_err(&dev->v4l2_dev, "Invalid stream:%d\n", i);
 			return -EINVAL;
 		}
-		strscpy(vdev->name, vdev_name, sizeof(vdev->name));
+		strlcpy(vdev->name, vdev_name, sizeof(vdev->name));
 		ret = rkispp_register_stream_video(stream);
 		if (ret < 0)
 			goto err;

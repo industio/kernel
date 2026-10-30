@@ -11,11 +11,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#ifdef HAVE_LIBBPF_SUPPORT
 #include <bpf/libbpf.h>
 #include "bpf-event.h"
-#include "bpf-utils.h"
-#endif
 #include "compress.h"
 #include "env.h"
 #include "namespaces.h"
@@ -280,11 +277,17 @@ bool dso__needs_decompress(struct dso *dso)
 		dso->symtab_type == DSO_BINARY_TYPE__GUEST_KMODULE_COMP;
 }
 
-int filename__decompress(const char *name, char *pathname,
-			 size_t len, int comp, int *err)
+static int decompress_kmodule(struct dso *dso, const char *name,
+			      char *pathname, size_t len)
 {
 	char tmpbuf[] = KMOD_DECOMP_NAME;
 	int fd = -1;
+
+	if (!dso__needs_decompress(dso))
+		return -1;
+
+	if (dso->comp == COMP_ID__NONE)
+		return -1;
 
 	/*
 	 * We have proper compression id for DSO and yet the file
@@ -299,17 +302,17 @@ int filename__decompress(const char *name, char *pathname,
 	 * To keep this transparent, we detect this and return the file
 	 * descriptor to the uncompressed file.
 	 */
-	if (!compressions[comp].is_compressed(name))
+	if (!compressions[dso->comp].is_compressed(name))
 		return open(name, O_RDONLY);
 
 	fd = mkstemp(tmpbuf);
 	if (fd < 0) {
-		*err = errno;
+		dso->load_errno = errno;
 		return -1;
 	}
 
-	if (compressions[comp].decompress(name, fd)) {
-		*err = DSO_LOAD_ERRNO__DECOMPRESSION_FAILURE;
+	if (compressions[dso->comp].decompress(name, fd)) {
+		dso->load_errno = DSO_LOAD_ERRNO__DECOMPRESSION_FAILURE;
 		close(fd);
 		fd = -1;
 	}
@@ -321,19 +324,6 @@ int filename__decompress(const char *name, char *pathname,
 		strlcpy(pathname, tmpbuf, len);
 
 	return fd;
-}
-
-static int decompress_kmodule(struct dso *dso, const char *name,
-			      char *pathname, size_t len)
-{
-	if (!dso__needs_decompress(dso))
-		return -1;
-
-	if (dso->comp == COMP_ID__NONE)
-		return -1;
-
-	return filename__decompress(name, pathname, len, dso->comp,
-				    &dso->load_errno);
 }
 
 int dso__decompress_kmodule_fd(struct dso *dso, const char *name)
@@ -501,7 +491,6 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 	if (!name)
 		return -ENOMEM;
 
-	mutex_lock(&dso->lock);
 	if (machine)
 		root_dir = machine->root_dir;
 
@@ -509,19 +498,8 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 					    root_dir, name, PATH_MAX))
 		goto out;
 
-	if (!is_regular_file(name)) {
-		char *new_name;
-
-		if (errno != ENOENT || dso->nsinfo == NULL)
-			goto out;
-
-		new_name = filename_with_chroot(dso->nsinfo->pid, name);
-		if (!new_name)
-			goto out;
-
-		free(name);
-		name = new_name;
-	}
+	if (!is_regular_file(name))
+		goto out;
 
 	if (dso__needs_decompress(dso)) {
 		char newpath[KMOD_DECOMP_LEN];
@@ -542,7 +520,6 @@ static int __open_dso(struct dso *dso, struct machine *machine)
 		unlink(name);
 
 out:
-	mutex_unlock(&dso->lock);
 	free(name);
 	return fd;
 }
@@ -561,11 +538,8 @@ static int open_dso(struct dso *dso, struct machine *machine)
 	int fd;
 	struct nscookie nsc;
 
-	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE) {
-		mutex_lock(&dso->lock);
+	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
 		nsinfo__mountns_enter(dso->nsinfo, &nsc);
-		mutex_unlock(&dso->lock);
-	}
 	fd = __open_dso(dso, machine);
 	if (dso->binary_type != DSO_BINARY_TYPE__BUILD_ID_CACHE)
 		nsinfo__mountns_exit(&nsc);
@@ -754,7 +728,6 @@ bool dso__data_status_seen(struct dso *dso, enum dso_data_status_seen by)
 	return false;
 }
 
-#ifdef HAVE_LIBBPF_SUPPORT
 static ssize_t bpf_read(struct dso *dso, u64 offset, char *data)
 {
 	struct bpf_prog_info_node *node;
@@ -792,7 +765,6 @@ static int bpf_size(struct dso *dso)
 	dso->data.file_size = node->info_linear->info.jited_prog_len;
 	return 0;
 }
-#endif // HAVE_LIBBPF_SUPPORT
 
 static void
 dso_cache__free(struct dso *dso)
@@ -800,7 +772,7 @@ dso_cache__free(struct dso *dso)
 	struct rb_root *root = &dso->data.cache;
 	struct rb_node *next = rb_first(root);
 
-	mutex_lock(&dso->lock);
+	pthread_mutex_lock(&dso->lock);
 	while (next) {
 		struct dso_cache *cache;
 
@@ -809,7 +781,7 @@ dso_cache__free(struct dso *dso)
 		rb_erase(&cache->rb_node, root);
 		free(cache);
 	}
-	mutex_unlock(&dso->lock);
+	pthread_mutex_unlock(&dso->lock);
 }
 
 static struct dso_cache *__dso_cache__find(struct dso *dso, u64 offset)
@@ -846,7 +818,7 @@ dso_cache__insert(struct dso *dso, struct dso_cache *new)
 	struct dso_cache *cache;
 	u64 offset = new->offset;
 
-	mutex_lock(&dso->lock);
+	pthread_mutex_lock(&dso->lock);
 	while (*p != NULL) {
 		u64 end;
 
@@ -867,7 +839,7 @@ dso_cache__insert(struct dso *dso, struct dso_cache *new)
 
 	cache = NULL;
 out:
-	mutex_unlock(&dso->lock);
+	pthread_mutex_unlock(&dso->lock);
 	return cache;
 }
 
@@ -922,12 +894,10 @@ static struct dso_cache *dso_cache__populate(struct dso *dso,
 		*ret = -ENOMEM;
 		return NULL;
 	}
-#ifdef HAVE_LIBBPF_SUPPORT
+
 	if (dso->binary_type == DSO_BINARY_TYPE__BPF_PROG_INFO)
 		*ret = bpf_read(dso, cache_offset, cache->data);
-	else
-#endif
-	if (dso->binary_type == DSO_BINARY_TYPE__OOL)
+	else if (dso->binary_type == DSO_BINARY_TYPE__OOL)
 		*ret = DSO__DATA_CACHE_SIZE;
 	else
 		*ret = file_read(dso, machine, cache_offset, cache->data);
@@ -1048,10 +1018,10 @@ int dso__data_file_size(struct dso *dso, struct machine *machine)
 
 	if (dso->data.status == DSO_DATA_STATUS_ERROR)
 		return -1;
-#ifdef HAVE_LIBBPF_SUPPORT
+
 	if (dso->binary_type == DSO_BINARY_TYPE__BPF_PROG_INFO)
 		return bpf_size(dso);
-#endif
+
 	return file_size(dso, machine);
 }
 
@@ -1302,7 +1272,7 @@ struct dso *dso__new_id(const char *name, struct dso_id *id)
 		dso->root = NULL;
 		INIT_LIST_HEAD(&dso->node);
 		INIT_LIST_HEAD(&dso->data.open_entry);
-		mutex_init(&dso->lock);
+		pthread_mutex_init(&dso->lock, NULL);
 		refcount_set(&dso->refcnt, 1);
 	}
 
@@ -1341,7 +1311,7 @@ void dso__delete(struct dso *dso)
 	dso__free_a2l(dso);
 	zfree(&dso->symsrc_filename);
 	nsinfo__zput(dso->nsinfo);
-	mutex_destroy(&dso->lock);
+	pthread_mutex_destroy(&dso->lock);
 	free(dso);
 }
 

@@ -9,6 +9,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-dma-contig.h>
+#include <linux/dma-iommu.h>
 #include <linux/rk-camera-module.h>
 #include "dev.h"
 #include "regs.h"

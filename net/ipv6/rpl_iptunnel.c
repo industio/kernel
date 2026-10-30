@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/*
+/**
  * Authors:
  * (C) 2020 Alexander Aring <alex.aring@gmail.com>
  */
@@ -190,13 +190,18 @@ static int rpl_do_srh(struct sk_buff *skb, const struct rpl_lwt *rlwt)
 {
 	struct dst_entry *dst = skb_dst(skb);
 	struct rpl_iptunnel_encap *tinfo;
+	int err = 0;
 
 	if (skb->protocol != htons(ETH_P_IPV6))
 		return -EINVAL;
 
 	tinfo = rpl_encap_lwtunnel(dst->lwtstate);
 
-	return rpl_do_srh_inline(skb, rlwt, tinfo->srh);
+	err = rpl_do_srh_inline(skb, rlwt, tinfo->srh);
+	if (err)
+		return err;
+
+	return 0;
 }
 
 static int rpl_output(struct net *net, struct sock *sk, struct sk_buff *skb)
@@ -263,8 +268,10 @@ static int rpl_input(struct sk_buff *skb)
 	rlwt = rpl_lwt_lwtunnel(orig_dst->lwtstate);
 
 	err = rpl_do_srh(skb, rlwt);
-	if (unlikely(err))
-		goto drop;
+	if (unlikely(err)) {
+		kfree_skb(skb);
+		return err;
+	}
 
 	local_bh_disable();
 	dst = dst_cache_get(&rlwt->cache);
@@ -285,13 +292,9 @@ static int rpl_input(struct sk_buff *skb)
 
 	err = skb_cow_head(skb, LL_RESERVED_SPACE(dst->dev));
 	if (unlikely(err))
-		goto drop;
+		return err;
 
 	return dst_input(skb);
-
-drop:
-	kfree_skb(skb);
-	return err;
 }
 
 static int nla_put_rpl_srh(struct sk_buff *skb, int attrtype,

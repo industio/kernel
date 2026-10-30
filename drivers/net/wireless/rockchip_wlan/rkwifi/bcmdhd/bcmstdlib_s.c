@@ -1,7 +1,7 @@
 /*
  * Broadcom Secure Standard Library.
  *
- * Copyright (C) 2022, Broadcom.
+ * Copyright (C) 2020, Broadcom.
  *
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -28,7 +28,6 @@
 #else /* BCMDRIVER */
 #include <stddef.h>
 #include <string.h>
-#include <stdlib.h>
 #endif /* else BCMDRIVER */
 
 #include <bcmstdlib_s.h>
@@ -61,8 +60,8 @@
 #endif /* SIZE_MAX */
 #define RSIZE_MAX (SIZE_MAX >> 1u)
 
-#if !defined(__STDC_WANT_SECURE_LIB__) && !(defined(__STDC_LIB_EXT1__) && \
-	defined(__STDC_WANT_LIB_EXT1__))
+#if !defined(__STDC_WANT_SECURE_LIB__) && \
+	!(defined(__STDC_LIB_EXT1__) && defined(__STDC_WANT_LIB_EXT1__))
 /*
  * memmove_s - secure memmove
  * dest : pointer to the object to copy to
@@ -74,7 +73,7 @@
  * than RSIZE_MAX, writes destsz zero bytes into the dest object.
  */
 int
-BCMPOSTTRAPFN(memmove_s)(void *dest, size_t destsz, const void *src, size_t n)
+memmove_s(void *dest, size_t destsz, const void *src, size_t n)
 {
 	int err = BCME_OK;
 
@@ -89,13 +88,13 @@ BCMPOSTTRAPFN(memmove_s)(void *dest, size_t destsz, const void *src, size_t n)
 	}
 
 	if (destsz < n) {
-		bzero(dest, destsz);
+		memset(dest, 0, destsz);
 		err = BCME_BADLEN;
 		goto exit;
 	}
 
 	if ((!src) || (((const char *)src + n) < (const char *)src)) {
-		bzero(dest, destsz);
+		memset(dest, 0, destsz);
 		err = BCME_BADARG;
 		goto exit;
 	}
@@ -133,20 +132,20 @@ BCMPOSTTRAPFN(memcpy_s)(void *dest, size_t destsz, const void *src, size_t n)
 	}
 
 	if (destsz < n) {
-		bzero(dest, destsz);
+		memset(dest, 0, destsz);
 		err = BCME_BADLEN;
 		goto exit;
 	}
 
 	if ((!s) || ((s + n) < s)) {
-		bzero(dest, destsz);
+		memset(dest, 0, destsz);
 		err = BCME_BADARG;
 		goto exit;
 	}
 
 	/* overlap checking between dest and src */
 	if (!(((d + destsz) <= s) || (d >= (s + n)))) {
-		bzero(dest, destsz);
+		memset(dest, 0, destsz);
 		err = BCME_BADARG;
 		goto exit;
 	}
@@ -205,7 +204,7 @@ exit:
  * of course, the buffer size is zero). It does not pad
  * out the result like strncpy() does.
  */
-size_t BCMPOSTTRAPFN(strlcpy)(char *dest, const char *src, size_t size)
+size_t strlcpy(char *dest, const char *src, size_t size)
 {
 	size_t i;
 

@@ -116,12 +116,17 @@
 
 	hdmi_sound: hdmi-sound {
 		status = "okay";
-		compatible = "rockchip,hdmi";
-		rockchip,mclk-fs = <256>;
-		rockchip,card-name = "rockchip-hdmi";
-		rockchip,cpu = <&i2s2>;
-		rockchip,codec = <&hdmi>;
-		rockchip,jack-det;
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,hdmi";
+
+		simple-audio-card,cpu {
+			sound-dai = <&i2s2>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&hdmi>;
+		};
 	};
 
 	panel: panel {
@@ -705,7 +710,7 @@
 		layout = <3>;
 	};
 
-	vm149c: vm149c@c {
+	vm149c: vm149c@0c {
 		compatible = "silicon touch,vm149c";
 		status = "okay";
 		reg = <0x0c>;

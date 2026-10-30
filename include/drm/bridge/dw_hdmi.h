@@ -80,7 +80,6 @@ struct platform_device;
  */
 
 #define SUPPORT_HDMI_ALLM	BIT(1)
-#define DOVI_VSIF_LEN		8
 
 enum {
 	DW_HDMI_RES_8,
@@ -143,17 +142,6 @@ struct dw_hdmi_link_config {
 	u8 pps_payload[128];
 };
 
-struct dovi_vsif_data {
-	u8 header[3];
-	u8 pb[28];
-};
-
-struct hdr10_plus_vsdb {
-	u8 application_version;
-	u8 full_frame_peak_luminance_index;
-	u8 peak_luminance_index;
-};
-
 struct dw_hdmi_phy_ops {
 	int (*init)(struct dw_hdmi *hdmi, void *data,
 		    const struct drm_display_info *display,
@@ -200,8 +188,6 @@ struct dw_hdmi_property_ops {
 struct dw_hdmi_plat_data {
 	struct regmap *regm;
 
-	unsigned int output_port;
-
 	unsigned long input_bus_format;
 	unsigned long input_bus_encoding;
 	unsigned int max_tmdsclk;
@@ -223,11 +209,6 @@ struct dw_hdmi_plat_data {
 					   const struct drm_display_info *info,
 					   const struct drm_display_mode *mode);
 
-	/* Platform-specific audio enable/disable (optional) */
-	void (*enable_audio)(struct dw_hdmi *hdmi, int channel,
-			     int width, int rate, int non_pcm);
-	void (*disable_audio)(struct dw_hdmi *hdmi);
-
 	/* Vendor PHY support */
 	const struct dw_hdmi_phy_ops *phy_ops;
 	const struct dw_hdmi_qp_phy_ops *qp_phy_ops;
@@ -239,8 +220,6 @@ struct dw_hdmi_plat_data {
 	/* split mode */
 	bool split_mode;
 	bool first_screen;
-	bool dual_connector_split;
-	bool left_display;
 	struct dw_hdmi_qp *left;
 	struct dw_hdmi_qp *right;
 
@@ -252,7 +231,6 @@ struct dw_hdmi_plat_data {
 	int (*configure_phy)(struct dw_hdmi *hdmi, void *data,
 			     unsigned long mpixelclock);
 
-	unsigned int disable_cec : 1;
 	unsigned long (*get_input_bus_format)(void *data);
 	unsigned long (*get_output_bus_format)(void *data);
 	unsigned long (*get_enc_in_encoding)(void *data);
@@ -262,13 +240,10 @@ struct dw_hdmi_plat_data {
 	struct drm_property_blob *(*get_hdr_blob)(void *data);
 	bool (*get_color_changed)(void *data);
 	int (*get_yuv422_format)(struct drm_connector *connector,
-				 const struct edid *edid);
-	int (*get_edid_dsc_info)(void *data, const struct edid *edid);
+				 struct edid *edid);
+	int (*get_edid_dsc_info)(void *data, struct edid *edid);
 	int (*get_next_hdr_data)(void *data, struct edid *edid,
 				 struct drm_connector *connector);
-	int (*get_dovi_data)(void *data, const struct edid *edid,
-			     struct drm_connector *connector);
-	void (*get_dovi_vsif)(void *data, u32 *buf);
 	struct dw_hdmi_link_config *(*get_link_cfg)(void *data);
 	void (*set_hdcp_status)(void *data, u8 status);
 	void (*set_hdcp2_enable)(void *data, bool enable);
@@ -282,18 +257,12 @@ struct dw_hdmi_plat_data {
 	void (*update_color_format)(struct drm_connector_state *conn_state, void *data);
 	bool (*check_hdr_color_change)(struct drm_connector_state *conn_state, void *data);
 	void (*set_prev_bus_format)(void *data, unsigned long bus_format);
-	int (*get_colorimetry)(void *data, const struct edid *edid);
+	int (*get_colorimetry)(void *data, struct edid *edid);
 	void (*set_ddc_io)(void *data, bool enable);
 	void (*set_hdcp14_mem)(void *data, bool enable);
 	struct drm_display_mode *(*get_force_timing)(void *data);
 	u32 (*get_refclk_rate)(void *data);
 	void (*force_frl_rate)(void *data, u8 rate);
-	void (*get_mode_color_caps)(struct drm_connector *connector, struct drm_display_info *info,
-				    void *data);
-	void (*crtc_pre_disable)(void *data, struct drm_crtc *crtc);
-	void (*crtc_post_enable)(void *data, struct drm_crtc *crtc);
-	int (*get_hdr10_plus_vsdb)(void *data, const struct edid *edid,
-				   struct drm_connector *connector);
 
 	/* Vendor Property support */
 	const struct dw_hdmi_property_ops *property_ops;
@@ -320,8 +289,6 @@ void dw_hdmi_setup_rx_sense(struct dw_hdmi *hdmi, bool hpd, bool rx_sense);
 
 int dw_hdmi_set_plugged_cb(struct dw_hdmi *hdmi, hdmi_codec_plugged_cb fn,
 			   struct device *codec_dev);
-void dw_hdmi_set_sample_non_pcm(struct dw_hdmi *hdmi, unsigned int non_pcm);
-void dw_hdmi_set_sample_width(struct dw_hdmi *hdmi, unsigned int width);
 void dw_hdmi_set_sample_rate(struct dw_hdmi *hdmi, unsigned int rate);
 void dw_hdmi_set_channel_count(struct dw_hdmi *hdmi, unsigned int cnt);
 void dw_hdmi_set_channel_status(struct dw_hdmi *hdmi, u8 *channel_status);
@@ -336,11 +303,9 @@ void dw_hdmi_phy_i2c_set_addr(struct dw_hdmi *hdmi, u8 address);
 void dw_hdmi_phy_i2c_write(struct dw_hdmi *hdmi, unsigned short data,
 			   unsigned char addr);
 
-void dw_hdmi_phy_gen1_reset(struct dw_hdmi *hdmi);
-
 void dw_hdmi_phy_gen2_pddq(struct dw_hdmi *hdmi, u8 enable);
 void dw_hdmi_phy_gen2_txpwron(struct dw_hdmi *hdmi, u8 enable);
-void dw_hdmi_phy_gen2_reset(struct dw_hdmi *hdmi);
+void dw_hdmi_phy_reset(struct dw_hdmi *hdmi);
 
 enum drm_connector_status dw_hdmi_phy_read_hpd(struct dw_hdmi *hdmi,
 					       void *data);
@@ -377,15 +342,11 @@ void dw_hdmi_qp_audio_enable(struct dw_hdmi_qp *hdmi);
 void dw_hdmi_qp_audio_disable(struct dw_hdmi_qp *hdmi);
 int dw_hdmi_qp_set_plugged_cb(struct dw_hdmi_qp *hdmi, hdmi_codec_plugged_cb fn,
 			      struct device *codec_dev);
-void dw_hdmi_qp_set_quant_range(struct dw_hdmi_qp *hdmi);
 void dw_hdmi_qp_set_output_type(struct dw_hdmi_qp *hdmi, u64 val);
 bool dw_hdmi_qp_get_output_whether_hdmi(struct dw_hdmi_qp *hdmi);
 int dw_hdmi_qp_get_output_type_cap(struct dw_hdmi_qp *hdmi);
 void dw_hdmi_set_hpd_wake(struct dw_hdmi *hdmi);
 void dw_hdmi_cec_wake_ops_register(struct dw_hdmi *hdmi,
 				   const struct dw_hdmi_cec_wake_ops *cec_ops);
-int dw_hdmi_qp_register_audio(struct dw_hdmi_qp *hdmi);
-int dw_hdmi_qp_register_cec(struct dw_hdmi_qp *hdmi);
-int dw_hdmi_qp_register_hdcp(struct dw_hdmi_qp *hdmi);
 
 #endif /* __IMX_HDMI_H__ */

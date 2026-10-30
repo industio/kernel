@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 
-spi-nor-objs			:= core.o sfdp.o swp.o otp.o sysfs.o
+spi-nor-objs			:= core.o sfdp.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_ATMEL)		+= atmel.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_BOYA)		+= boya.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_CATALYST)		+= catalyst.o
@@ -23,7 +23,6 @@ spi-nor-$(CONFIG_MTD_SPI_NOR_WINBOND)		+= winbond.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_XILINX)		+= xilinx.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_XMC)		+= xmc.o
 spi-nor-$(CONFIG_MTD_SPI_NOR_XTX)		+= xtx.o
-spi-nor-$(CONFIG_DEBUG_FS)	+= debugfs.o
 obj-$(CONFIG_MTD_SPI_NOR)	+= spi-nor.o
 
 obj-$(CONFIG_MTD_SPI_NOR)	+= controllers/

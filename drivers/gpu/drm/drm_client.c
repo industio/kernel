@@ -3,7 +3,6 @@
  * Copyright 2018 Noralf Trønnes
  */
 
-#include <linux/iosys-map.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -122,34 +121,13 @@ EXPORT_SYMBOL(drm_client_init);
  * drm_client_register() it is no longer permissible to call drm_client_release()
  * directly (outside the unregister callback), instead cleanup will happen
  * automatically on driver unload.
- *
- * Registering a client generates a hotplug event that allows the client
- * to set up its display from pre-existing outputs. The client must have
- * initialized its state to able to handle the hotplug event successfully.
  */
 void drm_client_register(struct drm_client_dev *client)
 {
 	struct drm_device *dev = client->dev;
-	int ret;
 
 	mutex_lock(&dev->clientlist_mutex);
 	list_add(&client->list, &dev->clientlist);
-
-	if (client->funcs && client->funcs->hotplug) {
-		/*
-		 * Perform an initial hotplug event to pick up the
-		 * display configuration for the client. This step
-		 * has to be performed *after* registering the client
-		 * in the list of clients, or a concurrent hotplug
-		 * event might be lost; leaving the display off.
-		 *
-		 * Hold the clientlist_mutex as for a regular hotplug
-		 * event.
-		 */
-		ret = client->funcs->hotplug(client);
-		if (ret)
-			drm_dbg_kms(dev, "client hotplug ret=%d\n", ret);
-	}
 	mutex_unlock(&dev->clientlist_mutex);
 }
 EXPORT_SYMBOL(drm_client_register);
@@ -256,7 +234,7 @@ static void drm_client_buffer_delete(struct drm_client_buffer *buffer)
 {
 	struct drm_device *dev = buffer->client->dev;
 
-	drm_gem_vunmap(buffer->gem, &buffer->map);
+	drm_gem_vunmap(buffer->gem, buffer->vaddr);
 
 	if (buffer->gem)
 		drm_gem_object_put(buffer->gem);
@@ -285,7 +263,7 @@ drm_client_buffer_create(struct drm_client_dev *client, u32 width, u32 height, u
 
 	dumb_args.width = width;
 	dumb_args.height = height;
-	dumb_args.bpp = drm_format_info_bpp(info, 0);
+	dumb_args.bpp = info->cpp[0] * 8;
 	ret = drm_mode_create_dumb(dev, &dumb_args, client->file);
 	if (ret)
 		goto err_delete;
@@ -312,29 +290,24 @@ err_delete:
 /**
  * drm_client_buffer_vmap - Map DRM client buffer into address space
  * @buffer: DRM client buffer
- * @map_copy: Returns the mapped memory's address
  *
  * This function maps a client buffer into kernel address space. If the
- * buffer is already mapped, it returns the existing mapping's address.
+ * buffer is already mapped, it returns the mapping's address.
  *
  * Client buffer mappings are not ref'counted. Each call to
  * drm_client_buffer_vmap() should be followed by a call to
  * drm_client_buffer_vunmap(); or the client buffer should be mapped
  * throughout its lifetime.
  *
- * The returned address is a copy of the internal value. In contrast to
- * other vmap interfaces, you don't need it for the client's vunmap
- * function. So you can modify it at will during blit and draw operations.
- *
  * Returns:
- *	0 on success, or a negative errno code otherwise.
+ *	The mapped memory's address
  */
-int
-drm_client_buffer_vmap(struct drm_client_buffer *buffer,
-		       struct iosys_map *map_copy)
+void *drm_client_buffer_vmap(struct drm_client_buffer *buffer)
 {
-	struct iosys_map *map = &buffer->map;
-	int ret;
+	void *vaddr;
+
+	if (buffer->vaddr)
+		return buffer->vaddr;
 
 	/*
 	 * FIXME: The dependency on GEM here isn't required, we could
@@ -344,13 +317,13 @@ drm_client_buffer_vmap(struct drm_client_buffer *buffer,
 	 * fd_install step out of the driver backend hooks, to make that
 	 * final step optional for internal users.
 	 */
-	ret = drm_gem_vmap(buffer->gem, map);
-	if (ret)
-		return ret;
+	vaddr = drm_gem_vmap(buffer->gem);
+	if (IS_ERR(vaddr))
+		return vaddr;
 
-	*map_copy = *map;
+	buffer->vaddr = vaddr;
 
-	return 0;
+	return vaddr;
 }
 EXPORT_SYMBOL(drm_client_buffer_vmap);
 
@@ -364,9 +337,8 @@ EXPORT_SYMBOL(drm_client_buffer_vmap);
  */
 void drm_client_buffer_vunmap(struct drm_client_buffer *buffer)
 {
-	struct iosys_map *map = &buffer->map;
-
-	drm_gem_vunmap(buffer->gem, map);
+	drm_gem_vunmap(buffer->gem, buffer->vaddr);
+	buffer->vaddr = NULL;
 }
 EXPORT_SYMBOL(drm_client_buffer_vunmap);
 
@@ -394,7 +366,7 @@ static int drm_client_buffer_addfb(struct drm_client_buffer *buffer,
 	int ret;
 
 	info = drm_format_info(format);
-	fb_req.bpp = drm_format_info_bpp(info, 0);
+	fb_req.bpp = info->cpp[0] * 8;
 	fb_req.depth = info->depth;
 	fb_req.width = width;
 	fb_req.height = height;

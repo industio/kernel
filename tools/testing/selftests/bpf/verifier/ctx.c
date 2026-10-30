@@ -10,13 +10,14 @@
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 },
 {
-	"context stores via BPF_ATOMIC",
+	"context stores via XADD",
 	.insns = {
 	BPF_MOV64_IMM(BPF_REG_0, 0),
-	BPF_ATOMIC_OP(BPF_W, BPF_ADD, BPF_REG_1, BPF_REG_0, offsetof(struct __sk_buff, mark)),
+	BPF_RAW_INSN(BPF_STX | BPF_XADD | BPF_W, BPF_REG_1,
+		     BPF_REG_0, offsetof(struct __sk_buff, mark), 0),
 	BPF_EXIT_INSN(),
 	},
-	.errstr = "BPF_ATOMIC stores into R1 ctx is not allowed",
+	.errstr = "BPF_XADD stores into R1 ctx is not allowed",
 	.result = REJECT,
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 },
@@ -58,7 +59,7 @@
 	},
 	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	.result = REJECT,
-	.errstr = "negative offset ctx ptr R1 off=-612 disallowed",
+	.errstr = "dereference of modified ctx ptr",
 },
 {
 	"pass modified ctx pointer to helper, 2",
@@ -71,8 +72,8 @@
 	},
 	.result_unpriv = REJECT,
 	.result = REJECT,
-	.errstr_unpriv = "negative offset ctx ptr R1 off=-612 disallowed",
-	.errstr = "negative offset ctx ptr R1 off=-612 disallowed",
+	.errstr_unpriv = "dereference of modified ctx ptr",
+	.errstr = "dereference of modified ctx ptr",
 },
 {
 	"pass modified ctx pointer to helper, 3",
@@ -127,7 +128,7 @@
 	.prog_type = BPF_PROG_TYPE_CGROUP_SOCK_ADDR,
 	.expected_attach_type = BPF_CGROUP_UDP6_SENDMSG,
 	.result = REJECT,
-	.errstr = "R1 type=scalar expected=ctx",
+	.errstr = "R1 type=inv expected=ctx",
 },
 {
 	"pass ctx or null check, 4: ctx - const",
@@ -141,7 +142,7 @@
 	.prog_type = BPF_PROG_TYPE_CGROUP_SOCK_ADDR,
 	.expected_attach_type = BPF_CGROUP_UDP6_SENDMSG,
 	.result = REJECT,
-	.errstr = "negative offset ctx ptr R1 off=-612 disallowed",
+	.errstr = "dereference of modified ctx ptr",
 },
 {
 	"pass ctx or null check, 5: null (connect)",
@@ -193,5 +194,5 @@
 	.prog_type = BPF_PROG_TYPE_CGROUP_SOCK,
 	.expected_attach_type = BPF_CGROUP_INET4_POST_BIND,
 	.result = REJECT,
-	.errstr = "R1 type=scalar expected=ctx",
+	.errstr = "R1 type=inv expected=ctx",
 },

@@ -10,6 +10,7 @@
  */
 #include <linux/delay.h>
 #include <linux/dma-buf-cache.h>
+#include <linux/dma-iommu.h>
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>
 #include <linux/of.h>
@@ -17,7 +18,6 @@
 #include <linux/kref.h>
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
-#include <linux/platform_device.h>
 
 #ifdef CONFIG_ARM_DMA_USE_IOMMU
 #include <asm/dma-iommu.h>
@@ -34,7 +34,6 @@ mpp_dma_find_buffer_fd(struct mpp_dma_session *dma, int fd)
 	struct dma_buf *dmabuf;
 	struct mpp_dma_buffer *out = NULL;
 	struct mpp_dma_buffer *buffer = NULL, *n;
-	int find = 0;
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf))
@@ -49,26 +48,9 @@ mpp_dma_find_buffer_fd(struct mpp_dma_session *dma, int fd)
 		 */
 		if (buffer->dmabuf == dmabuf) {
 			out = buffer;
-			find = 1;
-			list_move_tail(&buffer->link, &buffer->dma->used_list);
 			break;
 		}
 	}
-	if (!find) {
-		list_for_each_entry_safe(buffer, n,
-					&dma->static_list, link) {
-			/*
-			 * fd may dup several and point the same dambuf.
-			 * thus, here should be distinguish with the dmabuf.
-			 */
-			if (buffer->dmabuf == dmabuf) {
-				out = buffer;
-				list_move_tail(&buffer->link, &buffer->dma->static_list);
-				break;
-			}
-		}
-	}
-
 	mutex_unlock(&dma->list_mutex);
 	dma_buf_put(dmabuf);
 
@@ -103,20 +85,22 @@ static int
 mpp_dma_remove_extra_buffer(struct mpp_dma_session *dma)
 {
 	struct mpp_dma_buffer *n;
-	struct mpp_dma_buffer *removable = NULL, *buffer = NULL;
+	struct mpp_dma_buffer *oldest = NULL, *buffer = NULL;
+	ktime_t oldest_time = ktime_set(0, 0);
 
 	if (dma->buffer_count > dma->max_buffers) {
 		mutex_lock(&dma->list_mutex);
 		list_for_each_entry_safe(buffer, n,
 					 &dma->used_list,
 					 link) {
-			if (kref_read(&buffer->ref) == 1) {
-				removable = buffer;
-				break;
+			if (ktime_to_ns(oldest_time) == 0 ||
+			    ktime_after(oldest_time, buffer->last_used)) {
+				oldest_time = buffer->last_used;
+				oldest = buffer;
 			}
 		}
-		if (removable)
-			kref_put(&removable->ref, mpp_dma_release_buffer);
+		if (oldest && kref_read(&oldest->ref) == 1)
+			kref_put(&oldest->ref, mpp_dma_release_buffer);
 		mutex_unlock(&dma->list_mutex);
 	}
 
@@ -193,7 +177,7 @@ int mpp_dma_free(struct mpp_dma_buffer *buffer)
 
 struct mpp_dma_buffer *mpp_dma_import_fd(struct mpp_iommu_info *iommu_info,
 					 struct mpp_dma_session *dma,
-					 int fd, int static_use)
+					 int fd)
 {
 	int ret = 0;
 	struct sg_table *sgt;
@@ -213,8 +197,10 @@ struct mpp_dma_buffer *mpp_dma_import_fd(struct mpp_iommu_info *iommu_info,
 	/* Check whether in dma session */
 	buffer = mpp_dma_find_buffer_fd(dma, fd);
 	if (!IS_ERR_OR_NULL(buffer)) {
-		if (kref_get_unless_zero(&buffer->ref))
+		if (kref_get_unless_zero(&buffer->ref)) {
+			buffer->last_used = ktime_get();
 			return buffer;
+		}
 		dev_dbg(dma->dev, "missing the fd %d\n", fd);
 	}
 
@@ -239,6 +225,7 @@ struct mpp_dma_buffer *mpp_dma_import_fd(struct mpp_iommu_info *iommu_info,
 
 	buffer->dmabuf = dmabuf;
 	buffer->dir = DMA_BIDIRECTIONAL;
+	buffer->last_used = ktime_get();
 
 	attach = dma_buf_attach(buffer->dmabuf, dma->dev);
 	if (IS_ERR(attach)) {
@@ -261,16 +248,13 @@ struct mpp_dma_buffer *mpp_dma_import_fd(struct mpp_iommu_info *iommu_info,
 
 	kref_init(&buffer->ref);
 
-	if (!static_use && !IS_ENABLED(CONFIG_DMABUF_CACHE))
+	if (!IS_ENABLED(CONFIG_DMABUF_CACHE))
 		/* Increase the reference for used outside the buffer pool */
 		kref_get(&buffer->ref);
 
 	mutex_lock(&dma->list_mutex);
 	dma->buffer_count++;
-	if (static_use)
-		list_add_tail(&buffer->link, &dma->static_list);
-	else
-		list_add_tail(&buffer->link, &dma->used_list);
+	list_add_tail(&buffer->link, &dma->used_list);
 	mutex_unlock(&dma->list_mutex);
 
 	return buffer;
@@ -289,14 +273,14 @@ fail:
 int mpp_dma_unmap_kernel(struct mpp_dma_session *dma,
 			 struct mpp_dma_buffer *buffer)
 {
-	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buffer->vaddr);
+	void *vaddr = buffer->vaddr;
 	struct dma_buf *dmabuf = buffer->dmabuf;
 
-	if (IS_ERR_OR_NULL(map.vaddr) ||
+	if (IS_ERR_OR_NULL(vaddr) ||
 	    IS_ERR_OR_NULL(dmabuf))
 		return -EINVAL;
 
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap(dmabuf, vaddr);
 	buffer->vaddr = NULL;
 
 	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
@@ -308,7 +292,7 @@ int mpp_dma_map_kernel(struct mpp_dma_session *dma,
 		       struct mpp_dma_buffer *buffer)
 {
 	int ret;
-	struct iosys_map map;
+	void *vaddr;
 	struct dma_buf *dmabuf = buffer->dmabuf;
 
 	if (IS_ERR_OR_NULL(dmabuf))
@@ -320,13 +304,14 @@ int mpp_dma_map_kernel(struct mpp_dma_session *dma,
 		goto failed_access;
 	}
 
-	ret = dma_buf_vmap(dmabuf, &map);
-	if (ret) {
+	vaddr = dma_buf_vmap(dmabuf);
+	if (!vaddr) {
 		dev_dbg(dma->dev, "can't vmap the dma buffer\n");
+		ret = -EIO;
 		goto failed_vmap;
 	}
 
-	buffer->vaddr = map.vaddr;
+	buffer->vaddr = vaddr;
 
 	return 0;
 
@@ -347,11 +332,6 @@ int mpp_dma_session_destroy(struct mpp_dma_session *dma)
 	mutex_lock(&dma->list_mutex);
 	list_for_each_entry_safe(buffer, n,
 				 &dma->used_list,
-				 link) {
-		kref_put(&buffer->ref, mpp_dma_release_buffer);
-	}
-	list_for_each_entry_safe(buffer, n,
-				 &dma->static_list,
 				 link) {
 		kref_put(&buffer->ref, mpp_dma_release_buffer);
 	}
@@ -376,7 +356,6 @@ mpp_dma_session_create(struct device *dev, u32 max_buffers)
 	mutex_init(&dma->list_mutex);
 	INIT_LIST_HEAD(&dma->unused_list);
 	INIT_LIST_HEAD(&dma->used_list);
-	INIT_LIST_HEAD(&dma->static_list);
 
 	if (max_buffers > MPP_SESSION_MAX_BUFFERS) {
 		mpp_debug(DEBUG_IOCTL, "session_max_buffer %d must less than %d\n",
@@ -452,18 +431,8 @@ int mpp_iommu_detach(struct mpp_iommu_info *info)
 
 int mpp_iommu_attach(struct mpp_iommu_info *info)
 {
-	struct mpp_iommu_info *last_info;
-
 	if (!info)
 		return 0;
-
-	/* if device changed, detach last first */
-	last_info = info->queue->last_iommu_info;
-	if (info->shared && last_info && last_info->shared
-	    && (info->dev != last_info->dev)) {
-		iommu_detach_group(last_info->domain, last_info->group);
-	}
-	info->queue->last_iommu_info = info;
 
 	if (info->domain == iommu_get_domain_for_dev(info->dev))
 		return 0;
@@ -477,13 +446,6 @@ static int mpp_iommu_handle(struct iommu_domain *iommu,
 			    int status, void *arg)
 {
 	struct mpp_dev *mpp = (struct mpp_dev *)arg;
-
-	/*
-	 * Mask iommu irq, in order for iommu not repeatedly trigger pagefault.
-	 * Until the pagefault task finish by hw timeout.
-	 */
-	if (mpp)
-		rockchip_iommu_mask_irq(mpp->dev);
 
 	dev_err(iommu_dev, "fault addr 0x%08lx status %x arg %p\n",
 		iova, status, arg);
@@ -500,6 +462,12 @@ static int mpp_iommu_handle(struct iommu_domain *iommu,
 		mpp->dev_ops->dump_dev(mpp);
 	else
 		mpp_task_dump_hw_reg(mpp);
+
+	/*
+	 * Mask iommu irq, in order for iommu not repeatedly trigger pagefault.
+	 * Until the pagefault task finish by hw timeout.
+	 */
+	rockchip_iommu_mask_irq(mpp->dev);
 
 	return 0;
 }
@@ -572,15 +540,6 @@ mpp_iommu_probe(struct device *dev)
 	info->irq = platform_get_irq(pdev, 0);
 	info->got_irq = (info->irq < 0) ? false : true;
 
-	/* get shared flag, if true detach */
-	if (IS_ENABLED(CONFIG_ARM_DMA_USE_IOMMU)) {
-		struct platform_driver *drv = to_platform_driver(dev->driver);
-
-		info->shared = drv->driver_managed_dma;
-		if (info->shared)
-			iommu_detach_group(info->domain, info->group);
-	}
-
 	return info;
 
 err_put_group:
@@ -598,10 +557,6 @@ int mpp_iommu_remove(struct mpp_iommu_info *info)
 	if (!info)
 		return 0;
 
-	/* if iommu shared, ensure current device's domain, then remove correctly */
-	if (info->shared)
-		mpp_iommu_attach(info);
-
 	iommu_group_put(info->group);
 	platform_device_put(info->pdev);
 
@@ -614,7 +569,13 @@ int mpp_iommu_refresh(struct mpp_iommu_info *info, struct device *dev)
 
 	if (!info)
 		return 0;
-
+	/* call av1 iommu ops */
+	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_AV1DEC) && info->av1d_iommu) {
+		ret = mpp_av1_iommu_disable(dev);
+		if (ret)
+			return ret;
+		return mpp_av1_iommu_enable(dev);
+	}
 	/* disable iommu */
 	ret = rockchip_iommu_disable(dev);
 	if (ret)
@@ -682,32 +643,4 @@ int mpp_iommu_dev_deactivate(struct mpp_iommu_info *info, struct mpp_dev *dev)
 	spin_unlock_irqrestore(&info->dev_lock, flags);
 
 	return 0;
-}
-
-int mpp_iommu_reserve_iova(struct mpp_iommu_info *info, dma_addr_t iova, size_t size)
-{
-
-	struct iommu_domain *domain;
-	struct mpp_iommu_dma_cookie *cookie;
-	struct iova_domain *iovad;
-	unsigned long pfn_lo, pfn_hi;
-
-	if (!info)
-		return 0;
-
-	domain = info->domain;
-	if (!domain || !domain->iova_cookie)
-		return -EINVAL;
-
-	cookie = (struct mpp_iommu_dma_cookie *)domain->iova_cookie;
-	iovad = &cookie->iovad;
-
-	/* iova will be freed automatically by put_iova_domain() */
-	pfn_lo = iova_pfn(iovad, iova);
-	pfn_hi = iova_pfn(iovad, iova + size - 1);
-	if (!reserve_iova(iovad, pfn_lo, pfn_hi))
-		return -EINVAL;
-
-	return 0;
-
 }

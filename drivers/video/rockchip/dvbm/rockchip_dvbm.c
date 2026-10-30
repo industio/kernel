@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2022 Rockchip Electronics Co., Ltd
  *
  * author:
  *	Yandong Lin, yandong.lin@rock-chips.com
@@ -8,7 +8,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/of_platform.h>
 #include <soc/rockchip/rockchip_dvbm.h>
 

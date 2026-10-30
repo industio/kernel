@@ -159,7 +159,6 @@ enum {
 	RGA_OSD				= 0x1 << 11,
 	RGA_PRE_INTR			= 0x1 << 12,
 	RGA_FULL_CSC			= 0x1 << 13,
-	RGA_GAUSS			= 0x1 << 14,
 };
 
 enum rga_surf_format {
@@ -420,11 +419,6 @@ struct rga_csc_clip {
 struct rga_mosaic_info {
 	uint8_t enable;
 	uint8_t mode;
-};
-
-struct rga_gauss_config {
-	uint32_t size;
-	uint64_t coe_ptr;
 };
 
 /* MAX(min, (max - channel_value)) */
@@ -751,9 +745,7 @@ struct rga_req {
 
 	struct rga_rgba5551_alpha rgba5551_alpha;
 
-	struct rga_gauss_config gauss_config;
-
-	uint8_t reservr[24];
+	uint8_t reservr[39];
 };
 
 struct rga_alpha_config {
@@ -886,8 +878,6 @@ struct rga2_req {
 	struct rga_iommu_prefetch iommu_prefetch;
 
 	struct rga_rgba5551_alpha rgba5551_alpha;
-
-	struct rga_gauss_config gauss_config;
 };
 
 struct rga3_req {

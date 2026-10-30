@@ -1424,7 +1424,7 @@ static void rkisp1_stop_streaming(struct vb2_queue *queue)
 
 	rkisp1_stream_stop(stream);
 	/* call to the other devices */
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 	ret = dev->pipe.set_stream(&dev->pipe, false);
 	if (ret < 0)
 		v4l2_err(v4l2_dev, "pipeline stream-off failed error:%d\n",
@@ -1552,7 +1552,7 @@ rkisp1_start_streaming(struct vb2_queue *queue, unsigned int count)
 	if (ret < 0)
 		goto stop_stream;
 
-	ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+	ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(&dev->v4l2_dev, "start pipeline failed %d\n", ret);
 		goto pipe_stream_off;
@@ -1832,7 +1832,7 @@ static int rkisp1_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	input->type = V4L2_INPUT_TYPE_CAMERA;
-	strscpy(input->name, "Camera", sizeof(input->name));
+	strlcpy(input->name, "Camera", sizeof(input->name));
 
 	return 0;
 }
@@ -2053,7 +2053,7 @@ static int rkisp1_querycap(struct file *file, void *priv,
 	struct device *dev = stream->ispdev->dev;
 	struct video_device *vdev = video_devdata(file);
 
-	strscpy(cap->card, vdev->name, sizeof(cap->card));
+	strlcpy(cap->card, vdev->name, sizeof(cap->card));
 	snprintf(cap->driver, sizeof(cap->driver),
 		 "%s_v%d", dev->driver->name,
 		 stream->ispdev->isp_ver >> 4);
@@ -2141,9 +2141,9 @@ static int rkisp1_register_stream_vdev(struct rkisp1_stream *stream)
 		break;
 	default:
 		v4l2_err(v4l2_dev, "Invalid stream\n");
-		return -EINVAL;
+		goto unreg;
 	}
-	strscpy(vdev->name, vdev_name, sizeof(vdev->name));
+	strlcpy(vdev->name, vdev_name, sizeof(vdev->name));
 	node = vdev_to_node(vdev);
 
 	vdev->ioctl_ops = &rkisp1_v4l2_ioctl_ops;

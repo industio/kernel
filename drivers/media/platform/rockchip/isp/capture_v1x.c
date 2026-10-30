@@ -976,7 +976,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 		return;
 
 	rkisp_stream_stop(stream);
-	video_device_pipeline_stop(&node->vdev);
+	media_pipeline_stop(&node->vdev.entity);
 	ret = dev->pipe.set_stream(&dev->pipe, false);
 	if (ret < 0)
 		v4l2_err(v4l2_dev,
@@ -1089,7 +1089,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 	if (ret < 0)
 		goto stop_stream;
 
-	ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+	ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(&dev->v4l2_dev,
 			 "start pipeline failed %d\n", ret);
@@ -1163,7 +1163,7 @@ static int rkisp_stream_init(struct rkisp_device *dev, u32 id)
 	stream->linked = true;
 	switch (id) {
 	case RKISP_STREAM_SP:
-		strscpy(vdev->name, SP_VDEV_NAME,
+		strlcpy(vdev->name, SP_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp_sp_streams_ops;
 		stream->config = &rkisp_sp_stream_config;
@@ -1171,7 +1171,7 @@ static int rkisp_stream_init(struct rkisp_device *dev, u32 id)
 		stream->config->fmt_size = ARRAY_SIZE(sp_fmts);
 		break;
 	default:
-		strscpy(vdev->name, MP_VDEV_NAME,
+		strlcpy(vdev->name, MP_VDEV_NAME,
 			sizeof(vdev->name));
 		stream->ops = &rkisp_mp_streams_ops;
 		stream->config = &rkisp_mp_stream_config;

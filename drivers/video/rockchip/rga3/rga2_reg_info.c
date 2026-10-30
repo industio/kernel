@@ -5,6 +5,8 @@
  * Author: Huang Lee <Putin.li@rock-chips.com>
  */
 
+#define pr_fmt(fmt) "rga2_reg: " fmt
+
 #include "rga2_reg_info.h"
 #include "rga_dma_buf.h"
 #include "rga_iommu.h"
@@ -101,68 +103,17 @@ unsigned int rga2_rop_code[256] = {
 	0x00000051, 0x008004d4, 0x00800451, 0x00800007,//f
 };
 
-static void rga2_scale_down_bilinear_protect(u32 *param_fix, u32 *src_fix,
-					     u32 param, u32 offset, u32 src, u32 dst)
-{
-	int final_coor, final_diff, final_steps;
-
-	while (1) {
-		final_coor = offset + param * (dst - 1);
-		final_diff = (src - 1) * (1 << RGA2_BILINEAR_PREC) - final_coor;
-
-		/*
-		 *   The hardware requires that the last point of the dst map on
-		 * src must not exceed the range of src.
-		 */
-		if (final_diff <= 0)
-			param = param - 1;
-		else
-			break;
-	}
-
-	/*
-	 *   The hardware requires that the last point of dst mapping on
-	 * src be between the last two points of each row/column, so
-	 * actual width/height needs to be modified.
-	 */
-	final_steps = (final_coor & ((1 << RGA2_BILINEAR_PREC) - 1)) ?
-		((final_coor >> RGA2_BILINEAR_PREC) + 1) :
-		(final_coor >> RGA2_BILINEAR_PREC);
-
-	*param_fix = param;
-	*src_fix = final_steps + 1;
-}
-
-static void rag2_scale_down_average_protect(u32 *param_fix, u32 param,
-					    u32 src, u32 dst)
-{
-	/* division Loss */
-	param = param + 1;
-
-	/*
-	 *   Ensure that the (src - 1) drop point is to the left of the last
-	 * point of the dst.
-	 */
-	while ((param * (src - 1)) > (dst << 16))
-		param--;
-
-	*param_fix = param;
-}
-
 static void RGA2_reg_get_param(unsigned char *base, struct rga2_req *msg)
 {
 	u32 *bRGA_SRC_X_FACTOR;
 	u32 *bRGA_SRC_Y_FACTOR;
-	u32 *bRGA_SRC_ACT_INFO;
 	u32 sw, sh;
 	u32 dw, dh;
 	u32 param_x, param_y;
 	u32 scale_x_offset, scale_y_offset;
-	u32 src_fix, param_fix;
 
 	bRGA_SRC_X_FACTOR = (u32 *) (base + RGA2_SRC_X_FACTOR_OFFSET);
 	bRGA_SRC_Y_FACTOR = (u32 *) (base + RGA2_SRC_Y_FACTOR_OFFSET);
-	bRGA_SRC_ACT_INFO = (u32 *) (base + RGA2_SRC_ACT_INFO_OFFSET);
 
 	if (((msg->rotate_mode & 0x3) == 1) ||
 		((msg->rotate_mode & 0x3) == 3)) {
@@ -179,27 +130,12 @@ static void RGA2_reg_get_param(unsigned char *base, struct rga2_req *msg)
 	if (sw > dw) {
 		if (msg->interp.horiz == RGA_INTERP_LINEAR) {
 			/* default to half_pixel mode. */
-			param_x = (sw << RGA2_BILINEAR_PREC) / dw;
-			scale_x_offset = (1 << RGA2_BILINEAR_PREC) >> 1;
+			param_x = (sw << 12) / dw;
+			scale_x_offset = 0x1ff;
 
-			rga2_scale_down_bilinear_protect(&param_fix, &src_fix,
-							 param_x, scale_x_offset, sw, dw);
-			if (DEBUGGER_EN(MSG)) {
-				if (param_x != param_fix)
-					rga_log("scale: Bi-linear horiz factor %#x fix to %#x\n",
-						param_x, param_fix);
-				if (sw != src_fix)
-					rga_log("scale: Bi-linear src_width %d -> %d\n",
-						sw, src_fix);
-			}
-
-			*bRGA_SRC_X_FACTOR = ((param_fix & 0xffff) | ((scale_x_offset) << 16));
-			*bRGA_SRC_ACT_INFO =
-				((*bRGA_SRC_ACT_INFO & (~m_RGA2_SRC_ACT_INFO_SW_SRC_ACT_WIDTH)) |
-				s_RGA2_SRC_ACT_INFO_SW_SRC_ACT_WIDTH((src_fix - 1)));
+			*bRGA_SRC_X_FACTOR = ((param_x & 0xffff) | ((scale_x_offset) << 16));
 		} else {
-			param_x = (dw << 16) / sw;
-			rag2_scale_down_average_protect(&param_x, param_x, sw, dw);
+			param_x = ((dw << 16) + (sw / 2)) / sw;
 
 			*bRGA_SRC_X_FACTOR |= ((param_x & 0xffff) << 0);
 		}
@@ -217,27 +153,12 @@ static void RGA2_reg_get_param(unsigned char *base, struct rga2_req *msg)
 	if (sh > dh) {
 		if (msg->interp.verti == RGA_INTERP_LINEAR) {
 			/* default to half_pixel mode. */
-			param_y = (sh << RGA2_BILINEAR_PREC) / dh;
-			scale_y_offset = (1 << RGA2_BILINEAR_PREC) >> 1;
+			param_y = (sh << 12) / dh;
+			scale_y_offset = 0x1ff;
 
-			rga2_scale_down_bilinear_protect(&param_fix, &src_fix,
-							 param_y, scale_y_offset, sh, dh);
-			if (DEBUGGER_EN(MSG)) {
-				if (param_y != param_fix)
-					rga_log("scale: Bi-linear verti factor %#x fix to %#x\n",
-						param_y, param_fix);
-				if (sh != src_fix)
-					rga_log("scale: Bi-linear src_height %d fix to %d\n",
-						sh, src_fix);
-			}
-
-			*bRGA_SRC_Y_FACTOR = ((param_fix & 0xffff) | ((scale_y_offset) << 16));
-			*bRGA_SRC_ACT_INFO =
-				((*bRGA_SRC_ACT_INFO & (~m_RGA2_SRC_ACT_INFO_SW_SRC_ACT_HEIGHT)) |
-				s_RGA2_SRC_ACT_INFO_SW_SRC_ACT_HEIGHT((src_fix - 1)));
+			*bRGA_SRC_Y_FACTOR = ((param_y & 0xffff) | ((scale_y_offset) << 16));
 		} else {
-			param_y = (dh << 16) / sh;
-			rag2_scale_down_average_protect(&param_y, param_y, sh, dh);
+			param_y = ((dh << 16) + (sh / 2)) / sh;
 
 			*bRGA_SRC_Y_FACTOR |= ((param_y & 0xffff) << 0);
 		}
@@ -304,10 +225,6 @@ static void RGA2_set_mode_ctrl(u8 *base, struct rga2_req *msg)
 	reg = ((reg & (~m_RGA2_MODE_CTRL_SW_OSD_E)) |
 	       (s_RGA2_MODE_CTRL_SW_OSD_E(msg->osd_info.enable)));
 
-	if (msg->gauss_config.size > 0)
-		reg = ((reg & (~m_RGA2_MODE_CTRL_SW_SRC_GAUSS_EN)) |
-			(s_RGA2_MODE_CTRL_SW_SRC_GAUSS_EN(1)));
-
 	*bRGA_MODE_CTL = reg;
 }
 
@@ -335,11 +252,9 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 	u8 src0_cbcr_swp = 0;
 	u8 pixel_width = 1;
 	u8 plane_width = 0;
-	u8 pixel_depth = 8;
 	u32 stride = 0;
 	u32 uv_stride = 0;
 	u32 mask_stride = 0;
-	u32 byte_stride = 0;
 	u32 ydiv = 1, xdiv = 2;
 	u8 yuv10 = 0;
 
@@ -429,7 +344,7 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 				vsp_scale_mode = 0x0;
 			} else {
 				/* force select bi-linear */
-				rga_err("Horizontal scaling will be forcibly switched to bilinear.\n");
+				pr_err("Horizontal scaling will be forcibly switched to bilinear.\n");
 				vsp_scale_mode = 0x1;
 			}
 			break;
@@ -444,6 +359,10 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 			vsd_scale_mode = 0;
 			break;
 		case RGA_INTERP_LINEAR:
+			if (sh > 4096)
+				/* force select average */
+				vsd_scale_mode = 0;
+			else
 				vsd_scale_mode = 1;
 
 			break;
@@ -643,7 +562,6 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 	case RGA_FORMAT_YCbCr_420_SP_10B:
 		src0_format = 0xa;
 		plane_width = 2;
-		pixel_depth = 10;
 		xdiv = 2;
 		ydiv = 2;
 		yuv10 = 1;
@@ -651,7 +569,6 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 	case RGA_FORMAT_YCrCb_420_SP_10B:
 		src0_format = 0xa;
 		plane_width = 2;
-		pixel_depth = 10;
 		xdiv = 2;
 		ydiv = 2;
 		src0_cbcr_swp = 1;
@@ -660,7 +577,6 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 	case RGA_FORMAT_YCbCr_422_SP_10B:
 		src0_format = 0x8;
 		plane_width = 2;
-		pixel_depth = 10;
 		xdiv = 2;
 		ydiv = 1;
 		yuv10 = 1;
@@ -668,7 +584,6 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 	case RGA_FORMAT_YCrCb_422_SP_10B:
 		src0_format = 0x8;
 		plane_width = 2;
-		pixel_depth = 10;
 		xdiv = 2;
 		ydiv = 1;
 		src0_cbcr_swp = 1;
@@ -700,25 +615,12 @@ static void RGA2_set_reg_src_info(u8 *base, struct rga2_req *msg)
 
 	switch (msg->src.rd_mode) {
 	case RGA_RASTER_MODE:
-		if (msg->src.format == RGA_FORMAT_YCbCr_420_SP_10B ||
-		    msg->src.format == RGA_FORMAT_YCrCb_420_SP_10B ||
-		    msg->src.format == RGA_FORMAT_YCbCr_422_SP_10B ||
-		    msg->src.format == RGA_FORMAT_YCrCb_422_SP_10B)
-			/*
-			 * Legacy: implicit semantics exist here, 10bit format
-			 * width_stride equals byte_stride.
-			 */
-			byte_stride = msg->src.vir_w;
-		else
-			byte_stride = msg->src.vir_w * pixel_width * pixel_depth / 8;
-
-		stride = ALIGN(byte_stride, 4);
+		stride = ALIGN(msg->src.vir_w * pixel_width, 4);
 		uv_stride = ALIGN(msg->src.vir_w / xdiv * plane_width, 4);
 
-		yrgb_offset = msg->src.y_offset * stride +
-			msg->src.x_offset * pixel_width * pixel_depth / 8;
+		yrgb_offset = msg->src.y_offset * stride + msg->src.x_offset * pixel_width;
 		uv_offset = (msg->src.y_offset / ydiv) * uv_stride +
-			    (msg->src.x_offset / xdiv * plane_width * pixel_depth / 8);
+			    (msg->src.x_offset / xdiv * plane_width);
 		v_offset = uv_offset;
 
 		break;
@@ -1430,15 +1332,15 @@ static void RGA2_set_reg_dst_info(u8 *base, struct rga2_req *msg)
 
 	if (ydither_en) {
 		if (x_mirr && y_mirr) {
-			rga_err("ydither mode do not support rotate x_mirr=%d,y_mirr=%d\n",
+			pr_err("ydither mode do not support rotate x_mirr=%d,y_mirr=%d\n",
 				x_mirr, y_mirr);
 		}
 
 		if (msg->dst.act_w != msg->src.act_w)
-			rga_err("ydither mode do not support x dir scale\n");
+			pr_err("ydither mode do not support x dir scale\n");
 
 		if (msg->dst.act_h != msg->src.act_h)
-			rga_err("ydither mode do not support y dir scale\n");
+			pr_err("ydither mode do not support y dir scale\n");
 	}
 
 	if (dst_fmt_y4_lut_en) {
@@ -1984,50 +1886,6 @@ static void RGA_set_reg_mosaic(u8 *base, struct rga2_req *msg)
 	*bRGA_MOSAIC_MODE = (u32)(msg->mosaic_info.mode & 0x7);
 }
 
-static int RGA_set_reg_gauss(u8 *base, struct rga2_req *msg)
-{
-	uint32_t *bRGA_GAUSS_COE;
-	uint32_t reg = 0;
-	uint32_t *coe;
-
-	bRGA_GAUSS_COE = (u32 *)(base + RGA2_GAUSS_COE_OFFSET);
-
-	if (msg->gauss_config.size != 3) {
-		rga_err("Gaussian blur only support 3x3\n");
-		return -EINVAL;
-	}
-
-	coe = kmalloc(sizeof(uint32_t) * msg->gauss_config.size, GFP_KERNEL);
-	if (coe == NULL) {
-		rga_err("Gaussian blur alloc coe buffer error!\n");
-		return -ENOMEM;
-	}
-
-	if (unlikely(copy_from_user(coe,
-				    u64_to_user_ptr(msg->gauss_config.coe_ptr),
-				    sizeof(uint32_t) * msg->gauss_config.size))) {
-		rga_err("Gaussian blur coe copy_from_user failed\n");
-
-		kfree(coe);
-		return -EFAULT;
-	}
-
-	reg = ((reg & (~m_RGA2_GAUSS_COE_SW_COE0)) |
-	       (s_RGA2_GAUSS_COE_SW_COE0(coe[0])));
-
-	reg = ((reg & (~m_RGA2_GAUSS_COE_SW_COE1)) |
-	       (s_RGA2_GAUSS_COE_SW_COE1(coe[1])));
-
-	reg = ((reg & (~m_RGA2_GAUSS_COE_SW_COE2)) |
-	       (s_RGA2_GAUSS_COE_SW_COE2(coe[2])));
-
-	*bRGA_GAUSS_COE = reg;
-
-	kfree(coe);
-
-	return 0;
-}
-
 static void RGA2_set_reg_osd(u8 *base, struct rga2_req *msg)
 {
 	u32 *bRGA_OSD_CTRL0;
@@ -2336,7 +2194,6 @@ static void RGA2_set_mmu_reg_info(struct rga_scheduler_t *scheduler, u8 *base, s
 
 static int rga2_gen_reg_info(struct rga_scheduler_t *scheduler, u8 *base, struct rga2_req *msg)
 {
-	int ret;
 	u8 dst_nn_quantize_en = 0;
 
 	RGA2_set_mode_ctrl(base, msg);
@@ -2360,11 +2217,6 @@ static int rga2_gen_reg_info(struct rga_scheduler_t *scheduler, u8 *base, struct
 			RGA_set_reg_mosaic(base, msg);
 		if (msg->osd_info.enable)
 			RGA2_set_reg_osd(base, msg);
-		if (msg->gauss_config.size > 0) {
-			ret = RGA_set_reg_gauss(base, msg);
-			if (ret < 0)
-				return ret;
-		}
 
 		break;
 	case COLOR_FILL_MODE:
@@ -2394,8 +2246,8 @@ static int rga2_gen_reg_info(struct rga_scheduler_t *scheduler, u8 *base, struct
 		RGA2_set_reg_update_patten_buff(base, msg);
 		break;
 	default:
-		rga_err("ERROR msg render mode %d\n", msg->render_mode);
-		return -EINVAL;
+		pr_err("ERROR msg render mode %d\n", msg->render_mode);
+		break;
 	}
 
 	RGA2_set_mmu_reg_info(scheduler, base, msg);
@@ -2557,8 +2409,6 @@ static void rga_cmd_to_rga2_cmd(struct rga_scheduler_t *scheduler,
 	/* RGA2 1106 add */
 	memcpy(&req->mosaic_info, &req_rga->mosaic_info, sizeof(req_rga->mosaic_info));
 
-	memcpy(&req->gauss_config, &req_rga->gauss_config, sizeof(req_rga->gauss_config));
-
 	if ((scheduler->data->feature & RGA_YIN_YOUT) &&
 	    rga_is_only_y_format(req->src.format) &&
 	    rga_is_only_y_format(req->dst.format))
@@ -2619,13 +2469,6 @@ static void rga_cmd_to_rga2_cmd(struct rga_scheduler_t *scheduler,
 			}
 
 			req->alpha_config.mode = req_rga->PD_mode;
-		}
-	} else if (req_rga->gauss_config.size > 0) {
-		if (req_rga->feature.global_alpha_en) {
-			req->alpha_config.fg_global_alpha_en = true;
-			req->alpha_config.fg_global_alpha_value = req_rga->fg_global_alpha;
-		} else {
-			req->alpha_config.fg_global_alpha_value = 0xff;
 		}
 	}
 
@@ -2698,54 +2541,52 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 	}
 
 	if (i == RGA_RESET_TIMEOUT)
-		rga_err("%s[%#x] soft reset timeout.\n",
-			rga_get_core_name(scheduler->core), scheduler->core);
+		pr_err("RAG2 core[%d] soft reset timeout.\n", scheduler->core);
 	else
-		rga_log("%s[%#x] soft reset complete.\n",
-			rga_get_core_name(scheduler->core), scheduler->core);
+		pr_info("RGA2 core[%d] soft reset complete.\n", scheduler->core);
+
 }
 
-static int rga2_check_param(struct rga_job *job,
-			    const struct rga_hw_data *data, const struct rga2_req *req)
+static int rga2_check_param(const struct rga_hw_data *data, const struct rga2_req *req)
 {
 	if (!((req->render_mode == COLOR_FILL_MODE))) {
 		if (unlikely(rga_hw_out_of_range(&data->input_range,
 						 req->src.act_w, req->src.act_h))) {
-			rga_job_err(job, "invalid src resolution act_w = %d, act_h = %d\n",
+			pr_err("invalid src resolution act_w = %d, act_h = %d\n",
 				 req->src.act_w, req->src.act_h);
 			return -EINVAL;
 		}
 
 		if (unlikely(req->src.vir_w * rga_get_pixel_stride_from_format(req->src.format) >
 			     data->max_byte_stride * 8)) {
-			rga_job_err(job, "invalid src stride, stride = %d, max_byte_stride = %d\n",
+			pr_err("invalid src stride, stride = %d, max_byte_stride = %d\n",
 			       req->src.vir_w, data->max_byte_stride);
 			return -EINVAL;
 		}
 
 		if (unlikely(req->src.vir_w < req->src.act_w)) {
-			rga_job_err(job, "invalid src_vir_w act_w = %d, vir_w = %d\n",
+			pr_err("invalid src_vir_w act_w = %d, vir_w = %d\n",
 			       req->src.act_w, req->src.vir_w);
 			return -EINVAL;
 		}
 	}
 
 	if (unlikely(rga_hw_out_of_range(&data->output_range, req->dst.act_w, req->dst.act_h))) {
-		rga_job_err(job, "invalid dst resolution act_w = %d, act_h = %d\n",
+		pr_err("invalid dst resolution act_w = %d, act_h = %d\n",
 		       req->dst.act_w, req->dst.act_h);
 		return -EINVAL;
 	}
 
 	if (unlikely(req->dst.vir_w * rga_get_pixel_stride_from_format(req->dst.format) >
 		     data->max_byte_stride * 8)) {
-		rga_err("invalid dst stride, stride = %d, max_byte_stride = %d\n",
+		pr_err("invalid dst stride, stride = %d, max_byte_stride = %d\n",
 		       req->dst.vir_w, data->max_byte_stride);
 		return -EINVAL;
 	}
 
 	if (unlikely(req->dst.vir_w < req->dst.act_w)) {
 		if (req->rotate_mode != 1) {
-			rga_err("invalid dst_vir_w act_h = %d, vir_h = %d\n",
+			pr_err("invalid dst_vir_w act_h = %d, vir_h = %d\n",
 			       req->dst.act_w, req->dst.vir_w);
 			return -EINVAL;
 		}
@@ -2754,79 +2595,83 @@ static int rga2_check_param(struct rga_job *job,
 	return 0;
 }
 
-static int rga2_align_check(struct rga_job *job, struct rga2_req *req)
+static int rga2_align_check(struct rga2_req *req)
 {
 	if (rga_is_yuv10bit_format(req->src.format))
-		if ((req->src.x_offset % 2) || (req->src.y_offset % 2) ||
-		    (req->src.act_w % 2) || (req->src.act_w % 2))
-			rga_job_log(job, "err src wstride, 10bit yuv\n");
+		if ((req->src.vir_w % 16) || (req->src.x_offset % 2) ||
+			(req->src.act_w % 2) || (req->src.y_offset % 2) ||
+			(req->src.act_h % 2) || (req->src.vir_h % 2))
+			pr_info("err src wstride, 10bit yuv\n");
 	if (rga_is_yuv10bit_format(req->dst.format))
-		if ((req->dst.x_offset % 2) || (req->dst.y_offset % 2) ||
-		    (req->dst.act_w % 2) || (req->dst.act_w % 2))
-			rga_job_log(job, "err dst wstride, 10bit yuv\n");
+		if ((req->dst.vir_w % 16) || (req->dst.x_offset % 2) ||
+			(req->dst.act_w % 2) || (req->dst.y_offset % 2) ||
+			(req->dst.act_h % 2) || (req->dst.vir_h % 2))
+			pr_info("err dst wstride, 10bit yuv\n");
 	if (rga_is_yuv8bit_format(req->src.format))
-		if ((req->src.x_offset % 2) || (req->src.y_offset % 2) ||
-		    (req->src.act_w % 2) || (req->src.act_w % 2))
-			rga_job_log(job, "err src wstride, 8bit yuv\n");
+		if ((req->src.vir_w % 4) || (req->src.x_offset % 2) ||
+			(req->src.act_w % 2) || (req->src.y_offset % 2) ||
+			(req->src.act_h % 2) || (req->src.vir_h % 2))
+			pr_info("err src wstride, 8bit yuv\n");
 	if (rga_is_yuv8bit_format(req->dst.format))
-		if ((req->dst.x_offset % 2) || (req->dst.y_offset % 2) ||
-		    (req->dst.act_w % 2) || (req->dst.act_w % 2))
-			rga_job_log(job, "err dst wstride, 8bit yuv\n");
+		if ((req->dst.vir_w % 4) || (req->dst.x_offset % 2) ||
+			(req->dst.act_w % 2) || (req->dst.y_offset % 2) ||
+			(req->dst.act_h % 2) || (req->dst.vir_h % 2))
+			pr_info("err dst wstride, 8bit yuv\n");
 
 	return 0;
 }
 
-static void print_debug_info(struct rga_job *job, struct rga2_req *req)
+static void print_debug_info(struct rga2_req *req)
 {
-	rga_job_log(job, "render_mode:%s,bitblit_mode=%d,rotate_mode:%s\n",
+	pr_info("render_mode:%s,bitblit_mode=%d,rotate_mode:%s\n",
 		rga_get_render_mode_str(req->render_mode), req->bitblt_mode,
 		rga_get_rotate_mode_str(req->rotate_mode));
 
-	rga_job_log(job, "src: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
+	pr_info("src: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
 		 (unsigned long)req->src.yrgb_addr,
 		 (unsigned long)req->src.uv_addr,
 		 (unsigned long)req->src.v_addr,
 		 req->src.act_w, req->src.act_h,
 		 req->src.vir_w, req->src.vir_h);
-	rga_job_log(job, "src: xoff=%d yoff=%d format=%s\n",
+	pr_info("src: xoff=%d yoff=%d format=%s\n",
 		req->src.x_offset, req->src.y_offset,
 		 rga_get_format_name(req->src.format));
 
 	if (req->src1.yrgb_addr != 0 || req->src1.uv_addr != 0
 		|| req->src1.v_addr != 0) {
-		rga_job_log(job, "src1: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
+		pr_info("src1: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
 			 (unsigned long)req->src1.yrgb_addr,
 			 (unsigned long)req->src1.uv_addr,
 			 (unsigned long)req->src1.v_addr,
 			 req->src1.act_w, req->src1.act_h,
 			 req->src1.vir_w, req->src1.vir_h);
-		rga_job_log(job, "src1: xoff=%d yoff=%d format=%s\n",
+		pr_info("src1: xoff=%d yoff=%d format=%s\n",
 			req->src1.x_offset, req->src1.y_offset,
 			 rga_get_format_name(req->src1.format));
 	}
 
-	rga_job_log(job, "dst: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
+	pr_info("dst: y=%lx uv=%lx v=%lx aw=%d ah=%d vw=%d vh=%d\n",
 		 (unsigned long)req->dst.yrgb_addr,
 		 (unsigned long)req->dst.uv_addr,
 		 (unsigned long)req->dst.v_addr,
 		 req->dst.act_w, req->dst.act_h,
 		 req->dst.vir_w, req->dst.vir_h);
-	rga_job_log(job, "dst: xoff=%d yoff=%d format=%s\n",
+	pr_info("dst: xoff=%d yoff=%d format=%s\n",
 		req->dst.x_offset, req->dst.y_offset,
 		 rga_get_format_name(req->dst.format));
 
-	rga_job_log(job, "mmu: src=%.2x src1=%.2x dst=%.2x els=%.2x\n",
+	pr_info("mmu: src=%.2x src1=%.2x dst=%.2x els=%.2x\n",
 		req->mmu_info.src0_mmu_flag, req->mmu_info.src1_mmu_flag,
 		req->mmu_info.dst_mmu_flag, req->mmu_info.els_mmu_flag);
-	rga_job_log(job, "alpha: flag %x mode=%s\n",
+	pr_info("alpha: flag %x mode=%s\n",
 		req->alpha_rop_flag, rga_get_blend_mode_str(req->alpha_config.mode));
-	rga_job_log(job, "alpha: pre_multi=[%d,%d] pixl=[%d,%d] glb=[%d,%d]\n",
+	pr_info("alpha: pre_multi=[%d,%d] pixl=[%d,%d] glb=[%d,%d]\n",
 		req->alpha_config.fg_pre_multiplied, req->alpha_config.bg_pre_multiplied,
 		req->alpha_config.fg_pixel_alpha_en, req->alpha_config.bg_pixel_alpha_en,
 		req->alpha_config.fg_global_alpha_en, req->alpha_config.bg_global_alpha_en);
-	rga_job_log(job, "alpha: fg_global_alpha=%x bg_global_alpha=%x\n",
+	pr_info("alpha: fg_global_alpha=%x bg_global_alpha=%x\n",
 		req->alpha_config.fg_global_alpha_value, req->alpha_config.bg_global_alpha_value);
-	rga_job_log(job, "yuv2rgb mode is %x\n", req->yuv2rgb_mode);
+	pr_info("yuv2rgb mode is %x\n", req->yuv2rgb_mode);
 }
 
 static int rga2_init_reg(struct rga_job *job)
@@ -2838,7 +2683,7 @@ static int rga2_init_reg(struct rga_job *job)
 
 	scheduler = job->scheduler;
 	if (unlikely(scheduler == NULL)) {
-		rga_job_err(job, "failed to get scheduler, %s(%d)\n", __func__, __LINE__);
+		pr_err("failed to get scheduler, %s(%d)\n", __func__, __LINE__);
 		return -EINVAL;
 	}
 
@@ -2867,33 +2712,33 @@ static int rga2_init_reg(struct rga_job *job)
 	       sizeof(job->pre_intr_info));
 
 	/* check value if legal */
-	ret = rga2_check_param(job, scheduler->data, &req);
+	ret = rga2_check_param(scheduler->data, &req);
 	if (ret == -EINVAL) {
-		rga_job_err(job, "req argument is inval\n");
+		pr_err("req argument is inval\n");
 		return ret;
 	}
 
-	rga2_align_check(job, &req);
+	rga2_align_check(&req);
 
 	/* for debug */
 	if (DEBUGGER_EN(MSG))
-		print_debug_info(job, &req);
+		print_debug_info(&req);
 
 	/* RGA2 mmu set */
 	if ((req.mmu_info.src0_mmu_flag & 1) || (req.mmu_info.src1_mmu_flag & 1) ||
 	    (req.mmu_info.dst_mmu_flag & 1) || (req.mmu_info.els_mmu_flag & 1)) {
 		if (scheduler->data->mmu != RGA_MMU) {
-			rga_job_err(job, "core[%d] has no MMU, please use physically contiguous memory.\n",
-				scheduler->core);
-			rga_job_err(job, "mmu_flag[src, src1, dst, els] = [0x%x, 0x%x, 0x%x, 0x%x]\n",
-				req.mmu_info.src0_mmu_flag, req.mmu_info.src1_mmu_flag,
-				req.mmu_info.dst_mmu_flag, req.mmu_info.els_mmu_flag);
+			pr_err("core[%d] has no MMU, please use physically contiguous memory.\n",
+			       scheduler->core);
+			pr_err("mmu_flag[src, src1, dst, els] = [0x%x, 0x%x, 0x%x, 0x%x]\n",
+			       req.mmu_info.src0_mmu_flag, req.mmu_info.src1_mmu_flag,
+			       req.mmu_info.dst_mmu_flag, req.mmu_info.els_mmu_flag);
 			return -EINVAL;
 		}
 
 		ret = rga_set_mmu_base(job, &req);
 		if (ret < 0) {
-			rga_job_err(job, "%s, [%d] set mmu info error\n", __func__,
+			pr_err("%s, [%d] set mmu info error\n", __func__,
 				 __LINE__);
 			return -EFAULT;
 		}
@@ -2903,20 +2748,19 @@ static int rga2_init_reg(struct rga_job *job)
 	if (scheduler->data->mmu == RGA_IOMMU)
 		req.CMD_fin_int_enable = 1;
 
-	ret = rga2_gen_reg_info(scheduler, (uint8_t *)job->cmd_buf->vaddr, &req);
-	if (ret < 0) {
-		rga_job_err(job, "gen reg info error\n");
+	if (rga2_gen_reg_info(scheduler, (uint8_t *)job->cmd_buf->vaddr, &req) == -1) {
+		pr_err("gen reg info error\n");
 		return -EINVAL;
 	}
 
 	if (DEBUGGER_EN(TIME))
-		rga_job_log(job, "generate register cost time %lld us\n",
-			ktime_us_delta(ktime_get(), timestamp));
+		pr_info("request[%d], generate register cost time %lld us\n",
+			job->request_id, ktime_us_delta(ktime_get(), timestamp));
 
 	return ret;
 }
 
-static void rga2_dump_read_back_sys_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
+static void rga2_dump_read_back_sys_reg(struct rga_scheduler_t *scheduler)
 {
 	int i;
 	unsigned long flags;
@@ -2929,15 +2773,15 @@ static void rga2_dump_read_back_sys_reg(struct rga_job *job, struct rga_schedule
 
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
-	rga_job_log(job, "SYS_READ_BACK_REG\n");
+	pr_info("SYS_READ_BACK_REG\n");
 	for (i = 0; i < 6; i++)
-		rga_job_log(job, "0x%04x : %.8x %.8x %.8x %.8x\n",
+		pr_info("0x%04x : %.8x %.8x %.8x %.8x\n",
 			RGA2_SYS_REG_BASE + i * 0x10,
 			sys_reg[0 + i * 4], sys_reg[1 + i * 4],
 			sys_reg[2 + i * 4], sys_reg[3 + i * 4]);
 }
 
-static void rga2_dump_read_back_csc_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
+static void rga2_dump_read_back_csc_reg(struct rga_scheduler_t *scheduler)
 {
 	int i;
 	unsigned long flags;
@@ -2950,15 +2794,15 @@ static void rga2_dump_read_back_csc_reg(struct rga_job *job, struct rga_schedule
 
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
-	rga_job_log(job, "CSC_READ_BACK_REG\n");
+	pr_info("CSC_READ_BACK_REG\n");
 	for (i = 0; i < 3; i++)
-		rga_job_log(job, "0x%04x : %.8x %.8x %.8x %.8x\n",
+		pr_info("0x%04x : %.8x %.8x %.8x %.8x\n",
 			RGA2_CSC_REG_BASE + i * 0x10,
 			csc_reg[0 + i * 4], csc_reg[1 + i * 4],
 			csc_reg[2 + i * 4], csc_reg[3 + i * 4]);
 }
 
-static void rga2_dump_read_back_cmd_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
+static void rga2_dump_read_back_cmd_reg(struct rga_scheduler_t *scheduler)
 {
 	int i;
 	unsigned long flags;
@@ -2971,19 +2815,19 @@ static void rga2_dump_read_back_cmd_reg(struct rga_job *job, struct rga_schedule
 
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
-	rga_job_log(job, "CMD_READ_BACK_REG\n");
+	pr_info("CMD_READ_BACK_REG\n");
 	for (i = 0; i < 8; i++)
-		rga_job_log(job, "0x%04x : %.8x %.8x %.8x %.8x\n",
+		pr_info("0x%04x : %.8x %.8x %.8x %.8x\n",
 			RGA2_CMD_REG_BASE + i * 0x10,
 			cmd_reg[0 + i * 4], cmd_reg[1 + i * 4],
 			cmd_reg[2 + i * 4], cmd_reg[3 + i * 4]);
 }
 
-static void rga2_dump_read_back_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
+static void rga2_dump_read_back_reg(struct rga_scheduler_t *scheduler)
 {
-	rga2_dump_read_back_sys_reg(job, scheduler);
-	rga2_dump_read_back_csc_reg(job, scheduler);
-	rga2_dump_read_back_cmd_reg(job, scheduler);
+	rga2_dump_read_back_sys_reg(scheduler);
+	rga2_dump_read_back_csc_reg(scheduler);
+	rga2_dump_read_back_cmd_reg(scheduler);
 }
 
 static void rga2_set_pre_intr_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
@@ -3063,13 +2907,12 @@ static int rga2_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 		master_mode_en = false;
 
 	if (DEBUGGER_EN(REG)) {
-		rga2_dump_read_back_sys_reg(job, scheduler);
-		rga2_dump_read_back_csc_reg(job, scheduler);
+		rga2_dump_read_back_sys_reg(scheduler);
+		rga2_dump_read_back_csc_reg(scheduler);
 
-		rga_job_log(job, "CMD_REG\n");
+		pr_info("CMD_REG\n");
 		for (i = 0; i < 8; i++)
-			rga_job_log(job, "0x%04x : %.8x %.8x %.8x %.8x\n",
-				RGA2_CMD_REG_BASE + i * 0x10,
+			pr_info("i = %x : %.8x %.8x %.8x %.8x\n", i,
 				cmd[0 + i * 4], cmd[1 + i * 4],
 				cmd[2 + i * 4], cmd[3 + i * 4]);
 	}
@@ -3126,15 +2969,14 @@ static int rga2_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
 	if (DEBUGGER_EN(TIME))
-		rga_job_log(job, "set register cost time %lld us\n",
-			ktime_us_delta(ktime_get(), now));
+		pr_info("request[%d], set register cost time %lld us\n",
+			job->request_id, ktime_us_delta(now, job->timestamp));
 
-	job->timestamp.hw_execute = now;
-	job->timestamp.hw_recode = now;
-	job->session->last_active = now;
+	job->hw_running_time = now;
+	job->hw_recoder_time = now;
 
 	if (DEBUGGER_EN(REG))
-		rga2_dump_read_back_reg(job, scheduler);
+		rga2_dump_read_back_reg(scheduler);
 
 	return 0;
 }
@@ -3145,7 +2987,7 @@ static int rga2_get_version(struct rga_scheduler_t *scheduler)
 	u32 reg_version;
 
 	if (!scheduler) {
-		rga_err("scheduler is null\n");
+		pr_err("scheduler is null\n");
 		return -EINVAL;
 	}
 
@@ -3193,40 +3035,21 @@ static int rga2_read_status(struct rga_job *job, struct rga_scheduler_t *schedul
 	return 0;
 }
 
-static void rga2_clear_intr(struct rga_scheduler_t *scheduler)
-{
-	rga_write(rga_read(RGA2_INT, scheduler) |
-		  (m_RGA2_INT_ERROR_CLEAR_MASK |
-		   m_RGA2_INT_ALL_CMD_DONE_INT_CLEAR | m_RGA2_INT_NOW_CMD_DONE_INT_CLEAR |
-		   m_RGA2_INT_LINE_RD_CLEAR | m_RGA2_INT_LINE_WR_CLEAR),
-		  RGA2_INT, scheduler);
-}
-
 static int rga2_irq(struct rga_scheduler_t *scheduler)
 {
 	struct rga_job *job = scheduler->running_job;
 
 	/* The hardware interrupt top-half don't need to lock the scheduler. */
-	if (job == NULL) {
-		rga2_clear_intr(scheduler);
-		rga_err("core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
-			scheduler->core, rga_read(RGA2_INT, scheduler),
-			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
-			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
-
+	if (job == NULL)
 		return IRQ_HANDLED;
-	}
 
-	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
-		rga2_clear_intr(scheduler);
-
+	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state))
 		return IRQ_WAKE_THREAD;
-	}
 
 	scheduler->ops->read_status(job, scheduler);
 
 	if (DEBUGGER_EN(INT_FLAG))
-		rga_job_log(job, "irq handler, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
+		pr_info("irq handler, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 			job->intr_status, job->hw_status, job->cmd_status,
 			job->work_cycle, job->work_cycle);
 
@@ -3236,14 +3059,19 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 	} else if (job->intr_status & m_RGA2_INT_ERROR_FLAG_MASK) {
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
 
-		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
-			job->intr_status, job->hw_status, job->cmd_status,
-			job->work_cycle, job->work_cycle);
+		pr_err("irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
+		       job->intr_status, job->hw_status, job->cmd_status,
+		       job->work_cycle, job->work_cycle);
 
 		scheduler->ops->soft_reset(scheduler);
 	}
 
-	rga2_clear_intr(scheduler);
+	/*clear INTR */
+	rga_write(rga_read(RGA2_INT, scheduler) |
+		  (m_RGA2_INT_ERROR_CLEAR_MASK |
+		   m_RGA2_INT_ALL_CMD_DONE_INT_CLEAR | m_RGA2_INT_NOW_CMD_DONE_INT_CLEAR |
+		   m_RGA2_INT_LINE_RD_CLEAR | m_RGA2_INT_LINE_WR_CLEAR),
+		  RGA2_INT, scheduler);
 
 	return IRQ_WAKE_THREAD;
 }
@@ -3251,33 +3079,27 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 static int rga2_isr_thread(struct rga_job *job, struct rga_scheduler_t *scheduler)
 {
 	if (DEBUGGER_EN(INT_FLAG))
-		rga_job_log(job, "isr thread, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
+		pr_info("isr thread, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 			rga_read(RGA2_INT, scheduler),
 			rga_read(RGA2_STATUS2, scheduler),
 			rga_read(RGA2_STATUS1, scheduler));
 
 	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 		if (job->hw_status & m_RGA2_STATUS2_RPP_ERROR)
-			rga_job_err(job, "RGA current status: rpp error!\n");
+			pr_err("RGA current status: rpp error!\n");
 		if (job->hw_status & m_RGA2_STATUS2_BUS_ERROR)
-			rga_job_err(job, "RGA current status: bus error!\n");
+			pr_err("RGA current status: bus error!\n");
 
 		if (job->intr_status & m_RGA2_INT_ERROR_INT_FLAG) {
-			rga_job_err(job, "RGA bus error intr, please check your configuration and buffer.\n");
+			pr_err("RGA bus error intr, please check your configuration and buffer.\n");
 			job->ret = -EFAULT;
 		} else if (job->intr_status & m_RGA2_INT_MMU_INT_FLAG) {
-			rga_job_err(job, "mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
-			job->ret = -EACCES;
-		} else if (job->intr_status & m_RGA2_INT_SCL_ERROR_INTR) {
-			rga_job_err(job, "scale failed, check scale config or formula.\n");
-			job->ret = -EACCES;
-		} else if (job->intr_status & m_RGA2_INT_FBCIN_DEC_ERROR) {
-			rga_job_err(job, "FBC decode failed, please check if the source data is FBC data.\n");
+			pr_err("mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
 			job->ret = -EACCES;
 		}
 
 		if (job->ret == 0) {
-			rga_job_err(job, "rga intr error[0x%x]!\n", job->intr_status);
+			pr_err("rga intr error[0x%x]!\n", job->intr_status);
 			job->ret = -EFAULT;
 		}
 	}

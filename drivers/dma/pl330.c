@@ -1592,12 +1592,13 @@ static inline int _setup_xfer_cyclic(struct pl330_dmac *pl330,
  */
 static int _setup_req(struct pl330_dmac *pl330, unsigned dry_run,
 		      struct pl330_thread *thrd, unsigned index,
-		      struct _xfer_spec *pxs, int off)
+		      struct _xfer_spec *pxs)
 {
 	struct _pl330_req *req = &thrd->req[index];
 	u8 *buf = req->mc_cpu;
+	int off = 0;
 
-	PL330_DBGMC_START(req->mc_bus + off);
+	PL330_DBGMC_START(req->mc_bus);
 
 	/* DMAMOV CCR, ccr */
 	off += _emit_MOV(dry_run, &buf[off], CCR, pxs->ccr);
@@ -1605,13 +1606,10 @@ static int _setup_req(struct pl330_dmac *pl330, unsigned dry_run,
 	if (!pxs->desc->cyclic) {
 		off += _setup_xfer(pl330, dry_run, &buf[off], pxs);
 
-		if (pxs->desc->last) {
-			/* DMASEV peripheral/event */
-			off += _emit_SEV(dry_run, &buf[off], thrd->ev);
-
-			/* DMAEND */
-			off += _emit_END(dry_run, &buf[off]);
-		}
+		/* DMASEV peripheral/event */
+		off += _emit_SEV(dry_run, &buf[off], thrd->ev);
+		/* DMAEND */
+		off += _emit_END(dry_run, &buf[off]);
 	} else {
 		off += _setup_xfer_cyclic(pl330, dry_run, &buf[off],
 					  pxs, thrd->ev);
@@ -1658,7 +1656,7 @@ static inline u32 _prepare_ccr(const struct pl330_reqcfg *rqc)
  * xfer units are done or some error occurs.
  */
 static int pl330_submit_req(struct pl330_thread *thrd,
-	struct dma_pl330_desc *desc, int *off)
+	struct dma_pl330_desc *desc)
 {
 	struct pl330_dmac *pl330 = thrd->dmac;
 	struct _xfer_spec xs;
@@ -1714,14 +1712,14 @@ static int pl330_submit_req(struct pl330_thread *thrd,
 
 	idx = thrd->req[0].desc == NULL ? 0 : 1;
 
-	dev_dbg(pl330->ddma.dev, "desc-%px id %d-%d off %03d last %d cyclic %d\n",
-		desc, thrd->id, idx, *off, desc->last, desc->cyclic);
-
 	xs.ccr = ccr;
 	xs.desc = desc;
 
 	/* First dry run to check if req is acceptable */
-	ret = _setup_req(pl330, 1, thrd, idx, &xs, *off);
+	ret = _setup_req(pl330, 1, thrd, idx, &xs);
+	if (ret < 0)
+		goto xfer_exit;
+
 	if (ret > pl330->mcbufsz / 2) {
 		dev_info(pl330->ddma.dev, "%s:%d Try increasing mcbufsz (%i/%i)\n",
 				__func__, __LINE__, ret, pl330->mcbufsz / 2);
@@ -1730,28 +1728,13 @@ static int pl330_submit_req(struct pl330_thread *thrd,
 	}
 
 	/* Hook the request */
-	if (desc->last) {
-		thrd->lstenq = idx;
-		thrd->req[idx].desc = desc;
-	}
-
-	*off = _setup_req(pl330, 0, thrd, idx, &xs, *off);
-
-	if (!desc->last) {
-		desc->status = FREE;
-		spin_lock(&pl330->pool_lock);
-		list_move_tail(&desc->node, &pl330->desc_pool);
-		spin_unlock(&pl330->pool_lock);
-
-		dev_dbg(pl330->ddma.dev, "desc-%px has been merged, drop it\n", desc);
-	}
+	thrd->lstenq = idx;
+	thrd->req[idx].desc = desc;
+	_setup_req(pl330, 0, thrd, idx, &xs);
 
 	ret = 0;
 
 xfer_exit:
-	if (desc->last)
-		*off = 0;
-
 	spin_unlock_irqrestore(&pl330->lock, flags);
 
 	return ret;
@@ -2246,16 +2229,16 @@ to_desc(struct dma_async_tx_descriptor *tx)
 
 static inline void fill_queue(struct dma_pl330_chan *pch)
 {
-	struct dma_pl330_desc *desc, *_dt;
-	int ret, off = 0;
+	struct dma_pl330_desc *desc;
+	int ret;
 
-	list_for_each_entry_safe(desc, _dt, &pch->work_list, node) {
+	list_for_each_entry(desc, &pch->work_list, node) {
 
 		/* If already submitted */
 		if (desc->status == BUSY || desc->status == PAUSED)
 			continue;
 
-		ret = pl330_submit_req(pch->thread, desc, &off);
+		ret = pl330_submit_req(pch->thread, desc);
 		if (!ret) {
 			desc->status = BUSY;
 		} else if (ret == -EAGAIN) {
@@ -2353,49 +2336,19 @@ static struct dma_chan *of_dma_pl330_xlate(struct of_phandle_args *dma_spec,
 {
 	int count = dma_spec->args_count;
 	struct pl330_dmac *pl330 = ofdma->of_dma_data;
-	struct dma_chan *chan;
 	unsigned int chan_id;
 
 	if (!pl330)
 		return NULL;
 
-	if (count < 1)
+	if (count != 1)
 		return NULL;
 
 	chan_id = dma_spec->args[0];
 	if (chan_id >= pl330->num_peripherals)
 		return NULL;
 
-	chan = dma_get_slave_channel(&pl330->peripherals[chan_id].chan);
-
-	/* Support dmamux set, such as rk3506 */
-	if (chan && count == 5) {
-		void __iomem *r;
-
-		/* dmamux pair0: args[1]: reg0 args[2]: val0 */
-		if (dma_spec->args[1]) {
-			r = ioremap(dma_spec->args[1], 0x4);
-			if (r) {
-				writel(dma_spec->args[2], r);
-				iounmap(r);
-			}
-		}
-
-		/* dmamux pair1: args[3]: reg1 args[4]: val1 */
-		if (dma_spec->args[3]) {
-			r = ioremap(dma_spec->args[3], 0x4);
-			if (r) {
-				writel(dma_spec->args[4], r);
-				iounmap(r);
-			}
-		}
-
-		dev_dbg(pl330->ddma.dev, "r0: 0x%08x v0: 0x%08x r1: 0x%08x, v1: 0x%08x\n",
-			dma_spec->args[1], dma_spec->args[2],
-			dma_spec->args[3], dma_spec->args[4]);
-	}
-
-	return chan;
+	return dma_get_slave_channel(&pl330->peripherals[chan_id].chan);
 }
 
 static int pl330_alloc_chan_resources(struct dma_chan *chan)
@@ -2988,6 +2941,7 @@ static struct dma_async_tx_descriptor *pl330_prep_dma_cyclic(
 
 	desc->cyclic = true;
 	desc->num_periods = len / period_len;
+	desc->txd.flags = flags;
 
 	return &desc->txd;
 }
@@ -3033,17 +2987,19 @@ static struct dma_async_tx_descriptor *pl330_prep_interleaved_dma(
 	}
 
 	if (xt->dir == DMA_MEM_TO_DEV) {
+		desc->rqcfg.src_inc = 1;
+		desc->rqcfg.dst_inc = 0;
 		src = xt->src_start;
 		dst = pch->fifo_dma;
 		full_buffer_bytes = (size + src_icg) * numf;
 	} else {
+		desc->rqcfg.src_inc = 0;
+		desc->rqcfg.dst_inc = 1;
 		src = pch->fifo_dma;
 		dst = xt->dst_start;
 		full_buffer_bytes = (size + dst_icg) * numf;
 	}
 
-	desc->rqcfg.src_inc = xt->src_inc;
-	desc->rqcfg.dst_inc = xt->dst_inc;
 	desc->rqtype = xt->dir;
 	desc->rqcfg.brst_size = pch->burst_sz;
 	desc->rqcfg.brst_len = pch->burst_len;
@@ -3051,6 +3007,7 @@ static struct dma_async_tx_descriptor *pl330_prep_interleaved_dma(
 	desc->sgl.size = size;
 	desc->sgl.src_icg = src_icg;
 	desc->sgl.dst_icg = dst_icg;
+	desc->txd.flags = flags;
 
 	if (flags & DMA_PREP_REPEAT) {
 		desc->cyclic = true;
@@ -3112,6 +3069,8 @@ pl330_prep_dma_memcpy(struct dma_chan *chan, dma_addr_t dst,
 		desc->rqcfg.brst_len = 1;
 
 	desc->bytes_requested = len;
+
+	desc->txd.flags = flags;
 
 	return &desc->txd;
 }
@@ -3196,6 +3155,7 @@ pl330_prep_slave_sg(struct dma_chan *chan, struct scatterlist *sgl,
 	}
 
 	/* Return the last desc in the chain */
+	desc->txd.flags = flg;
 	return &desc->txd;
 }
 
@@ -3274,7 +3234,7 @@ static int __maybe_unused pl330_suspend(struct device *dev)
 	struct amba_device *pcdev = to_amba_device(dev);
 
 	pm_runtime_force_suspend(dev);
-	clk_unprepare(pcdev->pclk);
+	amba_pclk_unprepare(pcdev);
 
 	return 0;
 }
@@ -3284,7 +3244,7 @@ static int __maybe_unused pl330_resume(struct device *dev)
 	struct amba_device *pcdev = to_amba_device(dev);
 	int ret;
 
-	ret = clk_prepare(pcdev->pclk);
+	ret = amba_pclk_prepare(pcdev);
 	if (ret)
 		return ret;
 

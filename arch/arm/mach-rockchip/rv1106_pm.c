@@ -80,6 +80,8 @@ static struct rv1106_sleep_ddr_data ddr_data;
 
 static const struct rk_sleep_config *slp_cfg;
 
+static u32 rv1106_chip_version;
+
 static void __iomem *pmucru_base;
 static void __iomem *cru_base;
 static void __iomem *pvtpllcru_base;
@@ -206,6 +208,9 @@ static struct reg_region vd_log_reg_rgns[] = {
 	{ REG_REGION(0x080, 0x0a4, 4, &perisgrf_base, WMSK_VAL)},
 	{ REG_REGION(0x0b8, 0x0bc, 4, &perisgrf_base, WMSK_VAL)},
 
+	/* vi_grf */
+	{ REG_REGION(0x000, 0x000, 4, &vigrf_base, 0x00400000)}, /* rtc_clamp_en */
+
 	/* vi_cru */
 	{ REG_REGION(0x300, 0x30c, 4, &vicru_base, WMSK_VAL)},
 	{ REG_REGION(0x800, 0x808, 4, &vicru_base, WMSK_VAL)},
@@ -264,6 +269,18 @@ static struct reg_region vd_log_reg_rgns[] = {
 	{ REG_REGION(0x2e0, 0x2ec, 4, &ioc_base[3], WMSK_VAL)},
 	{ REG_REGION(0x2f4, 0x2f4, 4, &ioc_base[3], WMSK_VAL)},
 
+	/* gpio4_ioc */
+	{ REG_REGION(0x000, 0x010, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x020, 0x030, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x060, 0x064, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x070, 0x074, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x080, 0x084, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x090, 0x094, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x0a0, 0x0a4, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x0b0, 0x0b4, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x0c0, 0x0c0, 4, &ioc_base[4], WMSK_VAL)},
+	{ REG_REGION(0x200, 0x200, 4, &ioc_base[4], WMSK_VAL)},
+
 	/* gpio1~3 */
 	{ REG_REGION(0x000, 0x00c, 4, &gpio_base[1], WMSK_VAL)},
 	{ REG_REGION(0x018, 0x044, 4, &gpio_base[1], WMSK_VAL)},
@@ -285,6 +302,13 @@ static struct reg_region vd_log_reg_rgns[] = {
 	{ REG_REGION(0x060, 0x064, 4, &gpio_base[3], WMSK_VAL)},
 	{ REG_REGION(0x100, 0x108, 4, &gpio_base[3], WMSK_VAL)},
 	{ REG_REGION(0x010, 0x014, 4, &gpio_base[3], WMSK_VAL)},
+
+	{ REG_REGION(0x000, 0x00c, 4, &gpio_base[4], WMSK_VAL)},
+	{ REG_REGION(0x018, 0x044, 4, &gpio_base[4], WMSK_VAL)},
+	{ REG_REGION(0x048, 0x048, 4, &gpio_base[4], 0)},
+	{ REG_REGION(0x060, 0x064, 4, &gpio_base[4], WMSK_VAL)},
+	{ REG_REGION(0x100, 0x108, 4, &gpio_base[4], WMSK_VAL)},
+	{ REG_REGION(0x010, 0x014, 4, &gpio_base[4], WMSK_VAL)},
 
 	/* NS TIMER 6 channel */
 	{ REG_REGION(0x00, 0x04, 4, &nstimer_base, 0)},
@@ -626,7 +650,9 @@ static void pvtm_32k_config(void)
 	ddr_data.pmucru_sel_con7 =
 		readl_relaxed(pmucru_base + RV1106_PMUCRU_CLKSEL_CON(7));
 
-	if (slp_cfg->mode_config & RKPM_SLP_32K_EXT) {
+	/* We can use clk-32k from rtc when chip_version > 0 only */
+	if ((slp_cfg->mode_config & RKPM_SLP_32K_EXT) &&
+	    (rv1106_chip_version > 0)) {
 		writel_relaxed(BITS_WITH_WMASK(0x3, 0x3, 14),
 			       pmugrf_base + RV1106_PMUGRF_SOC_CON(1));
 		writel_relaxed(BITS_WITH_WMASK(0x1, 0x3, 0),
@@ -760,7 +786,7 @@ static void pmu_sleep_config(void)
 		/* BIT(RV1106_PMU_WAKEUP_CPU_INT_EN) | */
 		BIT(RV1106_PMU_WAKEUP_GPIO_INT_EN) |
 		0;
-	if (IS_ENABLED(CONFIG_RV1106_PMU_WAKEUP_TIMEOUT))
+	if (readl_relaxed(pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT) != 0)
 		pmu_wkup_con |= BIT(RV1106_PMU_WAKEUP_TIMEOUT_EN);
 
 	pmu_pwr_con =
@@ -1013,7 +1039,7 @@ static void gpio_config(void)
 		}
 
 		if (iomux == RKPM_IO_CFG_IOMUX_GPIO_VAL) {
-			if (dir == RKPM_IO_CFG_GPIO_DIR_INPUT_VAL)
+			if (dir == RKPM_IO_CFG_GPIO_DIR_OUTPUT_VAL)
 				gpio0_set_lvl(id, lvl);
 
 			gpio0_set_direct(id, dir);
@@ -1306,6 +1332,8 @@ static int __init rv1106_suspend_init(struct device_node *np)
 
 	rv1106_bootram_base = dev_reg_base + RV1106_PMUSRAM_OFFSET;
 
+	rv1106_chip_version = readl_relaxed(pmugrf_base + RV1106_PMUGRF_OS_REG(1)) & 0x7;
+
 	rv1106_config_bootdata();
 
 	/* copy resume code and data to bootsram */
@@ -1324,6 +1352,9 @@ static int __init rv1106_suspend_init(struct device_node *np)
 	/* gpio0_a3 activelow, gpio0_a4 active high, select sleep func */
 	writel_relaxed(BITS_WITH_WMASK(0x5, 0x7, 0),
 		       pmugrf_base + RV1106_PMUGRF_SOC_CON(1));
+
+	/* PMU_WAKEUP_TIMEOUT_CNT = 0, disable TIMEOUT_WAKEUP by default */
+	writel_relaxed(0x0, pmu_base + RV1106_PMU_WAKEUP_TIMEOUT_CNT);
 
 	rkpm_region_mem_init(RV1106_PM_REG_REGION_MEM_SIZE);
 	rkpm_reg_rgns_init();

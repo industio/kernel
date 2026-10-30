@@ -94,7 +94,7 @@
 #define SC4238_REG_VALUE_16BIT		2
 #define SC4238_REG_VALUE_24BIT		3
 
-#define SC4238_LANES			4
+#define SC4238_LANES			V4L2_MBUS_CSI2_4_LANE
 
 #define OF_CAMERA_PINCTRL_STATE_DEFAULT	"rockchip,camera_default"
 #define OF_CAMERA_PINCTRL_STATE_SLEEP	"rockchip,camera_sleep"
@@ -1355,7 +1355,7 @@ static const struct sc4238_mode supported_modes[] = {
 		.vts_def = 0x0752,
 		.reg_list = sc4238_linear10bit_2688x1520_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 		.link_freq = 0, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_200M,
 	},
@@ -1374,10 +1374,10 @@ static const struct sc4238_mode supported_modes[] = {
 		/*.vts_def = 0x0c18,*/
 		.reg_list = sc4238_hdr10bit_2688x1520_regs,
 		.hdr_mode = HDR_X2,
-		.vc[PAD0] = 1,
-		.vc[PAD1] = 0,//L->csi wr0
-		.vc[PAD2] = 1,
-		.vc[PAD3] = 1,//M->csi wr2
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
+		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
+		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
 		.link_freq = 1, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_360M,
 	},
@@ -1394,7 +1394,7 @@ static const struct sc4238_mode supported_modes[] = {
 		.vts_def = 0x061a,
 		.reg_list = sc4238_linear12bit_2688x1520_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 		.link_freq = 0, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_200M,
 	},
@@ -1411,10 +1411,15 @@ static const struct sc4238_mode supported_modes[] = {
 		.vts_def = 0x061a,
 		.reg_list = sc4238_linear12bit_2560x1440_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 		.link_freq = 0, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_200M,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
+	MEDIA_BUS_FMT_SBGGR12_1X12,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -1529,10 +1534,13 @@ sc4238_find_best_fit(struct sc4238 *sc4238, struct v4l2_subdev_format *fmt)
 
 	for (i = 0; i < sc4238->cfg_num; i++) {
 		dist = sc4238_get_reso_dist(&supported_modes[i], framefmt);
-		if ((cur_best_fit_dist == -1 || dist <= cur_best_fit_dist) &&
-			(supported_modes[i].bus_fmt == framefmt->code)) {
+		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -1540,7 +1548,7 @@ sc4238_find_best_fit(struct sc4238 *sc4238, struct v4l2_subdev_format *fmt)
 }
 
 static int sc4238_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc4238 *sc4238 = to_sc4238(sd);
@@ -1556,7 +1564,7 @@ static int sc4238_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc4238->mutex);
 		return -ENOTTY;
@@ -1584,7 +1592,7 @@ static int sc4238_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc4238_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc4238 *sc4238 = to_sc4238(sd);
@@ -1593,7 +1601,7 @@ static int sc4238_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc4238->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc4238->mutex);
 		return -ENOTTY;
@@ -1614,20 +1622,18 @@ static int sc4238_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc4238_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct sc4238 *sc4238 = to_sc4238(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = sc4238->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc4238_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct sc4238 *sc4238 = to_sc4238(sd);
@@ -1677,11 +1683,93 @@ static int sc4238_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static const struct sc4238_mode *sc4238_find_mode(struct sc4238 *sc4238, int fps)
+{
+	const struct sc4238_mode *mode = NULL;
+	const struct sc4238_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < sc4238->cfg_num; i++) {
+		mode = &supported_modes[i];
+		if (mode->width == sc4238->cur_mode->width &&
+		    mode->height == sc4238->cur_mode->height &&
+		    mode->hdr_mode == sc4238->cur_mode->hdr_mode &&
+		    mode->bus_fmt == sc4238->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int sc4238_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct sc4238 *sc4238 = to_sc4238(sd);
+	const struct sc4238_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (sc4238->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = sc4238_find_mode(sc4238, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	sc4238->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(sc4238->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(sc4238->vblank, vblank_def,
+				 SC4238_VTS_MAX - mode->height,
+				 1, vblank_def);
+	__v4l2_ctrl_s_ctrl_int64(sc4238->pixel_rate,
+				 mode->pixel_rate);
+	__v4l2_ctrl_s_ctrl(sc4238->link_freq,
+				 mode->link_freq);
+	sc4238->cur_fps = mode->max_fps;
+	sc4238->cur_vts = mode->vts_def;
+
+	return 0;
+}
+
 static int sc4238_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				struct v4l2_mbus_config *config)
 {
+	struct sc4238 *sc4238 = to_sc4238(sd);
+	const struct sc4238_mode *mode = sc4238->cur_mode;
+	u32 val = 0;
+
+	if (mode->hdr_mode == NO_HDR)
+		val = SC4238_LANES |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+	if (mode->hdr_mode == HDR_X2)
+		val = SC4238_LANES |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK |
+		V4L2_MBUS_CSI2_CHANNEL_1;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = SC4238_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -1690,10 +1778,10 @@ static void sc4238_get_module_inf(struct sc4238 *sc4238,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, SC4238_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, sc4238->module_name,
+	strlcpy(inf->base.sensor, SC4238_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, sc4238->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, sc4238->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, sc4238->len_name, sizeof(inf->base.lens));
 }
 
 static int sc4238_get_gain_reg(struct sc4238 *sc4238, u32 total_gain,
@@ -1885,32 +1973,49 @@ static long sc4238_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 	long ret = 0;
 	u32 i, h, w;
 	u32 stream = 0;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case PREISP_CMD_SET_HDRAE_EXP:
 		return sc4238_set_hdrae(sc4238, arg);
 	case RKMODULE_SET_HDR_CFG:
 		hdr_cfg = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr_cfg->hdr_mode == sc4238->cur_mode->hdr_mode)
+			return 0;
 		w = sc4238->cur_mode->width;
 		h = sc4238->cur_mode->height;
 
 		dev_info(&sc4238->client->dev,
 			"%s config hdr mode: %d\n",
 			__func__, hdr_cfg->hdr_mode);
+		dst_fps = DIV_ROUND_CLOSEST(sc4238->cur_mode->max_fps.denominator,
+			sc4238->cur_mode->max_fps.numerator);
 		for (i = 0; i < sc4238->cfg_num; i++) {
 			if (w == supported_modes[i].width &&
-			h == supported_modes[i].height &&
-			supported_modes[i].hdr_mode == hdr_cfg->hdr_mode) {
-				sc4238->cur_mode = &supported_modes[i];
-				break;
+			    h == supported_modes[i].height &&
+			    supported_modes[i].hdr_mode == hdr_cfg->hdr_mode &&
+			    supported_modes[i].bus_fmt == sc4238->cur_mode->bus_fmt) {
+				cur_fps = DIV_ROUND_CLOSEST(supported_modes[i].max_fps.denominator,
+					supported_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == sc4238->cfg_num) {
+		if (cur_best_fit == -1) {
 			dev_err(&sc4238->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr_cfg->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			sc4238->cur_mode = &supported_modes[cur_best_fit];
 			w = sc4238->cur_mode->hts_def - sc4238->cur_mode->width;
 			h = sc4238->cur_mode->vts_def - sc4238->cur_mode->height;
 			__v4l2_ctrl_modify_range(sc4238->hblank, w, w, 1, w);
@@ -2319,7 +2424,7 @@ static int sc4238_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc4238 *sc4238 = to_sc4238(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc4238_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc4238->mutex);
@@ -2337,7 +2442,7 @@ static int sc4238_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int sc4238_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct sc4238 *sc4238 = to_sc4238(sd);
@@ -2375,6 +2480,7 @@ static const struct v4l2_subdev_core_ops sc4238_core_ops = {
 static const struct v4l2_subdev_video_ops sc4238_video_ops = {
 	.s_stream = sc4238_s_stream,
 	.g_frame_interval = sc4238_g_frame_interval,
+	.s_frame_interval = sc4238_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops sc4238_pad_ops = {
@@ -2776,7 +2882,7 @@ static int sc4238_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc4238->module_index, facing,
 		 SC4238_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -2801,7 +2907,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc4238_remove(struct i2c_client *client)
+static int sc4238_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc4238 *sc4238 = to_sc4238(sd);
@@ -2817,6 +2923,8 @@ static void sc4238_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc4238_power_off(sc4238);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

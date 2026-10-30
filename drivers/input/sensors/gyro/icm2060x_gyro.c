@@ -2,7 +2,7 @@
 /*
  * kernel/drivers/input/sensors/gyro/icm2060x_gyro.c
  *
- * Copyright (C) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2020 Rockchip Co.,Ltd.
  * Author: Wang Jie <dave.wang@rock-chips.com>
  */
 
@@ -174,9 +174,9 @@ static int gyro_icm2060x_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gyro_icm2060x_ops);
 }
 
-static void gyro_icm2060x_remove(struct i2c_client *client)
+static int gyro_icm2060x_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gyro_icm2060x_ops);
+	return sensor_unregister_device(client, NULL, &gyro_icm2060x_ops);
 }
 
 static const struct i2c_device_id gyro_icm2060x_id[] = {

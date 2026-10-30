@@ -2,7 +2,7 @@
 /*
  * Turris Mox rWTM firmware driver
  *
- * Copyright (C) 2019, 2024 Marek Behún <kabel@kernel.org>
+ * Copyright (C) 2019 Marek Behun <marek.behun@nic.cz>
  */
 
 #include <linux/armada-37xx-rwtm-mailbox.h>
@@ -173,9 +173,6 @@ static void mox_rwtm_rx_callback(struct mbox_client *cl, void *data)
 {
 	struct mox_rwtm *rwtm = dev_get_drvdata(cl->dev);
 	struct armada_37xx_rwtm_rx_msg *msg = data;
-
-	if (completion_done(&rwtm->cmd_done))
-		return;
 
 	rwtm->reply = *msg;
 	complete(&rwtm->cmd_done);
@@ -586,4 +583,4 @@ module_platform_driver(turris_mox_rwtm_driver);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Turris Mox rWTM firmware driver");
-MODULE_AUTHOR("Marek Behun <kabel@kernel.org>");
+MODULE_AUTHOR("Marek Behun <marek.behun@nic.cz>");

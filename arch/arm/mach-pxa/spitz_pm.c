@@ -18,6 +18,7 @@
 
 #include <asm/irq.h>
 #include <asm/mach-types.h>
+#include <mach/hardware.h>
 
 #include "spitz.h"
 #include "pxa27x.h"

@@ -19,6 +19,7 @@
 #include "of_helpers.h"
 #include "pseries.h"
 
+#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <linux/uaccess.h>
 #include <asm/rtas.h>
@@ -288,7 +289,8 @@ int dlpar_acquire_drc(u32 drc_index)
 {
 	int dr_status, rc;
 
-	rc = rtas_get_sensor(DR_ENTITY_SENSE, drc_index, &dr_status);
+	rc = rtas_call(rtas_token("get-sensor-state"), 2, 2, &dr_status,
+		       DR_ENTITY_SENSE, drc_index);
 	if (rc || dr_status != DR_ENTITY_UNUSABLE)
 		return -1;
 
@@ -309,7 +311,8 @@ int dlpar_release_drc(u32 drc_index)
 {
 	int dr_status, rc;
 
-	rc = rtas_get_sensor(DR_ENTITY_SENSE, drc_index, &dr_status);
+	rc = rtas_call(rtas_token("get-sensor-state"), 2, 2, &dr_status,
+		       DR_ENTITY_SENSE, drc_index);
 	if (rc || dr_status != DR_ENTITY_PRESENT)
 		return -1;
 
@@ -326,22 +329,26 @@ int dlpar_release_drc(u32 drc_index)
 	return 0;
 }
 
-int dlpar_unisolate_drc(u32 drc_index)
-{
-	int dr_status, rc;
-
-	rc = rtas_get_sensor(DR_ENTITY_SENSE, drc_index, &dr_status);
-	if (rc || dr_status != DR_ENTITY_PRESENT)
-		return -1;
-
-	rtas_set_indicator(ISOLATION_STATE, drc_index, UNISOLATE);
-
-	return 0;
-}
-
 int handle_dlpar_errorlog(struct pseries_hp_errorlog *hp_elog)
 {
 	int rc;
+
+	/* pseries error logs are in BE format, convert to cpu type */
+	switch (hp_elog->id_type) {
+	case PSERIES_HP_ELOG_ID_DRC_COUNT:
+		hp_elog->_drc_u.drc_count =
+				be32_to_cpu(hp_elog->_drc_u.drc_count);
+		break;
+	case PSERIES_HP_ELOG_ID_DRC_INDEX:
+		hp_elog->_drc_u.drc_index =
+				be32_to_cpu(hp_elog->_drc_u.drc_index);
+		break;
+	case PSERIES_HP_ELOG_ID_DRC_IC:
+		hp_elog->_drc_u.ic.count =
+				be32_to_cpu(hp_elog->_drc_u.ic.count);
+		hp_elog->_drc_u.ic.index =
+				be32_to_cpu(hp_elog->_drc_u.ic.index);
+	}
 
 	switch (hp_elog->resource) {
 	case PSERIES_HP_ELOG_RESOURCE_MEM:
@@ -371,7 +378,7 @@ static void pseries_hp_work_fn(struct work_struct *work)
 	handle_dlpar_errorlog(hp_work->errlog);
 
 	kfree(hp_work->errlog);
-	kfree(work);
+	kfree((void *)work);
 }
 
 void queue_hotplug_event(struct pseries_hp_errorlog *hp_errlog)
@@ -513,8 +520,11 @@ static ssize_t dlpar_store(struct class *class, struct class_attribute *attr,
 	int rc;
 
 	args = argbuf = kstrdup(buf, GFP_KERNEL);
-	if (!argbuf)
+	if (!argbuf) {
+		pr_info("Could not allocate resources for DLPAR operation\n");
+		kfree(argbuf);
 		return -ENOMEM;
+	}
 
 	/*
 	 * Parse out the request from the user, this will be in the form:

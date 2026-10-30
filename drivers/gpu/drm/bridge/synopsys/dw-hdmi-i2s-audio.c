@@ -54,12 +54,10 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
 	u8 inputclkfs = 0;
 
 	/* it cares I2S only */
-	if (fmt->bit_clk_provider | fmt->frame_clk_provider) {
+	if (fmt->bit_clk_master | fmt->frame_clk_master) {
 		dev_err(dev, "unsupported clock settings\n");
 		return -EINVAL;
 	}
-
-	dw_hdmi_audio_disable(hdmi);
 
 	/* Reset the FIFOs before applying new params */
 	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
@@ -140,11 +138,6 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
 	hdmi_write(audio, conf1, HDMI_AUD_CONF1);
 	hdmi_write(audio, conf2, HDMI_AUD_CONF2);
 
-	dw_hdmi_audio_enable(hdmi);
-	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
-			 HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
-	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
-
 	return 0;
 }
 
@@ -219,7 +212,7 @@ static int dw_hdmi_i2s_hook_plugged_cb(struct device *dev, void *data,
 	return dw_hdmi_set_plugged_cb(hdmi, fn, codec_dev);
 }
 
-static const struct hdmi_codec_ops dw_hdmi_i2s_ops = {
+static struct hdmi_codec_ops dw_hdmi_i2s_ops = {
 	.hw_params	= dw_hdmi_i2s_hw_params,
 	.prepare	= dw_hdmi_i2s_prepare,
 	.audio_startup  = dw_hdmi_i2s_audio_startup,

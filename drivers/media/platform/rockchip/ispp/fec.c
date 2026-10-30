@@ -23,17 +23,17 @@ struct rkispp_fec_buf {
 	struct file *file;
 	int fd;
 	struct dma_buf *dbuf;
-	struct dma_buf_attachment *dba;
-	struct sg_table *sgt;
+	void *mem;
 };
 
-static struct sg_table *fec_buf_add(struct file *file, int fd, int size)
+static const struct vb2_mem_ops *g_ops = &vb2_dma_contig_memops;
+
+static void *fec_buf_add(struct file *file, int fd, int size)
 {
 	struct rkispp_fec_dev *fec = video_drvdata(file);
 	struct rkispp_fec_buf *buf = NULL;
-	struct dma_buf *dbuf = NULL;
-	struct dma_buf_attachment *dba = NULL;
-	struct sg_table *sgt = NULL;
+	struct dma_buf *dbuf;
+	void *mem = NULL;
 	bool is_add = true;
 
 	dbuf = dma_buf_get(fd);
@@ -41,13 +41,13 @@ static struct sg_table *fec_buf_add(struct file *file, int fd, int size)
 		 "%s file:%p fd:%d dbuf:%p\n", __func__, file, fd, dbuf);
 	if (IS_ERR_OR_NULL(dbuf)) {
 		v4l2_err(&fec->v4l2_dev, "invalid dmabuf fd:%d for in picture", fd);
-		return sgt;
+		return mem;
 	}
 	if (size && dbuf->size < size) {
 		v4l2_err(&fec->v4l2_dev,
 			 "input fd:%d size error:%zu < %u\n", fd, dbuf->size, size);
 		dma_buf_put(dbuf);
-		return sgt;
+		return mem;
 	}
 
 	mutex_lock(&fec->hw->dev_lock);
@@ -59,39 +59,39 @@ static struct sg_table *fec_buf_add(struct file *file, int fd, int size)
 	}
 
 	if (is_add) {
-		dba = dma_buf_attach(dbuf, fec->hw->dev);
-		if (IS_ERR(dba)) {
+		mem = g_ops->attach_dmabuf(fec->hw->dev, dbuf, dbuf->size, DMA_BIDIRECTIONAL);
+		if (IS_ERR(mem)) {
 			v4l2_err(&fec->v4l2_dev, "failed to attach dmabuf, fd:%d\n", fd);
 			dma_buf_put(dbuf);
 			goto end;
 		}
-		sgt = dma_buf_map_attachment(dba, DMA_BIDIRECTIONAL);
-		if (IS_ERR(sgt)) {
+		if (g_ops->map_dmabuf(mem)) {
 			v4l2_err(&fec->v4l2_dev, "failed to map, fd:%d\n", fd);
-			dma_buf_detach(dbuf, dba);
+			g_ops->detach_dmabuf(mem);
 			dma_buf_put(dbuf);
+			mem = NULL;
 			goto end;
 		}
 		buf = kzalloc(sizeof(struct rkispp_fec_buf), GFP_KERNEL);
 		if (!buf) {
-			dma_buf_unmap_attachment(dba, sgt, DMA_BIDIRECTIONAL);
-			dma_buf_detach(dbuf, dba);
+			g_ops->unmap_dmabuf(mem);
+			g_ops->detach_dmabuf(mem);
 			dma_buf_put(dbuf);
+			mem = NULL;
 			goto end;
 		}
 		buf->fd = fd;
 		buf->file = file;
 		buf->dbuf = dbuf;
-		buf->dba = dba;
-		buf->sgt = sgt;
+		buf->mem = mem;
 		list_add_tail(&buf->list, &fec->list);
 	} else {
 		dma_buf_put(dbuf);
-		sgt = buf->sgt;
+		mem = buf->mem;
 	}
 end:
 	mutex_unlock(&fec->hw->dev_lock);
-	return sgt;
+	return mem;
 }
 
 static void fec_buf_del(struct file *file, int fd, bool is_all)
@@ -105,12 +105,11 @@ static void fec_buf_del(struct file *file, int fd, bool is_all)
 			v4l2_dbg(4, rkispp_debug, &fec->v4l2_dev,
 				 "%s file:%p fd:%d dbuf:%p\n",
 				 __func__, file, buf->fd, buf->dbuf);
-			dma_buf_unmap_attachment(buf->dba, buf->sgt, DMA_BIDIRECTIONAL);
-			dma_buf_detach(buf->dbuf, buf->dba);
+			g_ops->unmap_dmabuf(buf->mem);
+			g_ops->detach_dmabuf(buf->mem);
 			dma_buf_put(buf->dbuf);
 			buf->file = NULL;
-			buf->dba = NULL;
-			buf->sgt = NULL;
+			buf->mem = NULL;
 			buf->dbuf = NULL;
 			buf->fd = -1;
 			list_del(&buf->list);
@@ -129,7 +128,7 @@ static int fec_running(struct file *file, struct rkispp_fec_in_out *buf)
 	u32 out_w = buf->out_width, out_h = buf->out_height;
 	u32 density, mesh_size;
 	void __iomem *base = fec->hw->base_addr;
-	struct sg_table *sgt;
+	void *mem;
 	int ret = -EINVAL;
 	ktime_t t = 0;
 	s64 us = 0;
@@ -216,49 +215,49 @@ static int fec_running(struct file *file, struct rkispp_fec_in_out *buf)
 		out_w * out_h * 2 : out_w * out_h * 3 / 2;
 
 	/* input picture buf */
-	sgt = fec_buf_add(file, buf->in_pic_fd, in_size);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->in_pic_fd, in_size);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_RD_Y_BASE);
 	val += in_offs;
 	writel(val, base + RKISPP_FEC_RD_UV_BASE);
 
 	/* output picture buf */
-	sgt = fec_buf_add(file, buf->out_pic_fd, out_size);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->out_pic_fd, out_size);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_WR_Y_BASE);
 	val += out_offs;
 	writel(val, base + RKISPP_FEC_WR_UV_BASE);
 
 	/* mesh xint buf */
-	sgt = fec_buf_add(file, buf->mesh_xint_fd, mesh_size * 2);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->mesh_xint_fd, mesh_size * 2);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_MESH_XINT_BASE);
 
 	/* mesh xfra buf */
-	sgt = fec_buf_add(file, buf->mesh_xfra_fd, mesh_size);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->mesh_xfra_fd, mesh_size);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_MESH_XFRA_BASE);
 
 	/* mesh yint buf */
-	sgt = fec_buf_add(file, buf->mesh_yint_fd, mesh_size * 2);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->mesh_yint_fd, mesh_size * 2);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_MESH_YINT_BASE);
 
 	/* mesh yfra buf */
-	sgt = fec_buf_add(file, buf->mesh_yfra_fd, mesh_size);
-	if (!sgt)
+	mem = fec_buf_add(file, buf->mesh_yfra_fd, mesh_size);
+	if (!mem)
 		goto free_buf;
-	val = sg_dma_address(sgt->sgl);
+	val = *((dma_addr_t *)g_ops->cookie(mem));
 	writel(val, base + RKISPP_FEC_MESH_YFRA_BASE);
 
 	val = out_fmt << 4 | in_fmt;
@@ -423,7 +422,7 @@ int rkispp_register_fec(struct rkispp_hw_dev *hw)
 	fec->hw = hw;
 	hw->is_fec_ext = true;
 	v4l2_dev = &fec->v4l2_dev;
-	strscpy(v4l2_dev->name, fec_videodev.name, sizeof(v4l2_dev->name));
+	strlcpy(v4l2_dev->name, fec_videodev.name, sizeof(v4l2_dev->name));
 	ret = v4l2_device_register(hw->dev, v4l2_dev);
 	if (ret)
 		return ret;

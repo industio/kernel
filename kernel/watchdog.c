@@ -27,6 +27,8 @@
 #include <asm/irq_regs.h>
 #include <linux/kvm_para.h>
 
+#include <trace/hooks/softlockup.h>
+
 #if IS_ENABLED(CONFIG_ROCKCHIP_MINIDUMP)
 #include <soc/rockchip/rk_minidump.h>
 #endif
@@ -63,7 +65,7 @@ ATOMIC_NOTIFIER_HEAD(hardlock_notifier_list);
  * Should we panic when a soft-lockup or hard-lockup occurs:
  */
 unsigned int __read_mostly hardlockup_panic =
-			IS_ENABLED(CONFIG_BOOTPARAM_HARDLOCKUP_PANIC);
+			CONFIG_BOOTPARAM_HARDLOCKUP_PANIC_VALUE;
 /*
  * We may not want to enable hard lockup detection by default in all cases,
  * for example when running the kernel as a guest on a hypervisor. In these
@@ -137,7 +139,7 @@ void watchdog_nmi_disable(unsigned int cpu)
  * own hardlockup detector.
  *
  * watchdog_nmi_enable/disable can be implemented to start and stop when
- * softlockup watchdog start and stop. The arch must select the
+ * softlockup watchdog threads start and stop. The arch must select the
  * SOFTLOCKUP_DETECTOR Kconfig.
  */
 int __weak watchdog_nmi_enable(unsigned int cpu)
@@ -200,11 +202,7 @@ static void lockup_detector_update_enable(void)
 
 #ifdef CONFIG_SOFTLOCKUP_DETECTOR
 
-/*
- * Delay the soflockup report when running a known slow code.
- * It does _not_ affect the timestamp of the last successdul reschedule.
- */
-#define SOFTLOCKUP_DELAY_REPORT	ULONG_MAX
+#define SOFTLOCKUP_RESET	ULONG_MAX
 
 #ifdef CONFIG_SMP
 int __read_mostly sysctl_softlockup_all_cpu_backtrace;
@@ -214,15 +212,12 @@ static struct cpumask watchdog_allowed_mask __read_mostly;
 
 /* Global variables, exported for sysctl */
 unsigned int __read_mostly softlockup_panic =
-			IS_ENABLED(CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC);
+			CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC_VALUE;
 
 static bool softlockup_initialized __read_mostly;
 static u64 __read_mostly sample_period;
 
-/* Timestamp taken after the last successful reschedule. */
 static DEFINE_PER_CPU(unsigned long, watchdog_touch_ts);
-/* Timestamp of the last softlockup report. */
-static DEFINE_PER_CPU(unsigned long, watchdog_report_ts);
 static DEFINE_PER_CPU(struct hrtimer, watchdog_hrtimer);
 static DEFINE_PER_CPU(bool, softlockup_touch_sync);
 static DEFINE_PER_CPU(unsigned long, hrtimer_interrupts);
@@ -294,16 +289,10 @@ static void set_sample_period(void)
 	watchdog_update_hrtimer_threshold(sample_period);
 }
 
-static void update_report_ts(void)
-{
-	__this_cpu_write(watchdog_report_ts, get_timestamp());
-}
-
 /* Commands for resetting the watchdog */
 static void update_touch_ts(void)
 {
 	__this_cpu_write(watchdog_touch_ts, get_timestamp());
-	update_report_ts();
 }
 
 /**
@@ -317,10 +306,10 @@ static void update_touch_ts(void)
 notrace void touch_softlockup_watchdog_sched(void)
 {
 	/*
-	 * Preemption can be enabled.  It doesn't matter which CPU's watchdog
-	 * report period gets restarted here, so use the raw_ operation.
+	 * Preemption can be enabled.  It doesn't matter which CPU's timestamp
+	 * gets zeroed here, so use the raw_ operation.
 	 */
-	raw_cpu_write(watchdog_report_ts, SOFTLOCKUP_DELAY_REPORT);
+	raw_cpu_write(watchdog_touch_ts, SOFTLOCKUP_RESET);
 }
 
 notrace void touch_softlockup_watchdog(void)
@@ -343,25 +332,24 @@ void touch_all_softlockup_watchdogs(void)
 	 * update as well, the only side effect might be a cycle delay for
 	 * the softlockup check.
 	 */
-	for_each_cpu(cpu, &watchdog_allowed_mask) {
-		per_cpu(watchdog_report_ts, cpu) = SOFTLOCKUP_DELAY_REPORT;
-		wq_watchdog_touch(cpu);
-	}
+	for_each_cpu(cpu, &watchdog_allowed_mask)
+		per_cpu(watchdog_touch_ts, cpu) = SOFTLOCKUP_RESET;
+	wq_watchdog_touch(-1);
 }
 
 void touch_softlockup_watchdog_sync(void)
 {
 	__this_cpu_write(softlockup_touch_sync, true);
-	__this_cpu_write(watchdog_report_ts, SOFTLOCKUP_DELAY_REPORT);
+	__this_cpu_write(watchdog_touch_ts, SOFTLOCKUP_RESET);
 }
 
-static int is_softlockup(unsigned long touch_ts,
-			 unsigned long period_ts,
-			 unsigned long now)
+static int is_softlockup(unsigned long touch_ts)
 {
+	unsigned long now = get_timestamp();
+
 	if ((watchdog_enabled & SOFT_WATCHDOG_ENABLED) && watchdog_thresh){
 		/* Warn about unreasonable delays. */
-		if (time_after(now, period_ts + get_softlockup_thresh()))
+		if (time_after(now, touch_ts + get_softlockup_thresh()))
 			return now - touch_ts;
 	}
 	return 0;
@@ -460,7 +448,7 @@ static DEFINE_PER_CPU(struct completion, softlockup_completion);
 static DEFINE_PER_CPU(struct cpu_stop_work, softlockup_stop_work);
 
 /*
- * The watchdog feed function - touches the timestamp.
+ * The watchdog thread function - touches the timestamp.
  *
  * It only runs once every sample_period seconds (4 seconds by
  * default) to reset the softlockup timestamp. If this gets delayed
@@ -478,7 +466,7 @@ static int softlockup_fn(void *data)
 /* watchdog kicker functions */
 static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 {
-	unsigned long touch_ts, period_ts, now;
+	unsigned long touch_ts = __this_cpu_read(watchdog_touch_ts);
 	struct pt_regs *regs = get_irq_regs();
 	int duration;
 	int softlockup_all_cpu_backtrace = sysctl_softlockup_all_cpu_backtrace;
@@ -504,26 +492,7 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 	/* .. and repeat */
 	hrtimer_forward_now(hrtimer, ns_to_ktime(sample_period));
 
-	/*
-	 * Read the current timestamp first. It might become invalid anytime
-	 * when a virtual machine is stopped by the host or when the watchog
-	 * is touched from NMI.
-	 */
-	now = get_timestamp();
-	/*
-	 * If a virtual machine is stopped by the host it can look to
-	 * the watchdog like a soft lockup. This function touches the watchdog.
-	 */
-	kvm_check_and_clear_guest_paused();
-	/*
-	 * The stored timestamp is comparable with @now only when not touched.
-	 * It might get touched anytime from NMI. Make sure that is_softlockup()
-	 * uses the same (valid) value.
-	 */
-	period_ts = READ_ONCE(*this_cpu_ptr(&watchdog_report_ts));
-
-	/* Reset the interval when touched by known problematic code. */
-	if (period_ts == SOFTLOCKUP_DELAY_REPORT) {
+	if (touch_ts == SOFTLOCKUP_RESET) {
 		if (unlikely(__this_cpu_read(softlockup_touch_sync))) {
 			/*
 			 * If the time stamp was touched atomically
@@ -533,14 +502,28 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 			sched_clock_tick();
 		}
 
-		update_report_ts();
+		/* Clear the guest paused flag on watchdog reset */
+		kvm_check_and_clear_guest_paused();
+		update_touch_ts();
 		return HRTIMER_RESTART;
 	}
 
-	/* Check for a softlockup. */
-	touch_ts = __this_cpu_read(watchdog_touch_ts);
-	duration = is_softlockup(touch_ts, period_ts, now);
+	/* check for a softlockup
+	 * This is done by making sure a high priority task is
+	 * being scheduled.  The task touches the watchdog to
+	 * indicate it is getting cpu time.  If it hasn't then
+	 * this is a good indication some task is hogging the cpu
+	 */
+	duration = is_softlockup(touch_ts);
 	if (unlikely(duration)) {
+		/*
+		 * If a virtual machine is stopped by the host it can look to
+		 * the watchdog like a soft lockup, check to see if the host
+		 * stopped the vm before we issue the warning
+		 */
+		if (kvm_check_and_clear_guest_paused())
+			return HRTIMER_RESTART;
+
 		/*
 		 * Prevent multiple soft-lockup reports if one cpu is already
 		 * engaged in dumping all cpu back traces.
@@ -551,7 +534,7 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 		}
 
 		/* Start period for the next softlockup warning. */
-		update_report_ts();
+		update_touch_ts();
 
 		pr_emerg("BUG: soft lockup - CPU#%d stuck for %us! [%s:%d]\n",
 			smp_processor_id(), duration,
@@ -568,6 +551,7 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 			clear_bit_unlock(0, &soft_lockup_nmi_warn);
 		}
 
+		trace_android_vh_watchdog_timer_softlockup(duration, regs, !!softlockup_panic);
 		add_taint(TAINT_SOFTLOCKUP, LOCKDEP_STILL_OK);
 #if IS_ENABLED(CONFIG_ROCKCHIP_MINIDUMP)
 		rk_minidump_update_cpu_regs(regs);
@@ -699,7 +683,11 @@ void lockup_detector_reconfigure(void)
 }
 
 /*
- * Create the watchdog infrastructure and configure the detector(s).
+ * Create the watchdog thread infrastructure and configure the detector(s).
+ *
+ * The threads are not unparked as watchdog_allowed_mask is empty.  When
+ * the threads are successfully initialized, take the proper locks and
+ * unpark the threads in the watchdog_cpumask if the watchdog is enabled.
  */
 static __init void lockup_detector_setup(void)
 {
@@ -769,7 +757,7 @@ void lockup_detector_soft_poweroff(void)
 
 #ifdef CONFIG_SYSCTL
 
-/* Propagate any changes to the watchdog infrastructure */
+/* Propagate any changes to the watchdog threads */
 static void proc_watchdog_update(void)
 {
 	/* Remove impossible cpus to keep sysctl output clean. */
@@ -885,106 +873,6 @@ int proc_watchdog_cpumask(struct ctl_table *table, int write,
 	mutex_unlock(&watchdog_mutex);
 	return err;
 }
-
-static const int sixty = 60;
-
-static struct ctl_table watchdog_sysctls[] = {
-	{
-		.procname       = "watchdog",
-		.data		= &watchdog_user_enabled,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler   = proc_watchdog,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "watchdog_thresh",
-		.data		= &watchdog_thresh,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_watchdog_thresh,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= (void *)&sixty,
-	},
-	{
-		.procname       = "nmi_watchdog",
-		.data		= &nmi_watchdog_user_enabled,
-		.maxlen		= sizeof(int),
-		.mode		= NMI_WATCHDOG_SYSCTL_PERM,
-		.proc_handler   = proc_nmi_watchdog,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "watchdog_cpumask",
-		.data		= &watchdog_cpumask_bits,
-		.maxlen		= NR_CPUS,
-		.mode		= 0644,
-		.proc_handler	= proc_watchdog_cpumask,
-	},
-#ifdef CONFIG_SOFTLOCKUP_DETECTOR
-	{
-		.procname       = "soft_watchdog",
-		.data		= &soft_watchdog_user_enabled,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler   = proc_soft_watchdog,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "softlockup_panic",
-		.data		= &softlockup_panic,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#ifdef CONFIG_SMP
-	{
-		.procname	= "softlockup_all_cpu_backtrace",
-		.data		= &sysctl_softlockup_all_cpu_backtrace,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif /* CONFIG_SMP */
-#endif
-#ifdef CONFIG_HARDLOCKUP_DETECTOR
-	{
-		.procname	= "hardlockup_panic",
-		.data		= &hardlockup_panic,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#ifdef CONFIG_SMP
-	{
-		.procname	= "hardlockup_all_cpu_backtrace",
-		.data		= &sysctl_hardlockup_all_cpu_backtrace,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif /* CONFIG_SMP */
-#endif
-	{}
-};
-
-static void __init watchdog_sysctl_init(void)
-{
-	register_sysctl_init("kernel", watchdog_sysctls);
-}
-#else
-#define watchdog_sysctl_init() do { } while (0)
 #endif /* CONFIG_SYSCTL */
 
 void __init lockup_detector_init(void)
@@ -993,10 +881,9 @@ void __init lockup_detector_init(void)
 		pr_info("Disabling watchdog on nohz_full cores by default\n");
 
 	cpumask_copy(&watchdog_cpumask,
-		     housekeeping_cpumask(HK_TYPE_TIMER));
+		     housekeeping_cpumask(HK_FLAG_TIMER));
 
 	if (!watchdog_nmi_probe())
 		nmi_watchdog_available = true;
 	lockup_detector_setup();
-	watchdog_sysctl_init();
 }

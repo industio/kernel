@@ -64,7 +64,7 @@ SECTIONS
 	. = ALIGN(4);
 	__ex_table : AT(ADDR(__ex_table) - LOAD_OFFSET) {
 		__start___ex_table = .;
-		ARM_MMU_KEEP(KEEP(*(__ex_table)))
+		ARM_MMU_KEEP(*(__ex_table))
 		__stop___ex_table = .;
 	}
 
@@ -84,7 +84,7 @@ SECTIONS
 	}
 	.init.arch.info : {
 		__arch_info_begin = .;
-		KEEP(*(.arch.info.init))
+		*(.arch.info.init)
 		__arch_info_end = .;
 	}
 	.init.tagtable : {
@@ -166,9 +166,7 @@ SECTIONS
  * binutils is too old (for other reasons as well)
  */
 ASSERT((__proc_info_end - __proc_info_begin), "missing CPU support")
-#ifndef CONFIG_COMPILE_TEST
 ASSERT((__arch_info_end - __arch_info_begin), "no machine record defined")
-#endif
 
 #ifdef CONFIG_XIP_DEFLATED_DATA
 /*

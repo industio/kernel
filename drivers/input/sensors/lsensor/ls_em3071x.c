@@ -2,7 +2,7 @@
 /*
  * kernel/drivers/input/sensors/lsensor/ls_em3071x.c
  *
- * Copyright (C) 2020 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2020 Rockchip Co.,Ltd.
  * Author: Wang Jie <dave.wang@rock-chips.com>
  */
 
@@ -253,9 +253,9 @@ static int light_em3071x_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &light_em3071x_ops);
 }
 
-static void light_em3071x_remove(struct i2c_client *client)
+static int light_em3071x_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &light_em3071x_ops);
+	return sensor_unregister_device(client, NULL, &light_em3071x_ops);
 }
 
 static const struct i2c_device_id light_em3071x_id[] = {

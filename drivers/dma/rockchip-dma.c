@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * Copyright (c) 2024 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2024 Rockchip Electronics Co. Ltd.
  * Author: Sugar Zhang <sugar.zhang@rock-chips.com>
  */
 #include <linux/clk.h>
@@ -1252,15 +1252,18 @@ static int rk_dma_probe(struct platform_device *pdev)
 		vchan_init(&c->vc, &d->slave);
 	}
 
-	ret = dmaenginem_async_device_register(&d->slave);
+	ret = dma_async_device_register(&d->slave);
 	if (ret)
 		goto err_disable_clk;
 
 	ret = of_dma_controller_register((&pdev->dev)->of_node, rk_of_dma_simple_xlate, d);
 	if (ret)
-		goto err_disable_clk;
+		goto err_unregister_dma;
 
 	return 0;
+
+err_unregister_dma:
+	dma_async_device_unregister(&d->slave);
 
 err_disable_clk:
 	clk_disable_unprepare(d->clk);
@@ -1273,6 +1276,7 @@ static int rk_dma_remove(struct platform_device *pdev)
 	struct rk_dma_chan *c, *cn;
 	struct rk_dma_dev *d = platform_get_drvdata(pdev);
 
+	dma_async_device_unregister(&d->slave);
 	of_dma_controller_free((&pdev->dev)->of_node);
 
 	list_for_each_entry_safe(c, cn, &d->slave.channels, vc.chan.device_node) {
@@ -1283,6 +1287,7 @@ static int rk_dma_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int rk_dma_suspend_dev(struct device *dev)
 {
 	struct rk_dma_dev *d = dev_get_drvdata(dev);
@@ -1308,13 +1313,14 @@ static int rk_dma_resume_dev(struct device *dev)
 
 	return 0;
 }
+#endif
 
-static DEFINE_SIMPLE_DEV_PM_OPS(rk_dma_pmops, rk_dma_suspend_dev, rk_dma_resume_dev);
+static SIMPLE_DEV_PM_OPS(rk_dma_pmops, rk_dma_suspend_dev, rk_dma_resume_dev);
 
 static struct platform_driver rk_pdma_driver = {
 	.driver		= {
 		.name	= DRIVER_NAME,
-		.pm	= pm_sleep_ptr(&rk_dma_pmops),
+		.pm	= &rk_dma_pmops,
 		.of_match_table = rk_dma_dt_ids,
 	},
 	.probe		= rk_dma_probe,

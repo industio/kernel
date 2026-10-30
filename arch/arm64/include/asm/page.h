@@ -41,7 +41,7 @@ void tag_clear_highpage(struct page *to);
 
 typedef struct page *pgtable_t;
 
-int pfn_is_map_memory(unsigned long pfn);
+extern int pfn_valid(unsigned long);
 
 #include <asm/memory.h>
 

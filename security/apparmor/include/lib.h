@@ -36,17 +36,12 @@
 
 #define AA_WARN(X) WARN((X), "APPARMOR WARN %s: %s\n", __func__, #X)
 
-#define AA_BUG(X, args...)						    \
-	do {								    \
-		_Pragma("GCC diagnostic ignored \"-Wformat-zero-length\""); \
-		AA_BUG_FMT((X), "" args);				    \
-		_Pragma("GCC diagnostic warning \"-Wformat-zero-length\""); \
-	} while (0)
+#define AA_BUG(X, args...) AA_BUG_FMT((X), "" args)
 #ifdef CONFIG_SECURITY_APPARMOR_DEBUG_ASSERTS
 #define AA_BUG_FMT(X, fmt, args...)					\
 	WARN((X), "AppArmor WARN %s: (" #X "): " fmt, __func__, ##args)
 #else
-#define AA_BUG_FMT(X, fmt, args...) no_printk(fmt, ##args)
+#define AA_BUG_FMT(X, fmt, args...)
 #endif
 
 #define AA_ERROR(fmt, args...)						\
@@ -226,7 +221,7 @@ void aa_policy_destroy(struct aa_policy *policy);
  */
 #define fn_label_build(L, P, GFP, FN)					\
 ({									\
-	__label__ __do_cleanup, __done;					\
+	__label__ __cleanup, __done;					\
 	struct aa_label *__new_;					\
 									\
 	if ((L)->size > 1) {						\
@@ -244,7 +239,7 @@ void aa_policy_destroy(struct aa_policy *policy);
 			__new_ = (FN);					\
 			AA_BUG(!__new_);				\
 			if (IS_ERR(__new_))				\
-				goto __do_cleanup;			\
+				goto __cleanup;				\
 			__lvec[__j++] = __new_;				\
 		}							\
 		for (__j = __count = 0; __j < (L)->size; __j++)		\
@@ -266,7 +261,7 @@ void aa_policy_destroy(struct aa_policy *policy);
 			vec_cleanup(profile, __pvec, __count);		\
 		} else							\
 			__new_ = NULL;					\
-__do_cleanup:								\
+__cleanup:								\
 		vec_cleanup(label, __lvec, (L)->size);			\
 	} else {							\
 		(P) = labels_profile(L);				\

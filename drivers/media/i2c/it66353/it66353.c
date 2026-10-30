@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2022 Rockchip Electronics Co. Ltd.
  *
  * it66353 HDMI 3 in 1 out driver.
  *
@@ -377,7 +377,7 @@ err0:
 	return ret;
 }
 
-static void it66353_remove(struct i2c_client *client)
+static int it66353_remove(struct i2c_client *client)
 {
 	cancel_delayed_work_sync(&it66353->work_i2c_poll);
 
@@ -386,6 +386,8 @@ static void it66353_remove(struct i2c_client *client)
 	misc_deregister(&it66353_miscdev);
 	mutex_destroy(&it66353->poll_lock);
 	mutex_destroy(&it66353->port_lock);
+
+	return 0;
 }
 
 static const struct of_device_id it66353_of_match[] = {

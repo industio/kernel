@@ -60,7 +60,7 @@ st_cmd_head cmd_head;
 
 static struct i2c_client *gt_client = NULL;
 
-static struct proc_dir_entry *goodix_proc_entry;
+//static struct proc_dir_entry *goodix_proc_entry;
 
 static ssize_t goodix_tool_read(struct file *, char __user *, size_t, loff_t *);
 static ssize_t goodix_tool_write(struct file *, const char __user *, size_t, loff_t *);
@@ -89,7 +89,7 @@ static void tool_set_proc_name(char * procname)
     char month[4] = {0};
     int i = 0, n_month = 1, n_day = 0, n_year = 0;
     
-    sprintf(date, "%s", __DATE__);
+//    sprintf(date, "%s", __DATE__);
     
     //GTP_DEBUG("compile date: %s", date);
     
@@ -251,7 +251,7 @@ s32 init_wr_node(struct i2c_client *client)
 
     tool_set_proc_name(procname);
     //goodix_proc_entry = create_proc_entry(procname, 0666, NULL);
-    goodix_proc_entry = proc_create(procname, 0666, NULL, &tool_ops);
+    /*goodix_proc_entry = proc_create(procname, 0666, NULL, &tool_ops);
     if (goodix_proc_entry == NULL)
     {
         GTP_ERROR("Couldn't create proc entry!");
@@ -263,7 +263,7 @@ s32 init_wr_node(struct i2c_client *client)
         //goodix_proc_entry->write_proc = goodix_tool_write;
         //goodix_proc_entry->read_proc = goodix_tool_read;
     }
-
+	*/
     return SUCCESS;
 }
 
@@ -529,6 +529,7 @@ ssize_t goodix_tool_read(struct file *file, char __user *page, size_t size, loff
         //GTP_DEBUG("[HEAD]wr: %d", cmd_head.wr);
         //GTP_DEBUG("[PARAM]size: %d, *ppos: %d", size, (int)*ppos);
         //GTP_DEBUG("[TOOL_READ]ADB call again, return it.");
+        *ppos = 0;
         return 0;
     }
     

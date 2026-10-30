@@ -75,8 +75,6 @@
 #define SC2239_REG_VALUE_16BIT		2
 #define SC2239_REG_VALUE_24BIT		3
 
-#define PIX_FORMAT MEDIA_BUS_FMT_SBGGR10_1X10
-
 #define SC2239_NAME			"sc2239"
 
 static const char * const sc2239_supply_names[] = {
@@ -93,6 +91,7 @@ struct regval {
 };
 
 struct sc2239_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -238,6 +237,7 @@ static const struct regval sc2239_1920x1080_regs_1lane[] = {
 
 static const struct sc2239_mode supported_modes[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.width = 1920,
 		.height = 1080,
 		.max_fps = {
@@ -249,6 +249,10 @@ static const struct sc2239_mode supported_modes[] = {
 		.vts_def = 0x0465,
 		.reg_list = sc2239_1920x1080_regs_1lane,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const char * const sc2239_test_pattern_menu[] = {
@@ -371,6 +375,10 @@ sc2239_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -378,7 +386,7 @@ sc2239_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int sc2239_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc2239 *sc2239 = to_sc2239(sd);
@@ -388,13 +396,13 @@ static int sc2239_set_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc2239->mutex);
 
 	mode = sc2239_find_best_fit(fmt);
-	fmt->format.code = PIX_FORMAT;
+	fmt->format.code = mode->bus_fmt;
 	fmt->format.width = mode->width;
 	fmt->format.height = mode->height;
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc2239->mutex);
 		return -ENOTTY;
@@ -418,7 +426,7 @@ static int sc2239_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc2239_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *sd_state,
+			  struct v4l2_subdev_pad_config *cfg,
 			  struct v4l2_subdev_format *fmt)
 {
 	struct sc2239 *sc2239 = to_sc2239(sd);
@@ -427,7 +435,7 @@ static int sc2239_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc2239->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc2239->mutex);
 		return -ENOTTY;
@@ -435,7 +443,7 @@ static int sc2239_get_fmt(struct v4l2_subdev *sd,
 	} else {
 		fmt->format.width = mode->width;
 		fmt->format.height = mode->height;
-		fmt->format.code = PIX_FORMAT;
+		fmt->format.code = mode->bus_fmt;
 		fmt->format.field = V4L2_FIELD_NONE;
 	}
 	mutex_unlock(&sc2239->mutex);
@@ -444,24 +452,24 @@ static int sc2239_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc2239_enum_mbus_code(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = PIX_FORMAT;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc2239_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	if (fse->code != PIX_FORMAT)
+	if (fse->code != supported_modes[fse->index].bus_fmt)
 		return -EINVAL;
 
 	fse->min_width  = supported_modes[fse->index].width;
@@ -493,10 +501,10 @@ static void sc2239_get_module_inf(struct sc2239 *sc2239,
 				  struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, SC2239_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, sc2239->module_name,
+	strlcpy(inf->base.sensor, SC2239_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, sc2239->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, sc2239->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, sc2239->len_name, sizeof(inf->base.lens));
 }
 
 static long sc2239_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -717,6 +725,67 @@ static int sc2239_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static const struct sc2239_mode *sc2239_find_mode(struct sc2239 *sc2239, int fps)
+{
+	const struct sc2239_mode *mode = NULL;
+	const struct sc2239_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == sc2239->cur_mode->width &&
+		    mode->height == sc2239->cur_mode->height &&
+		    mode->bus_fmt == sc2239->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int sc2239_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct sc2239 *sc2239 = to_sc2239(sd);
+	const struct sc2239_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (sc2239->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = sc2239_find_mode(sc2239, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	sc2239->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(sc2239->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(sc2239->vblank, vblank_def,
+				 SC2239_VTS_MAX - mode->height,
+				 1, vblank_def);
+	sc2239->cur_fps = mode->max_fps;
+	return 0;
+}
+
 static int sc2239_s_power(struct v4l2_subdev *sd, int on)
 {
 	struct sc2239 *sc2239 = to_sc2239(sd);
@@ -838,14 +907,14 @@ static int sc2239_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc2239 *sc2239 = to_sc2239(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc2239_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc2239->mutex);
 	/* Initialize try_fmt */
 	try_fmt->width = def_mode->width;
 	try_fmt->height = def_mode->height;
-	try_fmt->code = PIX_FORMAT;
+	try_fmt->code = def_mode->bus_fmt;
 	try_fmt->field = V4L2_FIELD_NONE;
 
 	mutex_unlock(&sc2239->mutex);
@@ -858,20 +927,24 @@ static int sc2239_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 static int sc2239_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				 struct v4l2_mbus_config *config)
 {
+	u32 val = 1 << (SC2239_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = SC2239_LANES;
+	config->flags = val;
 
 	return 0;
 }
 
 static int sc2239_enum_frame_interval(struct v4l2_subdev *sd,
-				      struct v4l2_subdev_state *sd_state,
+				      struct v4l2_subdev_pad_config *cfg,
 				      struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
 		return -EINVAL;
 
-	fie->code = PIX_FORMAT;
+	fie->code = supported_modes[fie->index].bus_fmt;
 
 	fie->width = supported_modes[fie->index].width;
 	fie->height = supported_modes[fie->index].height;
@@ -901,6 +974,7 @@ static const struct v4l2_subdev_core_ops sc2239_core_ops = {
 static const struct v4l2_subdev_video_ops sc2239_video_ops = {
 	.s_stream = sc2239_s_stream,
 	.g_frame_interval = sc2239_g_frame_interval,
+	.s_frame_interval = sc2239_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops sc2239_pad_ops = {
@@ -1185,7 +1259,7 @@ static int sc2239_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc2239->module_index, facing,
 		 SC2239_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1211,7 +1285,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc2239_remove(struct i2c_client *client)
+static int sc2239_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc2239 *sc2239 = to_sc2239(sd);
@@ -1227,6 +1301,8 @@ static void sc2239_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc2239_power_off(sc2239);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 
-/* Copyright (c) 2023 Rockchip Electronics Co., Ltd. */
+/* Copyright (c) 2023 Rockchip Electronics Co., Ltd */
 
 #include <linux/kernel.h>
 #include <linux/debugfs.h>
@@ -70,6 +70,7 @@ static long ram_vendor_storage_ioctl(struct file *file, unsigned int cmd,
 	v_req = (struct RK_VENDOR_REQ *)page_buf;
 
 	switch (cmd) {
+	case VENDOR_READ_IO_COMPAT:
 	case VENDOR_READ_IO:
 	{
 		if (copy_from_user(page_buf, (void __user *)arg, 8)) {

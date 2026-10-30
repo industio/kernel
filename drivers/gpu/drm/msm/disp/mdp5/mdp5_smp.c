@@ -68,7 +68,7 @@ static int smp_request_block(struct mdp5_smp *smp,
 	uint8_t reserved;
 
 	/* we shouldn't be requesting blocks for an in-use client: */
-	WARN_ON(!bitmap_empty(cs, cnt));
+	WARN_ON(bitmap_weight(cs, cnt) > 0);
 
 	reserved = smp->reserved[cid];
 
@@ -356,7 +356,7 @@ void mdp5_smp_dump(struct mdp5_smp *smp, struct drm_printer *p)
 
 			drm_printf(p, "%s:%d\t%d\t%s\n",
 				pipe2name(pipe), j, inuse,
-				plane ? plane->name : "(null)");
+				plane ? plane->name : NULL);
 
 			total += inuse;
 		}

@@ -1260,7 +1260,7 @@ static int mi_frame_end(struct rkisp_stream *stream, u32 state)
 		stream->dbg.timestamp = ns;
 		stream->dbg.id = stream->curr_buf->vb.sequence;
 		if (stream->id == RKISP_STREAM_MP || stream->id == RKISP_STREAM_SP)
-			stream->dbg.delay = ns - vb2_buf->timestamp;
+			stream->dbg.delay = ns - dev->isp_sdev.frm_timestamp;
 
 		if (!stream->streaming) {
 			vb2_buffer_done(vb2_buf, VB2_BUF_STATE_ERROR);
@@ -1620,7 +1620,7 @@ static void rkisp_stop_streaming(struct vb2_queue *queue)
 	if (stream->id == RKISP_STREAM_MP ||
 	    stream->id == RKISP_STREAM_SP) {
 		/* call to the other devices */
-		video_device_pipeline_stop(&node->vdev);
+		media_pipeline_stop(&node->vdev.entity);
 		ret = dev->pipe.set_stream(&dev->pipe, false);
 		if (ret < 0)
 			v4l2_err(v4l2_dev,
@@ -1776,7 +1776,7 @@ rkisp_start_streaming(struct vb2_queue *queue, unsigned int count)
 		if (ret < 0)
 			goto stop_stream;
 
-		ret = video_device_pipeline_start(&node->vdev, &dev->pipe.pipe);
+		ret = media_pipeline_start(&node->vdev.entity, &dev->pipe.pipe);
 		if (ret < 0) {
 			v4l2_err(&dev->v4l2_dev,
 				 "start pipeline failed %d\n", ret);

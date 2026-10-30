@@ -1614,7 +1614,7 @@ static int himax_parse_test_dri_file(struct himax_ts_data *ts, const struct firm
 	while (g_hx_head_str[i]) {
 		/*compose header string of .dri file*/
 		for (j = 0; j < 2; j++) {
-			strscpy(str[j], "[", sizeof(str[j]));
+			strlcpy(str[j], "[", sizeof(str[j]));
 			strlcat(str[j], g_hx_head_str[i], sizeof(str[j]));
 			strlcat(str[j], str_tail[j], sizeof(str[j]));
 			/*I("%s string[%d] : %s\n", __func__, j, str[j]);*/
@@ -1998,9 +1998,7 @@ static int himax_chip_self_test(struct himax_ts_data *ts, struct seq_file *s, vo
 	uint8_t tmp_addr[DATA_LEN_4] = { 0x94, 0x72, 0x00, 0x10 };
 	uint8_t tmp_data[DATA_LEN_4] = { 0x01, 0x00, 0x00, 0x00 };
 	struct file *raw_file = NULL;
-#if 0
 	mm_segment_t fs;
-#endif
 	loff_t pos = 0;
 	uint32_t rslt = HX_INSP_OK;
 
@@ -2023,10 +2021,8 @@ static int himax_chip_self_test(struct himax_ts_data *ts, struct seq_file *s, vo
 		}
 	}
 
-#if 0
 	fs = get_fs();
 	set_fs(KERNEL_DS);
-#endif
 
 	hx_print_ic_id(ts);
 	if (ts->file_w_flag) {
@@ -2085,9 +2081,7 @@ static int himax_chip_self_test(struct himax_ts_data *ts, struct seq_file *s, vo
 	}
 	if (ts->file_w_flag)
 		filp_close(raw_file, NULL);
-#if 0
 	set_fs(fs);
-#endif
 
 	ts->core_fp.fp_sense_off(ts, true);
 	/*himax_set_N_frame(ts, 1, HX_INSPECTION_WT_NOISE);*/

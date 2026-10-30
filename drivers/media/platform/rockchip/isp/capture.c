@@ -428,12 +428,9 @@ void rkisp_stream_vir_cpy_image(struct work_struct *work)
 			if (!src || !dst)
 				break;
 			/* sync cache */
-			if (mem) {
-				if (src_vb->memory)
-					g_ops->finish(mem);
-				else
-					dma_sync_sgtable_for_cpu(isp_dev->hw_dev->dev, mem, DMA_BIDIRECTIONAL);
-			}
+			if (mem)
+				g_ops->finish(mem);
+
 			vb2_set_plane_payload(&vir->curr_buf->vb.vb2_buf, i, payload_size);
 			memcpy(dst, src, payload_size);
 		}
@@ -561,22 +558,6 @@ int rkisp_stream_frame_start(struct rkisp_device *dev, u32 isp_mis)
 			stream->ops->frame_start(stream, isp_mis);
 	}
 
-	return 0;
-}
-
-int rkisp_stream_isp_end(struct rkisp_device *dev, u32 isp_mis)
-{
-	struct rkisp_stream *stream;
-	int i;
-
-	for (i = 0; i < RKISP_MAX_STREAM; i++) {
-		if (i == RKISP_STREAM_VIR || i == RKISP_STREAM_LUMA)
-			continue;
-		stream = &dev->cap_dev.stream[i];
-		if (stream->streaming &&
-		    stream->ops && stream->ops->isp_end)
-			stream->ops->isp_end(stream, isp_mis);
-	}
 	return 0;
 }
 
@@ -751,7 +732,6 @@ static void restrict_rsz_resolution(struct rkisp_stream *stream,
 	struct v4l2_rect *input_win = rkisp_get_isp_sd_win(&dev->isp_sdev);
 
 	if (stream->id == RKISP_STREAM_VIR ||
-	    stream->id == RKISP_STREAM_LDC ||
 	    (dev->isp_ver == ISP_V30 && stream->id == RKISP_STREAM_BP)) {
 		max_rsz->width = input_win->width;
 		max_rsz->height = input_win->height;
@@ -825,7 +805,6 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 	} else if (pixm->width != max_rsz.width &&
 		   pixm->height != max_rsz.height &&
 		   (stream->id == RKISP_STREAM_LUMA ||
-		    stream->id == RKISP_STREAM_LDC ||
 		    (dev->isp_ver == ISP_V30 &&
 		     (stream->id == RKISP_STREAM_BP || stream->id == RKISP_STREAM_FBC)))) {
 		v4l2_warn(&dev->v4l2_dev,
@@ -900,8 +879,6 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 			ALIGN(pixm->width, 16) : pixm->width;
 		h = (fmt->fmt_type == FMT_FBC) ?
 			ALIGN(pixm->height, 16) : pixm->height;
-		if (stream->id == RKISP_STREAM_LDC)
-			w = ALIGN(pixm->width, 32);
 		/* mainpath for warp default */
 		if (dev->cap_dev.wrap_line && stream->id == RKISP_STREAM_MP)
 			h = dev->cap_dev.wrap_line;
@@ -1060,7 +1037,7 @@ static int rkisp_enum_input(struct file *file, void *priv,
 		return -EINVAL;
 
 	input->type = V4L2_INPUT_TYPE_CAMERA;
-	strscpy(input->name, "Camera", sizeof(input->name));
+	strlcpy(input->name, "Camera", sizeof(input->name));
 
 	return 0;
 }
@@ -1654,8 +1631,7 @@ static struct v4l2_rect *rkisp_update_crop(struct rkisp_stream *stream,
 	    stream->id == RKISP_STREAM_DMATX2 ||
 	    stream->id == RKISP_STREAM_DMATX3 ||
 	    stream->id == RKISP_STREAM_MPDS ||
-	    stream->id == RKISP_STREAM_BPDS ||
-	    stream->id == RKISP_STREAM_LDC) {
+	    stream->id == RKISP_STREAM_BPDS) {
 		sel->left = 0;
 		sel->top = 0;
 		sel->width = in->width;
@@ -1722,7 +1698,7 @@ static int rkisp_querycap(struct file *file, void *priv,
 	struct device *dev = stream->ispdev->dev;
 	struct video_device *vdev = video_devdata(file);
 
-	strscpy(cap->card, vdev->name, sizeof(cap->card));
+	strlcpy(cap->card, vdev->name, sizeof(cap->card));
 	snprintf(cap->driver, sizeof(cap->driver),
 		 "%s_v%d", dev->driver->name,
 		 stream->ispdev->isp_ver >> 4);
@@ -1950,8 +1926,6 @@ int rkisp_register_stream_vdevs(struct rkisp_device *dev)
 		st_cfg->max_rsz_height = dev->hw_dev->unite ?
 					CIF_ISP_INPUT_H_MAX_V32_L_UNITE : CIF_ISP_INPUT_H_MAX_V32_L;
 		ret = rkisp_register_stream_v32(dev);
-	} else if (dev->isp_ver == ISP_V39) {
-		ret = rkisp_register_stream_v39(dev);
 	} else if (dev->isp_ver == ISP_V33) {
 		ret = rkisp_register_stream_v33(dev);
 	}
@@ -1972,8 +1946,6 @@ void rkisp_unregister_stream_vdevs(struct rkisp_device *dev)
 		rkisp_unregister_stream_v30(dev);
 	else if (dev->isp_ver == ISP_V32 || dev->isp_ver == ISP_V32_L)
 		rkisp_unregister_stream_v32(dev);
-	else if (dev->isp_ver == ISP_V39)
-		rkisp_unregister_stream_v39(dev);
 	else if (dev->isp_ver == ISP_V33)
 		rkisp_unregister_stream_v33(dev);
 }
@@ -1990,8 +1962,6 @@ void rkisp_mi_isr(u32 mis_val, struct rkisp_device *dev)
 		rkisp_mi_v30_isr(mis_val, dev);
 	else if (dev->isp_ver == ISP_V32 || dev->isp_ver == ISP_V32_L)
 		rkisp_mi_v32_isr(mis_val, dev);
-	else if (dev->isp_ver == ISP_V39)
-		rkisp_mi_v39_isr(mis_val, dev);
 	else if (dev->isp_ver == ISP_V33)
 		rkisp_mi_v33_isr(mis_val, dev);
 }

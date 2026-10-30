@@ -40,10 +40,6 @@ enum rkisp_ispp_dev {
 	DEV_ID1,
 	DEV_ID2,
 	DEV_ID3,
-	DEV_ID4,
-	DEV_ID5,
-	DEV_ID6,
-	DEV_ID7,
 	DEV_MAX,
 };
 
@@ -72,9 +68,7 @@ enum rkisp_ispp_reg_stat {
 
 struct frame_debug_info {
 	u64 timestamp;
-	u64 timestamp_be;
 	u32 interval;
-	u32 interval_be;
 	u32 delay;
 	u32 id;
 	u32 frameloss;

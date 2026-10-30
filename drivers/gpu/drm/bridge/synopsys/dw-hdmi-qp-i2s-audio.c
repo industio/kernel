@@ -2,7 +2,7 @@
 /*
  * dw-hdmi-qp-i2s-audio.c
  *
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  * Author: Sugar Zhang <sugar.zhang@rock-chips.com>
  */
 
@@ -50,7 +50,7 @@ static int dw_hdmi_qp_i2s_hw_params(struct device *dev, void *data,
 	struct dw_hdmi_qp *hdmi = audio->hdmi;
 	bool ref2stream = false;
 
-	if (fmt->bit_clk_provider | fmt->frame_clk_provider) {
+	if (fmt->bit_clk_master | fmt->frame_clk_master) {
 		dev_err(dev, "unsupported clock settings\n");
 		return -EINVAL;
 	}

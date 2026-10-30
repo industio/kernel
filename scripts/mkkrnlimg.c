@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * (C) Copyright Rockchip Electronics Co., Ltd.
+ * (C) Copyright Fuzhou Rockchip Electronics Co., Ltd
  */
 
 #include <stdint.h>

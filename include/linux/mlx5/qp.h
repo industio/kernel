@@ -162,8 +162,6 @@ enum {
 	MLX5_SEND_WQE_MAX_WQEBBS	= 16,
 };
 
-#define MLX5_SEND_WQE_MAX_SIZE (MLX5_SEND_WQE_MAX_WQEBBS * MLX5_SEND_WQE_BB)
-
 enum {
 	MLX5_WQE_FMR_PERM_LOCAL_READ	= 1 << 27,
 	MLX5_WQE_FMR_PERM_LOCAL_WRITE	= 1 << 28,
@@ -204,9 +202,6 @@ struct mlx5_wqe_fmr_seg {
 struct mlx5_wqe_ctrl_seg {
 	__be32			opmod_idx_opcode;
 	__be32			qpn_ds;
-
-	struct_group(trailer,
-
 	u8			signature;
 	u8			rsvd[2];
 	u8			fm_ce_se;
@@ -216,8 +211,6 @@ struct mlx5_wqe_ctrl_seg {
 		__be32		umr_mkey;
 		__be32		tis_tir_num;
 	};
-
-	); /* end of trailer group */
 };
 
 #define MLX5_WQE_CTRL_DS_MASK 0x3f
@@ -254,7 +247,6 @@ enum {
 
 enum {
 	MLX5_ETH_WQE_FT_META_IPSEC = BIT(0),
-	MLX5_ETH_WQE_FT_META_MACSEC = BIT(1),
 };
 
 struct mlx5_wqe_eth_seg {
@@ -481,12 +473,6 @@ struct mlx5_klm {
 	__be64		va;
 };
 
-struct mlx5_ksm {
-	__be32		reserved;
-	__be32		key;
-	__be64		va;
-};
-
 struct mlx5_stride_block_entry {
 	__be16		stride;
 	__be16		bcount;
@@ -562,16 +548,6 @@ static inline const char *mlx5_qp_state_str(int state)
 	return "SUSPENDED";
 	default: return "Invalid QP state";
 	}
-}
-
-static inline int mlx5_get_qp_default_ts(struct mlx5_core_dev *dev)
-{
-	u8 supported_ts_cap = mlx5_get_roce_state(dev) ?
-			      MLX5_CAP_ROCE(dev, qp_ts_format) :
-			      MLX5_CAP_GEN(dev, sq_ts_format);
-
-	return supported_ts_cap ? MLX5_TIMESTAMP_FORMAT_DEFAULT :
-	       MLX5_TIMESTAMP_FORMAT_FREE_RUNNING;
 }
 
 #endif /* MLX5_QP_H */

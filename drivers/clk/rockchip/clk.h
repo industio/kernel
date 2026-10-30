@@ -3,7 +3,7 @@
  * Copyright (c) 2014 MundoReader S.L.
  * Author: Heiko Stuebner <heiko@sntech.de>
  *
- * Copyright (c) 2015 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2015 Rockchip Electronics Co. Ltd.
  * Author: Xing Zheng <zhengxing@rock-chips.com>
  *
  * based on
@@ -19,8 +19,6 @@
 
 #include <linux/io.h>
 #include <linux/clk-provider.h>
-#include <linux/panic_notifier.h>
-#include <linux/platform_device.h>
 
 struct clk;
 
@@ -79,6 +77,55 @@ struct clk;
 #define PX30_PMU_CLKSEL_CON(x)		((x) * 0x4 + 0x40)
 #define PX30_PMU_CLKGATE_CON(x)		((x) * 0x4 + 0x80)
 #define PX30_PMU_MODE			0x0020
+
+#define RV1103B_TOPCRU_BASE		0x60000
+#define RV1103B_PERICRU_BASE		0x0
+#define RV1103B_VICRU_BASE		0x30000
+#define RV1103B_NPUCRU_BASE		0x20000
+#define RV1103B_CORECRU_BASE		0x40000
+#define RV1103B_VEPUCRU_BASE		0x10000
+#define RV1103B_DDRCRU_BASE		0x50000
+#define RV1103B_SUBDDRCRU_BASE		0x58000
+#define RV1103B_PMUCRU_BASE		0x70000
+#define RV1103B_PMU1CRU_BASE		0x80000
+
+#define RV1103B_PMUCLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_PMUCRU_BASE)
+#define RV1103B_PMUCLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_PMUCRU_BASE)
+#define RV1103B_PMUSOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_PMUCRU_BASE)
+#define RV1103B_PMU1CLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_PMU1CRU_BASE)
+#define RV1103B_PMU1CLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_PMU1CRU_BASE)
+#define RV1103B_PMU1SOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_PMU1CRU_BASE)
+#define RV1103B_PLL_CON(x)		((x) * 0x4 + RV1103B_TOPCRU_BASE)
+#define RV1103B_MODE_CON		(0x280 + RV1103B_TOPCRU_BASE)
+#define RV1103B_CLKSEL_CON(x)		((x) * 0x4 + 0x300 + RV1103B_TOPCRU_BASE)
+#define RV1103B_CLKGATE_CON(x)		((x) * 0x4 + 0x800 + RV1103B_TOPCRU_BASE)
+#define RV1103B_SOFTRST_CON(x)		((x) * 0x4 + 0xa00 + RV1103B_TOPCRU_BASE)
+#define RV1103B_GLB_SRST_FST		(0xc08 + RV1103B_TOPCRU_BASE)
+#define RV1103B_GLB_SRST_SND		(0xc0c + RV1103B_TOPCRU_BASE)
+#define RV1103B_CLK_SAI_FRAC_DIV_HIGH	(0xcc0 + RV1103B_TOPCRU_BASE)
+#define RV1103B_PERICLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_PERICRU_BASE)
+#define RV1103B_PERICLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_PERICRU_BASE)
+#define RV1103B_PERISOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_PERICRU_BASE)
+#define RV1103B_PERICRU_IP_CON		(0xc08 + RV1103B_PERICRU_BASE)
+#define RV1103B_VICLKSEL_CON(x)		((x) * 0x4 + 0x300 + RV1103B_VICRU_BASE)
+#define RV1103B_VICLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_VICRU_BASE)
+#define RV1103B_VISOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_VICRU_BASE)
+#define RV1103B_NPUCLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_NPUCRU_BASE)
+#define RV1103B_NPUCLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_NPUCRU_BASE)
+#define RV1103B_NPUSOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_NPUCRU_BASE)
+#define RV1103B_CORECLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_CORECRU_BASE)
+#define RV1103B_CORECLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_CORECRU_BASE)
+#define RV1103B_CORESOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_CORECRU_BASE)
+#define RV1103B_VEPUCLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_VEPUCRU_BASE)
+#define RV1103B_VEPUCLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_VEPUCRU_BASE)
+#define RV1103B_VEPUSOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_VEPUCRU_BASE)
+#define RV1103B_DDRCLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_DDRCRU_BASE)
+#define RV1103B_DDRCLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_DDRCRU_BASE)
+#define RV1103B_DDRSOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_DDRCRU_BASE)
+#define RV1103B_SUBDDRCLKSEL_CON(x)	((x) * 0x4 + 0x300 + RV1103B_SUBDDRCRU_BASE)
+#define RV1103B_SUBDDRCLKGATE_CON(x)	((x) * 0x4 + 0x800 + RV1103B_SUBDDRCRU_BASE)
+#define RV1103B_SUBDDRSOFTRST_CON(x)	((x) * 0x4 + 0xa00 + RV1103B_SUBDDRCRU_BASE)
+#define RV1103B_SUBDDRMODE_CON		(0x280 + RV1103B_SUBDDRCRU_BASE)
 
 #define RV1106_TOPCRU_BASE		0x10000
 #define RV1106_PERICRU_BASE		0x12000
@@ -306,18 +353,6 @@ struct clk;
 #define RK3399_PMU_CLKGATE_CON(x)	((x) * 0x4 + 0x100)
 #define RK3399_PMU_SOFTRST_CON(x)	((x) * 0x4 + 0x110)
 
-#define RK3506_PMU_CRU_BASE		0x10000
-#define RK3506_PLL_CON(x)		((x) * 0x4 + RK3506_PMU_CRU_BASE)
-#define RK3506_CLKSEL_CON(x)		((x) * 0x4 + 0x300)
-#define RK3506_CLKGATE_CON(x)		((x) * 0x4 + 0x800)
-#define RK3506_SOFTRST_CON(x)		((x) * 0x4 + 0xa00)
-#define RK3506_PMU_CLKSEL_CON(x)	((x) * 0x4 + 0x300 + RK3506_PMU_CRU_BASE)
-#define RK3506_PMU_CLKGATE_CON(x)	((x) * 0x4 + 0x800 + RK3506_PMU_CRU_BASE)
-#define RK3506_MODE_CON			0x280
-#define RK3506_GLB_CNT_TH		0xc00
-#define RK3506_GLB_SRST_FST		0xc08
-#define RK3506_GLB_SRST_SND		0xc0c
-
 #define RK3528_PMU_CRU_BASE		0x10000
 #define RK3528_PCIE_CRU_BASE		0x20000
 #define RK3528_DDRPHY_CRU_BASE		0x28000
@@ -413,58 +448,6 @@ struct clk;
 #define RK3568_PMU_CLKGATE_CON(x)	((x) * 0x4 + 0x180)
 #define RK3568_PMU_SOFTRST_CON(x)	((x) * 0x4 + 0x200)
 
-#define RK3576_PHP_CRU_BASE		0x8000
-#define RK3576_SECURE_NS_CRU_BASE	0x10000
-#define RK3576_PMU_CRU_BASE		0x20000
-#define RK3576_BIGCORE_CRU_BASE		0x38000
-#define RK3576_LITCORE_CRU_BASE		0x40000
-#define RK3576_CCI_CRU_BASE		0x48000
-
-#define RK3576_PLL_CON(x)		RK2928_PLL_CON(x)
-#define RK3576_MODE_CON0		0x280
-#define RK3576_BPLL_MODE_CON0		(RK3576_BIGCORE_CRU_BASE + 0x280)
-#define RK3576_LPLL_MODE_CON0		(RK3576_LITCORE_CRU_BASE + 0x280)
-#define RK3576_PPLL_MODE_CON0		(RK3576_PHP_CRU_BASE + 0x280)
-#define RK3576_CLKSEL_CON(x)		((x) * 0x4 + 0x300)
-#define RK3576_CLKGATE_CON(x)		((x) * 0x4 + 0x800)
-#define RK3576_SOFTRST_CON(x)		((x) * 0x4 + 0xa00)
-#define RK3576_GLB_CNT_TH		0xc00
-#define RK3576_GLB_SRST_FST		0xc08
-#define RK3576_GLB_SRST_SND		0xc0c
-#define RK3576_GLB_RST_CON		0xc10
-#define RK3576_GLB_RST_ST		0xc04
-#define RK3576_SDIO_CON0		0xC24
-#define RK3576_SDIO_CON1		0xC28
-#define RK3576_SDMMC_CON0		0xC30
-#define RK3576_SDMMC_CON1		0xC34
-
-#define RK3576_PHP_CLKSEL_CON(x)	((x) * 0x4 + RK3576_PHP_CRU_BASE + 0x300)
-#define RK3576_PHP_CLKGATE_CON(x)	((x) * 0x4 + RK3576_PHP_CRU_BASE + 0x800)
-#define RK3576_PHP_SOFTRST_CON(x)	((x) * 0x4 + RK3576_PHP_CRU_BASE + 0xa00)
-
-#define RK3576_PMU_PLL_CON(x)		((x) * 0x4 + RK3576_PHP_CRU_BASE)
-#define RK3576_PMU_CLKSEL_CON(x)	((x) * 0x4 + RK3576_PMU_CRU_BASE + 0x300)
-#define RK3576_PMU_CLKGATE_CON(x)	((x) * 0x4 + RK3576_PMU_CRU_BASE + 0x800)
-#define RK3576_PMU_SOFTRST_CON(x)	((x) * 0x4 + RK3576_PMU_CRU_BASE + 0xa00)
-
-#define RK3576_SECURE_NS_CLKSEL_CON(x)	((x) * 0x4 + RK3576_SECURE_NS_CRU_BASE + 0x300)
-#define RK3576_SECURE_NS_CLKGATE_CON(x)	((x) * 0x4 + RK3576_SECURE_NS_CRU_BASE + 0x800)
-#define RK3576_SECURE_NS_SOFTRST_CON(x)	((x) * 0x4 + RK3576_SECURE_NS_CRU_BASE + 0xa00)
-
-#define RK3576_CCI_CLKSEL_CON(x)	((x) * 0x4 + RK3576_CCI_CRU_BASE + 0x300)
-#define RK3576_CCI_CLKGATE_CON(x)	((x) * 0x4 + RK3576_CCI_CRU_BASE + 0x800)
-#define RK3576_CCI_SOFTRST_CON(x)	((x) * 0x4 + RK3576_CCI_CRU_BASE + 0xa00)
-
-#define RK3576_BPLL_CON(x)		((x) * 0x4 + RK3576_BIGCORE_CRU_BASE)
-#define RK3576_BIGCORE_CLKSEL_CON(x)	((x) * 0x4 + RK3576_BIGCORE_CRU_BASE + 0x300)
-#define RK3576_BIGCORE_CLKGATE_CON(x)	((x) * 0x4 + RK3576_BIGCORE_CRU_BASE + 0x800)
-#define RK3576_BIGCORE_SOFTRST_CON(x)	((x) * 0x4 + RK3576_BIGCORE_CRU_BASE + 0xa00)
-#define RK3576_LPLL_CON(x)		((x) * 0x4 + RK3576_CCI_CRU_BASE)
-#define RK3576_LITCORE_CLKSEL_CON(x)	((x) * 0x4 + RK3576_LITCORE_CRU_BASE + 0x300)
-#define RK3576_LITCORE_CLKGATE_CON(x)	((x) * 0x4 + RK3576_LITCORE_CRU_BASE + 0x800)
-#define RK3576_LITCORE_SOFTRST_CON(x)	((x) * 0x4 + RK3576_LITCORE_CRU_BASE + 0xa00)
-#define RK3576_NON_SECURE_GATING_CON00	0xc48
-
 #define RK3588_PHP_CRU_BASE		0x8000
 #define RK3588_PMU_CRU_BASE		0x30000
 #define RK3588_BIGCORE0_CRU_BASE	0x50000
@@ -517,7 +500,6 @@ enum rockchip_pll_type {
 	pll_rk3399,
 	pll_rk3588,
 	pll_rk3588_core,
-	pll_rk3588_ddr,
 };
 
 #define RK3036_PLL_RATE(_rate, _refdiv, _fbdiv, _postdiv1,	\
@@ -1450,11 +1432,4 @@ static inline void rockchip_clk_disable_unused(void)
 {
 }
 #endif
-
-#ifdef CONFIG_CLK_RK312X
-extern void rkclk_cpuclk_div_setting(int div);
-#else
-static inline void rkclk_cpuclk_div_setting(int div) {}
-#endif
-
 #endif

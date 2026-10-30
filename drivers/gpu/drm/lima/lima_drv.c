@@ -255,13 +255,13 @@ static const struct drm_ioctl_desc lima_drm_driver_ioctls[] = {
 
 DEFINE_DRM_GEM_FOPS(lima_drm_driver_fops);
 
-/*
+/**
  * Changelog:
  *
  * - 1.1.0 - add heap buffer support
  */
 
-static const struct drm_driver lima_drm_driver = {
+static struct drm_driver lima_drm_driver = {
 	.driver_features    = DRIVER_RENDER | DRIVER_GEM | DRIVER_SYNCOBJ,
 	.open               = lima_drm_driver_open,
 	.postclose          = lima_drm_driver_postclose,
@@ -489,4 +489,3 @@ module_platform_driver(lima_platform_driver);
 MODULE_AUTHOR("Lima Project Developers");
 MODULE_DESCRIPTION("Lima DRM Driver");
 MODULE_LICENSE("GPL v2");
-MODULE_SOFTDEP("pre: governor_simpleondemand");

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Dingxian Wen <shawn.wen@rock-chips.com>
  */
@@ -9,7 +9,6 @@
 #include <linux/compat.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
-#include <linux/extcon-provider.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -125,7 +124,6 @@ struct rk628_csi {
 	struct rk628_hdcp hdcp;
 	bool i2s_enable_default;
 	HAUDINFO audio_info;
-	struct extcon_dev *extcon;
 	struct rk628_combtxphy *txphy;
 	struct rk628_dsi dsi;
 	const struct rk628_plat_data *plat_data;
@@ -240,7 +238,6 @@ static u8 rk628f_edid_init_data[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD3,
 };
 
-
 static struct rk628_edid edid_data[] = {
 	{
 		.version = 1,
@@ -250,11 +247,6 @@ static struct rk628_edid edid_data[] = {
 		.version = 2,
 		.data = rk628f_edid_init_data,
 	},
-};
-
-static const unsigned int rk628_csi_extcon_cable[] = {
-	EXTCON_JACK_VIDEO_IN,
-	EXTCON_NONE,
 };
 
 static const struct mipi_timing rk628d_csi_mipi = {
@@ -287,15 +279,6 @@ static struct rkmodule_csi_dphy_param rk3588_dcphy_param = {
 
 static const struct rk628_csi_mode supported_modes[] = {
 	{
-		.width = 4096,
-		.height = 2160,
-		.max_fps = {
-			.numerator = 10000,
-			.denominator = 600000,
-		},
-		.hts_def = 4400,
-		.vts_def = 2250,
-	}, {
 		.width = 3840,
 		.height = 2160,
 		.max_fps = {
@@ -405,8 +388,6 @@ static bool tx_5v_power_present(struct v4l2_subdev *sd)
 
 	ret = rk628_hdmirx_tx_5v_power_detect(csi->plugin_det_gpio);
 	v4l2_dbg(2, debug, sd, "%s: %d\n", __func__, ret);
-	if (csi->rk628->is_suspend)
-		ret = false;
 
 	return ret;
 }
@@ -466,6 +447,14 @@ static int rk628_csi_get_detected_timings(struct v4l2_subdev *sd,
 	if (ret)
 		return ret;
 
+	v4l2_dbg(1, debug, sd, "hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d, interlace:%d\n",
+		 bt->hfrontporch, bt->hsync, bt->hbackporch, bt->vfrontporch, bt->vsync,
+		 bt->vbackporch, bt->interlaced);
+
+	csi->src_timings = *timings;
+	if (csi->scaler_en)
+		*timings = csi->timings;
+
 	if ((bt->pixelclock > 300000000 && csi->rk628->version >= RK628F_VERSION) ||
 		(bt->width > 2048 && csi->plat_data->tx_mode == DSI_MODE)) {
 		v4l2_info(sd, "rk628f detect pixclk more than 300M, use dual mipi mode\n");
@@ -474,14 +463,6 @@ static int rk628_csi_get_detected_timings(struct v4l2_subdev *sd,
 		v4l2_info(sd, "pixclk less than 300M, use single mipi mode\n");
 		csi->rk628->dual_mipi = false;
 	}
-
-	v4l2_dbg(1, debug, sd, "hfp:%d, hs:%d, hbp:%d, vfp:%d, vs:%d, vbp:%d, interlace:%d\n",
-		 bt->hfrontporch, bt->hsync, bt->hbackporch, bt->vfrontporch, bt->vsync,
-		 bt->vbackporch, bt->interlaced);
-
-	csi->src_timings = *timings;
-	if (csi->scaler_en)
-		*timings = csi->timings;
 
 	return ret;
 
@@ -537,9 +518,6 @@ static void rk628_hdmirx_config_all(struct v4l2_subdev *sd)
 		schedule_delayed_work(&csi->delayed_work_enable_hotplug,
 				      msecs_to_jiffies(100));
 	} else if (ret == LOCK_FAIL) {
-		if (rk628_hdmirx_get_arc_enable(csi->audio_info))
-			return;
-
 		rk628_hdmirx_plugout(sd);
 		csi->lock_fail_time++;
 		v4l2_dbg(1, debug, sd, "%s: lock fail time: %d\n",
@@ -565,7 +543,6 @@ static void rk628_csi_delayed_work_enable_hotplug(struct work_struct *work)
 	v4l2_ctrl_s_ctrl(csi->detect_tx_5v_ctrl, plugin);
 	v4l2_dbg(1, debug, sd, "%s: 5v_det:%d\n", __func__, plugin);
 	if (plugin) {
-		extcon_set_state_sync(csi->extcon, EXTCON_JACK_VIDEO_IN, true);
 		rk628_csi_enable_interrupts(sd, false);
 		cancel_delayed_work_sync(&csi->delayed_work_res_change);
 		rk628_hdmirx_audio_setup(csi->audio_info);
@@ -577,7 +554,6 @@ static void rk628_csi_delayed_work_enable_hotplug(struct work_struct *work)
 			rk628_hdmirx_cec_state_reconfiguration(csi->rk628, csi->cec);
 		rk628_csi_enable_interrupts(sd, true);
 	} else {
-		extcon_set_state_sync(csi->extcon, EXTCON_JACK_VIDEO_IN, false);
 		rk628_hdmirx_plugout(sd);
 	}
 	mutex_unlock(&csi->confctl_mutex);
@@ -1763,24 +1739,6 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 		return -EINVAL;
 	}
 
-	if (csi->rk628->version < RK628F_VERSION) {
-		if (rk628_audio_ctsnints_enabled(audio_info)) {
-			rk628_i2c_read(csi->rk628, HDMI_RX_PDEC_ISTS, &pdec_ints);
-			if (pdec_ints & (ACR_N_CHG_ICLR | ACR_CTS_CHG_ICLR)) {
-				rk628_csi_isr_ctsn(audio_info, pdec_ints);
-				pdec_ints &= ~(ACR_CTS_CHG_ICLR | ACR_CTS_CHG_ICLR);
-				*handled = true;
-			}
-		}
-		if (rk628_audio_fifoints_enabled(audio_info)) {
-			rk628_i2c_read(csi->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
-			if (fifo_ints & 0x18) {
-				rk628_csi_isr_fifoints(audio_info, fifo_ints);
-				*handled = true;
-			}
-		}
-	}
-
 	if (!csi->vid_ints_en)
 		return 0;
 
@@ -1793,7 +1751,7 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 
 	/* clear interrupts */
 	rk628_i2c_write(csi->rk628, HDMI_RX_MD_ICLR, 0xffffffff);
-	rk628_i2c_write(csi->rk628, HDMI_RX_PDEC_ICLR, 0xff3fffff);
+	rk628_i2c_write(csi->rk628, HDMI_RX_PDEC_ICLR, 0xffffffff);
 
 	if (!rk628_is_general_isr(csi, md_ints, pdec_ints))
 		return 0;
@@ -1808,6 +1766,23 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 	if (!plugin) {
 		rk628_csi_enable_interrupts(sd, false);
 		return 0;
+	}
+
+	if (csi->rk628->version < RK628F_VERSION) {
+		if (rk628_audio_ctsnints_enabled(audio_info)) {
+			if (pdec_ints & (ACR_N_CHG_ICLR | ACR_CTS_CHG_ICLR)) {
+				rk628_csi_isr_ctsn(audio_info, pdec_ints);
+				pdec_ints &= ~(ACR_CTS_CHG_ICLR | ACR_CTS_CHG_ICLR);
+				*handled = true;
+			}
+		}
+		if (rk628_audio_fifoints_enabled(audio_info)) {
+			rk628_i2c_read(csi->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
+			if (fifo_ints & 0x18) {
+				rk628_csi_isr_fifoints(audio_info, fifo_ints);
+				*handled = true;
+			}
+		}
 	}
 
 	v4l2_dbg(1, debug, sd, "%s: md_ints: %#x, pdec_ints:%#x, plugin: %d\n",
@@ -2069,7 +2044,24 @@ static int rk628_csi_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad,
 	struct rk628_csi *csi = to_csi(sd);
 
 	cfg->type = V4L2_MBUS_CSI2_DPHY;
-	cfg->bus.mipi_csi2.num_data_lanes = csi->csi_lanes_in_use;
+	cfg->flags = V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	switch (csi->csi_lanes_in_use) {
+	case 1:
+		cfg->flags |= V4L2_MBUS_CSI2_1_LANE;
+		break;
+	case 2:
+		cfg->flags |= V4L2_MBUS_CSI2_2_LANE;
+		break;
+	case 3:
+		cfg->flags |= V4L2_MBUS_CSI2_3_LANE;
+		break;
+	case 4:
+		cfg->flags |= V4L2_MBUS_CSI2_4_LANE;
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	return 0;
 }
@@ -2098,7 +2090,7 @@ static int rk628_csi_s_stream(struct v4l2_subdev *sd, int enable)
 }
 
 static int rk628_csi_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct rk628_csi *csi = to_csi(sd);
@@ -2116,7 +2108,7 @@ static int rk628_csi_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int rk628_csi_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct rk628_csi *csi = to_csi(sd);
@@ -2136,7 +2128,7 @@ static int rk628_csi_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int rk628_csi_enum_frame_interval(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct rk628_csi *csi = to_csi(sd);
@@ -2153,7 +2145,7 @@ static int rk628_csi_enum_frame_interval(struct v4l2_subdev *sd,
 }
 
 static int rk628_csi_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct rk628_csi *csi = to_csi(sd);
@@ -2251,14 +2243,14 @@ rk628_csi_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int rk628_csi_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct rk628_csi *csi = to_csi(sd);
 	const struct rk628_csi_mode *mode;
 
 	u32 code = format->format.code; /* is overwritten by get_fmt */
-	int ret = rk628_csi_get_fmt(sd, sd_state, format);
+	int ret = rk628_csi_get_fmt(sd, cfg, format);
 
 	format->format.code = code;
 
@@ -2282,7 +2274,7 @@ static int rk628_csi_set_fmt(struct v4l2_subdev *sd,
 		if (csi->plat_data->bus_fmt == MEDIA_BUS_FMT_UYVY8_2X8)
 			return 0;
 
-		*v4l2_subdev_get_try_format(sd, sd_state, format->pad) = format->format;
+		*v4l2_subdev_get_try_format(sd, cfg, format->pad) = format->format;
 	}
 
 	csi->mbus_fmt_code = format->format.code;
@@ -3039,11 +3031,6 @@ static int rk628_csi_get_custom_ctrl(struct v4l2_ctrl *ctrl)
 	if (ctrl->id == RK_V4L2_CID_AUDIO_SAMPLING_RATE) {
 		ret = get_audio_sampling_rate(sd);
 		*ctrl->p_new.p_s32 = ret;
-	} else if (ctrl->id == RK_V4L2_CID_AUDIO_PRESENT) {
-		ret = tx_5v_power_present(sd) ? rk628_hdmirx_audio_present(csi->audio_info) : 0;
-		*ctrl->p_new.p_s32 = ret;
-	} else {
-		ret = -EINVAL;
 	}
 
 	return ret;
@@ -3066,7 +3053,6 @@ static const struct v4l2_ctrl_config rk628_csi_ctrl_audio_sampling_rate = {
 };
 
 static const struct v4l2_ctrl_config rk628_csi_ctrl_audio_present = {
-	.ops = &rk628_csi_custom_ctrl_ops,
 	.id = RK_V4L2_CID_AUDIO_PRESENT,
 	.name = "Audio present",
 	.type = V4L2_CTRL_TYPE_BOOLEAN,
@@ -3166,11 +3152,9 @@ static int rk628_csi_resume(struct device *dev)
 	rk628_cru_initialize(csi->rk628);
 	rk628_csi_initial(sd);
 	rk628_hdmirx_plugout(sd);
-	enable_irq(csi->plugin_irq);
 	enable_irq(csi->hdmirx_irq);
 	schedule_delayed_work(&csi->delayed_work_enable_hotplug,
 			     msecs_to_jiffies(500));
-	csi->rk628->is_suspend = false;
 
 	return 0;
 }
@@ -3183,9 +3167,6 @@ static int rk628_csi_suspend(struct device *dev)
 
 	v4l2_info(sd, "%s: suspend!\n", __func__);
 
-	csi->rk628->is_suspend = true;
-	rk628_hdmirx_plugout(sd);
-	disable_irq(csi->plugin_irq);
 	disable_irq(csi->hdmirx_irq);
 	cancel_delayed_work_sync(&csi->delayed_work_res_change);
 	cancel_delayed_work_sync(&csi->delayed_work_enable_hotplug);
@@ -3361,40 +3342,6 @@ static ssize_t audio_present_show(struct device *dev,
 			rk628_hdmirx_audio_present(csi->audio_info) : 0);
 }
 
-static ssize_t arc_enable_show(struct device *dev,
-			       struct device_attribute *attr, char *buf)
-{
-	struct rk628_csi *csi = dev_get_drvdata(dev);
-	struct rk_hdmirx_dev *hdmirx_dev = dev_get_drvdata(dev);
-
-	if (!hdmirx_dev)
-		return -EINVAL;
-
-	return snprintf(buf, PAGE_SIZE, "%d\n",
-			rk628_hdmirx_get_arc_enable(csi->audio_info) ? 1 : 0);
-}
-
-static ssize_t arc_enable_store(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t count)
-{
-	struct rk628_csi *csi = dev_get_drvdata(dev);
-	struct rk_hdmirx_dev *hdmirx_dev = dev_get_drvdata(dev);
-	bool enabled;
-	int ret;
-
-	if (!hdmirx_dev)
-		return -EINVAL;
-
-	ret = kstrtobool(buf, &enabled);
-	if (ret)
-		return ret;
-
-	rk628_hdmirx_set_arc_enable(csi->audio_info, enabled);
-
-	return count;
-}
-
 static ssize_t edid_show(struct device *dev,
 			 struct device_attribute *attr, char *buf)
 {
@@ -3404,8 +3351,8 @@ static ssize_t edid_show(struct device *dev,
 }
 
 static ssize_t edid_store(struct device *dev,
-				struct device_attribute *attr,
-				const char *buf, size_t count)
+			  struct device_attribute *attr,
+			  const char *buf, size_t count)
 {
 	struct rk628_csi *csi = dev_get_drvdata(dev);
 	int version, ret, i;
@@ -3428,13 +3375,11 @@ static ssize_t edid_store(struct device *dev,
 
 static DEVICE_ATTR_RO(audio_rate);
 static DEVICE_ATTR_RO(audio_present);
-static DEVICE_ATTR_RW(arc_enable);
 static DEVICE_ATTR_RW(edid);
 
 static struct attribute *rk628_attrs[] = {
 	&dev_attr_audio_rate.attr,
 	&dev_attr_audio_present.attr,
-	&dev_attr_arc_enable.attr,
 	&dev_attr_edid.attr,
 	NULL
 };
@@ -3604,12 +3549,8 @@ static int rk628_csi_probe(struct i2c_client *client,
 	/* custom controls */
 	csi->audio_sampling_rate_ctrl = v4l2_ctrl_new_custom(&csi->hdl,
 			&rk628_csi_ctrl_audio_sampling_rate, NULL);
-	if (csi->audio_sampling_rate_ctrl)
-		csi->audio_sampling_rate_ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 	csi->audio_present_ctrl = v4l2_ctrl_new_custom(&csi->hdl,
 			&rk628_csi_ctrl_audio_present, NULL);
-	if (csi->audio_present_ctrl)
-		csi->audio_present_ctrl->flags |= V4L2_CTRL_FLAG_VOLATILE;
 
 	sd->ctrl_handler = &csi->hdl;
 	if (csi->hdl.error) {
@@ -3660,19 +3601,6 @@ static int rk628_csi_probe(struct i2c_client *client,
 	if (IS_ERR(csi->classdev))
 		goto err_hdl;
 
-	csi->extcon = devm_extcon_dev_allocate(dev, rk628_csi_extcon_cable);
-	if (IS_ERR(csi->extcon)) {
-		err = PTR_ERR(csi->extcon);
-		v4l2_err(sd, "allocate extcon failed\n");
-		goto err_hdl;
-	}
-
-	err = devm_extcon_dev_register(dev, csi->extcon);
-	if (err) {
-		v4l2_err(sd, "failed to register extcon: %d\n", err);
-		goto err_hdl;
-	}
-
 	INIT_DELAYED_WORK(&csi->delayed_work_enable_hotplug,
 			rk628_csi_delayed_work_enable_hotplug);
 	INIT_DELAYED_WORK(&csi->delayed_work_res_change,
@@ -3683,7 +3611,6 @@ static int rk628_csi_probe(struct i2c_client *client,
 						       csi->i2s_enable_default,
 						       rk628_csi_audio_info_cb);
 	if (!csi->audio_info) {
-		err = -ENOMEM;
 		v4l2_err(sd, "request audio info fail\n");
 		goto err_work_queues;
 	}

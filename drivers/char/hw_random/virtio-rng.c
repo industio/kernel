@@ -159,8 +159,6 @@ static int probe_common(struct virtio_device *vdev)
 		goto err_find;
 	}
 
-	virtio_device_ready(vdev);
-
 	/* we always have a pending entropy request */
 	request_entropy(vi);
 
@@ -181,9 +179,9 @@ static void remove_common(struct virtio_device *vdev)
 	vi->data_avail = 0;
 	vi->data_idx = 0;
 	complete(&vi->have_data);
+	vdev->config->reset(vdev);
 	if (vi->hwrng_register_done)
 		hwrng_unregister(&vi->hwrng);
-	virtio_reset_device(vdev);
 	vdev->config->del_vqs(vdev);
 	ida_simple_remove(&rng_index_ida, vi->index);
 	kfree(vi);

@@ -10,13 +10,12 @@
 #include <linux/init.h>
 #include <net/protocol.h>
 #include <net/gre.h>
-#include <net/gro.h>
 
 static struct sk_buff *gre_gso_segment(struct sk_buff *skb,
 				       netdev_features_t features)
 {
 	int tnl_hlen = skb_inner_mac_header(skb) - skb_transport_header(skb);
-	bool need_csum, offload_csum, gso_partial, need_ipsec;
+	bool need_csum, need_recompute_csum, gso_partial;
 	struct sk_buff *segs = ERR_PTR(-EINVAL);
 	u16 mac_offset = skb->mac_header;
 	__be16 protocol = skb->protocol;
@@ -42,16 +41,10 @@ static struct sk_buff *gre_gso_segment(struct sk_buff *skb,
 	skb->protocol = skb->inner_protocol;
 
 	need_csum = !!(skb_shinfo(skb)->gso_type & SKB_GSO_GRE_CSUM);
+	need_recompute_csum = skb->csum_not_inet;
 	skb->encap_hdr_csum = need_csum;
 
 	features &= skb->dev->hw_enc_features;
-	if (need_csum)
-		features &= ~NETIF_F_SCTP_CRC;
-
-	need_ipsec = skb_dst(skb) && dst_xfrm(skb_dst(skb));
-	/* Try to offload checksum if possible */
-	offload_csum = !!(need_csum && !need_ipsec &&
-			  (skb->dev->features & NETIF_F_HW_CSUM));
 
 	/* segment inner packet. */
 	segs = skb_mac_gso_segment(skb, features);
@@ -106,12 +99,14 @@ static struct sk_buff *gre_gso_segment(struct sk_buff *skb,
 		}
 
 		*(pcsum + 1) = 0;
-		if (skb->encapsulation || !offload_csum) {
-			*pcsum = gso_make_checksum(skb, 0);
+		if (need_recompute_csum && !skb_is_gso(skb)) {
+			__wsum csum;
+
+			csum = skb_checksum(skb, gre_offset,
+					    skb->len - gre_offset, 0);
+			*pcsum = csum_fold(csum);
 		} else {
-			skb->ip_summed = CHECKSUM_PARTIAL;
-			skb->csum_start = skb_transport_header(skb) - skb->head;
-			skb->csum_offset = sizeof(*greh);
+			*pcsum = gso_make_checksum(skb, 0);
 		}
 	} while ((skb = skb->next));
 out:
@@ -137,9 +132,12 @@ static struct sk_buff *gre_gro_receive(struct list_head *head,
 
 	off = skb_gro_offset(skb);
 	hlen = off + sizeof(*greh);
-	greh = skb_gro_header(skb, hlen, off);
-	if (unlikely(!greh))
-		goto out;
+	greh = skb_gro_header_fast(skb, off);
+	if (skb_gro_header_hard(skb, hlen)) {
+		greh = skb_gro_header_slow(skb, hlen, off);
+		if (unlikely(!greh))
+			goto out;
+	}
 
 	/* Only support version 0 and K (key), C (csum) flags. Note that
 	 * although the support for the S (seq#) flag can be added easily

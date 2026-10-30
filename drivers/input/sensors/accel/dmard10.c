@@ -1,6 +1,6 @@
 /* drivers/input/sensors/access/dmard10.c
  *
- * Copyright (C) 2012-2015 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012-2015 ROCKCHIP.
  * Author: guoyi <gy@rock-chips.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -178,7 +178,7 @@ struct sensor_axis_average {
 };
 
 static struct sensor_axis_average axis_average;
-static int gsensor_reset(struct i2c_client *client){
+int gsensor_reset(struct i2c_client *client){
 	char buffer[7], buffer2[2];
 	/* 1. check D10 , VALUE_STADR = 0x55 , VALUE_STAINT = 0xAA */
 	buffer[0] = REG_STADR;
@@ -423,9 +423,9 @@ static int gsensor_dmard10_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &gsensor_dmard10_ops);
 }
 
-static void gsensor_dmard10_remove(struct i2c_client *client)
+static int gsensor_dmard10_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &gsensor_dmard10_ops);
+	return sensor_unregister_device(client, NULL, &gsensor_dmard10_ops);
 }
 
 static const struct i2c_device_id gsensor_dmard10_id[] = {

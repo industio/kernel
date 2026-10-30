@@ -3,7 +3,7 @@
  * Copyright (c) 2014 MundoReader S.L.
  * Author: Heiko Stuebner <heiko@sntech.de>
  *
- * Copyright (c) 2015 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2015 Rockchip Electronics Co. Ltd.
  * Author: Xing Zheng <zhengxing@rock-chips.com>
  */
 
@@ -486,7 +486,7 @@ static int rockchip_pll_wait_lock(struct rockchip_clk_pll *pll)
 	return ret;
 }
 
-/*
+/**
  * PLL used in RK3036
  */
 
@@ -788,7 +788,7 @@ static const struct clk_ops rockchip_rk3036_pll_clk_ops = {
 	.init = rockchip_rk3036_pll_init,
 };
 
-/*
+/**
  * PLL used in RK3066, RK3188 and RK3288
  */
 
@@ -1023,7 +1023,7 @@ static const struct clk_ops rockchip_rk3066_pll_clk_ops = {
 	.init = rockchip_rk3066_pll_init,
 };
 
-/*
+/**
  * PLL used in RK3399
  */
 
@@ -1409,10 +1409,7 @@ static unsigned long rockchip_rk3588_pll_recalc_rate(struct clk_hw *hw,
 	}
 	rate64 = rate64 >> cur.s;
 
-	if (pll->type == pll_rk3588_ddr)
-		return (unsigned long)rate64 * 2;
-	else
-		return (unsigned long)rate64;
+	return (unsigned long)rate64;
 }
 
 static int rockchip_rk3588_pll_set_params(struct rockchip_clk_pll *pll,
@@ -1575,7 +1572,7 @@ int rockchip_pll_clk_compensation(struct clk *clk, int ppm)
 	static u32 frac, fbdiv, s, p;
 	bool negative;
 	u32 pllcon, pllcon0, pllcon2, fbdiv_mask, frac_mask, frac_shift;
-	u64 fracdiv, m, n;
+	u64 fracdiv, m, n, frac_c;
 
 	if ((ppm > 1000) || (ppm < -1000))
 		return -EINVAL;
@@ -1669,23 +1666,23 @@ int rockchip_pll_clk_compensation(struct clk *clk, int ppm)
 				return -EINVAL;
 			fracdiv = negative ? ~n + 1 : n;
 		} else if (frac & BIT(15)) {
-			frac = (~(frac - 1)) & RK3588_PLLCON2_K_MASK;
-			m = div64_u64((uint64_t)frac * ppm, 100000);
+			frac_c = (~(frac - 1)) & RK3588_PLLCON2_K_MASK;
+			m = div64_u64(frac_c * ppm, 100000);
 			n = div64_u64((uint64_t)ppm * 65536 * fbdiv, 100000);
 			if (negative) {
-				fracdiv = frac + (div64_u64(m + n, 10));
+				fracdiv = frac_c + (div64_u64(m + n, 10));
 				if (fracdiv > 32767)
 					return -EINVAL;
 				fracdiv = ~fracdiv + 1;
 			} else {
 				s = div64_u64(m + n, 10);
-				if (frac >= s) {
-					fracdiv = frac - s;
+				if (frac_c >= s) {
+					fracdiv = frac_c - s;
 					if (fracdiv > 32767)
 						return -EINVAL;
 					fracdiv = ~fracdiv + 1;
 				} else {
-					fracdiv = s - frac;
+					fracdiv = s - frac_c;
 					if (fracdiv > 32767)
 						return -EINVAL;
 				}
@@ -1848,7 +1845,6 @@ struct clk *rockchip_clk_register_pll(struct rockchip_clk_provider *ctx,
 #ifdef CONFIG_ROCKCHIP_PLL_RK3588
 	case pll_rk3588:
 	case pll_rk3588_core:
-	case pll_rk3588_ddr:
 		if (!pll->rate_table)
 			init.ops = &rockchip_rk3588_pll_clk_norate_ops;
 		else

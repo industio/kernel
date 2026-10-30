@@ -3406,7 +3406,7 @@ bfad_im_bsg_els_ct_request(struct bsg_job *job)
 
 	drv_fcxp->port = fcs_port->bfad_port;
 
-	if (!drv_fcxp->port->bfad)
+	if (drv_fcxp->port->bfad == 0)
 		drv_fcxp->port->bfad = bfad;
 
 	/* Fetch the bfa_rport - if nexus needed */

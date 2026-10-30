@@ -20,6 +20,12 @@ struct mod_arch_specific {
 
 	/* for CONFIG_DYNAMIC_FTRACE */
 	struct plt_entry	*ftrace_trampolines;
+
+	/* for FIPS 140 certified kernel module */
+	const Elf64_Rela	*text_relocations;
+	const Elf64_Rela	*rodata_relocations;
+	int			num_text_relocations;
+	int			num_rodata_relocations;
 };
 #endif
 
@@ -58,20 +64,11 @@ static inline bool is_forbidden_offset_for_adrp(void *place)
 }
 
 struct plt_entry get_plt_entry(u64 dst, void *pc);
+bool plt_entries_equal(const struct plt_entry *a, const struct plt_entry *b);
 
-static inline const Elf_Shdr *find_section(const Elf_Ehdr *hdr,
-				    const Elf_Shdr *sechdrs,
-				    const char *name)
+static inline bool plt_entry_is_initialized(const struct plt_entry *e)
 {
-	const Elf_Shdr *s, *se;
-	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
-
-	for (s = sechdrs, se = sechdrs + hdr->e_shnum; s < se; s++) {
-		if (strcmp(name, secstrs + s->sh_name) == 0)
-			return s;
-	}
-
-	return NULL;
+	return e->adrp || e->add || e->br;
 }
 
 #endif /* __ASM_MODULE_H */

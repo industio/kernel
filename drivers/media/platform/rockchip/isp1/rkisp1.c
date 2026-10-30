@@ -91,7 +91,7 @@ static struct v4l2_subdev *get_remote_sensor(struct v4l2_subdev *sd)
 	local = &sd->entity.pads[RKISP1_ISP_PAD_SINK];
 	if (!local)
 		return NULL;
-	remote = media_pad_remote_pad_first(local);
+	remote = media_entity_remote_pad(local);
 	if (!remote)
 		return NULL;
 
@@ -166,7 +166,7 @@ int rkisp1_update_sensor_info(struct rkisp1_device *dev)
 	sensor->fmt.pad = 0;
 	sensor->fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(sensor->sd, pad, get_fmt,
-			       &sensor->state, &sensor->fmt);
+			       &sensor->cfg, &sensor->fmt);
 	if (ret && ret != -ENOIOCTLCMD)
 		return ret;
 	dev->active_sensor = sensor;
@@ -350,15 +350,16 @@ static int rkisp1_config_isp(struct rkisp1_device *dev)
 	/* Set up input acquisition properties */
 	if (sensor && (sensor->mbus.type == V4L2_MBUS_BT656 ||
 		sensor->mbus.type == V4L2_MBUS_PARALLEL)) {
-		if (sensor->mbus.bus.parallel.flags & V4L2_MBUS_PCLK_SAMPLE_RISING)
+		if (sensor->mbus.flags &
+			V4L2_MBUS_PCLK_SAMPLE_RISING)
 			signal = CIF_ISP_ACQ_PROP_POS_EDGE;
 	}
 
 	if (sensor && sensor->mbus.type == V4L2_MBUS_PARALLEL) {
-		if (sensor->mbus.bus.parallel.flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
+		if (sensor->mbus.flags & V4L2_MBUS_VSYNC_ACTIVE_LOW)
 			signal |= CIF_ISP_ACQ_PROP_VSYNC_LOW;
 
-		if (sensor->mbus.bus.parallel.flags & V4L2_MBUS_HSYNC_ACTIVE_LOW)
+		if (sensor->mbus.flags & V4L2_MBUS_HSYNC_ACTIVE_LOW)
 			signal |= CIF_ISP_ACQ_PROP_HSYNC_LOW;
 	}
 
@@ -450,7 +451,26 @@ static int rkisp1_config_mipi(struct rkisp1_device *dev)
 	u32 emd_vc, emd_dt;
 	int lanes, ret, i;
 
-	lanes = sensor->mbus.bus.mipi_csi2.num_data_lanes;
+	/*
+	 * sensor->mbus is set in isp or d-phy notifier_bound function
+	 */
+	switch (sensor->mbus.flags & V4L2_MBUS_CSI2_LANES) {
+	case V4L2_MBUS_CSI2_4_LANE:
+		lanes = 4;
+		break;
+	case V4L2_MBUS_CSI2_3_LANE:
+		lanes = 3;
+		break;
+	case V4L2_MBUS_CSI2_2_LANE:
+		lanes = 2;
+		break;
+	case V4L2_MBUS_CSI2_1_LANE:
+		lanes = 1;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	emd_vc = 0xFF;
 	emd_dt = 0;
 	dev->hdr_sensor = NULL;
@@ -1093,7 +1113,7 @@ static const struct ispsd_out_fmt *find_out_fmt(u32 mbus_code)
 }
 
 static int rkisp1_isp_sd_enum_mbus_code(struct v4l2_subdev *sd,
-					struct v4l2_subdev_state *sd_state,
+					struct v4l2_subdev_pad_config *cfg,
 					struct v4l2_subdev_mbus_code_enum *code)
 {
 	int i = code->index;
@@ -1113,7 +1133,7 @@ static int rkisp1_isp_sd_enum_mbus_code(struct v4l2_subdev *sd,
 
 #define sd_to_isp_sd(_sd) container_of(_sd, struct rkisp1_isp_subdev, sd)
 static int rkisp1_isp_sd_get_fmt(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_format *fmt)
 {
 	struct rkisp1_isp_subdev *isp_sd = sd_to_isp_sd(sd);
@@ -1128,9 +1148,9 @@ static int rkisp1_isp_sd_get_fmt(struct v4l2_subdev *sd,
 
 	mf = &fmt->format;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		if (!sd_state)
+		if (!cfg)
 			goto err;
-		mf = v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		mf = v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 	}
 
 	if (fmt->pad == RKISP1_ISP_PAD_SINK) {
@@ -1209,7 +1229,7 @@ static void rkisp1_isp_sd_try_fmt(struct v4l2_subdev *sd,
 }
 
 static int rkisp1_isp_sd_set_fmt(struct v4l2_subdev *sd,
-				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_pad_config *cfg,
 				 struct v4l2_subdev_format *fmt)
 {
 	struct rkisp1_device *isp_dev = sd_to_isp_dev(sd);
@@ -1227,9 +1247,9 @@ static int rkisp1_isp_sd_set_fmt(struct v4l2_subdev *sd,
 	rkisp1_isp_sd_try_fmt(sd, fmt->pad, mf);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
-		if (!sd_state)
+		if (!cfg)
 			goto err;
-		mf = v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		mf = v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 	}
 
 	if (fmt->pad == RKISP1_ISP_PAD_SINK) {
@@ -1261,7 +1281,7 @@ err:
 }
 
 static void rkisp1_isp_sd_try_crop(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_selection *sel)
 {
 	struct rkisp1_isp_subdev *isp_sd = sd_to_isp_sd(sd);
@@ -1270,8 +1290,8 @@ static void rkisp1_isp_sd_try_crop(struct v4l2_subdev *sd,
 	struct v4l2_rect *input = &sel->r;
 
 	if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
-		in_frm = *v4l2_subdev_get_try_format(sd, sd_state, RKISP1_ISP_PAD_SINK);
-		in_crop = *v4l2_subdev_get_try_crop(sd, sd_state, RKISP1_ISP_PAD_SINK);
+		in_frm = *v4l2_subdev_get_try_format(sd, cfg, RKISP1_ISP_PAD_SINK);
+		in_crop = *v4l2_subdev_get_try_crop(sd, cfg, RKISP1_ISP_PAD_SINK);
 	}
 
 	input->left = ALIGN(input->left, 2);
@@ -1296,7 +1316,7 @@ static void rkisp1_isp_sd_try_crop(struct v4l2_subdev *sd,
 }
 
 static int rkisp1_isp_sd_get_selection(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_selection *sel)
 {
 	struct rkisp1_isp_subdev *isp_sd = sd_to_isp_sd(sd);
@@ -1311,9 +1331,9 @@ static int rkisp1_isp_sd_get_selection(struct v4l2_subdev *sd,
 
 	crop = &sel->r;
 	if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
-		if (!sd_state)
+		if (!cfg)
 			goto err;
-		crop = v4l2_subdev_get_try_crop(sd, sd_state, sel->pad);
+		crop = v4l2_subdev_get_try_crop(sd, cfg, sel->pad);
 	}
 
 	switch (sel->target) {
@@ -1343,7 +1363,7 @@ err:
 }
 
 static int rkisp1_isp_sd_set_selection(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_selection *sel)
 {
 	struct rkisp1_isp_subdev *isp_sd = sd_to_isp_sd(sd);
@@ -1362,13 +1382,13 @@ static int rkisp1_isp_sd_set_selection(struct v4l2_subdev *sd,
 	v4l2_dbg(1, rkisp1_debug, &dev->v4l2_dev,
 		 "%s: pad: %d sel(%d,%d)/%dx%d\n", __func__, sel->pad,
 		 sel->r.left, sel->r.top, sel->r.width, sel->r.height);
-	rkisp1_isp_sd_try_crop(sd, sd_state, sel);
+	rkisp1_isp_sd_try_crop(sd, cfg, sel);
 
 	crop = &sel->r;
 	if (sel->which == V4L2_SUBDEV_FORMAT_TRY) {
-		if (!sd_state)
+		if (!cfg)
 			goto err;
-		crop = v4l2_subdev_get_try_crop(sd, sd_state, sel->pad);
+		crop = v4l2_subdev_get_try_crop(sd, cfg, sel->pad);
 	}
 
 	if (sel->pad == RKISP1_ISP_PAD_SINK)

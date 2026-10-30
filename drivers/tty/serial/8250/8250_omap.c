@@ -159,6 +159,11 @@ static u32 uart_read(struct omap8250_priv *priv, u32 reg)
 	return readl(priv->membase + (reg << OMAP_UART_REGSHIFT));
 }
 
+static void uart_write(struct omap8250_priv *priv, u32 reg, u32 val)
+{
+	writel(val, priv->membase + (reg << OMAP_UART_REGSHIFT));
+}
+
 /* Timeout low and High */
 #define UART_OMAP_TO_L                 0x26
 #define UART_OMAP_TO_H                 0x27
@@ -362,14 +367,28 @@ static void omap8250_restore_regs(struct uart_8250_port *up)
  */
 static void omap_8250_set_termios(struct uart_port *port,
 				  struct ktermios *termios,
-				  const struct ktermios *old)
+				  struct ktermios *old)
 {
 	struct uart_8250_port *up = up_to_u8250p(port);
 	struct omap8250_priv *priv = up->port.private_data;
 	unsigned char cval = 0;
 	unsigned int baud;
 
-	cval = UART_LCR_WLEN(tty_get_char_size(termios->c_cflag));
+	switch (termios->c_cflag & CSIZE) {
+	case CS5:
+		cval = UART_LCR_WLEN5;
+		break;
+	case CS6:
+		cval = UART_LCR_WLEN6;
+		break;
+	case CS7:
+		cval = UART_LCR_WLEN7;
+		break;
+	default:
+	case CS8:
+		cval = UART_LCR_WLEN8;
+		break;
+	}
 
 	if (termios->c_cflag & CSTOPB)
 		cval |= UART_LCR_STOP;
@@ -536,7 +555,7 @@ static void omap_8250_pm(struct uart_port *port, unsigned int state,
 static void omap_serial_fill_features_erratas(struct uart_8250_port *up,
 					      struct omap8250_priv *priv)
 {
-	static const struct soc_device_attribute k3_soc_devices[] = {
+	const struct soc_device_attribute k3_soc_devices[] = {
 		{ .family = "AM65X",  },
 		{ .family = "J721E", .revision = "SR1.0" },
 		{ /* sentinel */ }
@@ -1010,7 +1029,9 @@ static void omap_8250_dma_tx_complete(void *param)
 
 	dma->tx_running = 0;
 
-	uart_xmit_advance(&p->port, dma->tx_size);
+	xmit->tail += dma->tx_size;
+	xmit->tail &= UART_XMIT_SIZE - 1;
+	p->port.icount.tx += dma->tx_size;
 
 	if (priv->delayed_restore) {
 		priv->delayed_restore = 0;
@@ -1139,7 +1160,8 @@ static bool handle_rx_dma(struct uart_8250_port *up, unsigned int iir)
 	return omap_8250_rx_dma(up);
 }
 
-static u16 omap_8250_handle_rx_dma(struct uart_8250_port *up, u8 iir, u16 status)
+static unsigned char omap_8250_handle_rx_dma(struct uart_8250_port *up,
+					     u8 iir, unsigned char status)
 {
 	if ((status & (UART_LSR_DR | UART_LSR_BI)) &&
 	    (iir & UART_IIR_RDI)) {
@@ -1153,7 +1175,7 @@ static u16 omap_8250_handle_rx_dma(struct uart_8250_port *up, u8 iir, u16 status
 }
 
 static void am654_8250_handle_rx_dma(struct uart_8250_port *up, u8 iir,
-				     u16 status)
+				     unsigned char status)
 {
 	/*
 	 * Queue a new transfer if FIFO has data.
@@ -1187,7 +1209,8 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 {
 	struct uart_8250_port *up = up_to_u8250p(port);
 	struct omap8250_priv *priv = up->port.private_data;
-	u16 status;
+	unsigned char status;
+	unsigned long flags;
 	u8 iir;
 
 	serial8250_rpm_get(up);
@@ -1198,7 +1221,7 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 		return IRQ_HANDLED;
 	}
 
-	spin_lock(&port->lock);
+	spin_lock_irqsave(&port->lock, flags);
 
 	status = serial_port_in(port, UART_LSR);
 
@@ -1225,8 +1248,7 @@ static int omap_8250_dma_handle_irq(struct uart_port *port)
 		}
 	}
 
-	uart_unlock_and_check_sysrq(port);
-
+	uart_unlock_and_check_sysrq(port, flags);
 	serial8250_rpm_put(up);
 	return 1;
 }
@@ -1360,7 +1382,6 @@ static int omap8250_probe(struct platform_device *pdev)
 	up.port.throttle = omap_8250_throttle;
 	up.port.unthrottle = omap_8250_unthrottle;
 	up.port.rs485_config = serial8250_em485_config;
-	up.port.rs485_supported = serial8250_em485_supported;
 	up.rs485_start_tx = serial8250_em485_start_tx;
 	up.rs485_stop_tx = serial8250_em485_stop_tx;
 	up.port.has_sysrq = IS_ENABLED(CONFIG_SERIAL_8250_CONSOLE);
@@ -1505,6 +1526,7 @@ static int omap8250_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int omap8250_prepare(struct device *dev)
 {
 	struct omap8250_priv *priv = dev_get_drvdata(dev);
@@ -1564,7 +1586,12 @@ static int omap8250_resume(struct device *dev)
 
 	return 0;
 }
+#else
+#define omap8250_prepare NULL
+#define omap8250_complete NULL
+#endif
 
+#ifdef CONFIG_PM
 static int omap8250_lost_context(struct uart_8250_port *up)
 {
 	u32 val;
@@ -1578,11 +1605,6 @@ static int omap8250_lost_context(struct uart_8250_port *up)
 	if (!val)
 		return 1;
 	return 0;
-}
-
-static void uart_write(struct omap8250_priv *priv, u32 reg, u32 val)
-{
-	writel(val, priv->membase + (reg << OMAP_UART_REGSHIFT));
 }
 
 /* TODO: in future, this should happen via API in drivers/reset/ */
@@ -1676,6 +1698,7 @@ static int omap8250_runtime_resume(struct device *dev)
 	schedule_work(&priv->qos_work);
 	return 0;
 }
+#endif
 
 #ifdef CONFIG_SERIAL_8250_OMAP_TTYO_FIXUP
 static int __init omap8250_console_fixup(void)
@@ -1718,17 +1741,17 @@ console_initcall(omap8250_console_fixup);
 #endif
 
 static const struct dev_pm_ops omap8250_dev_pm_ops = {
-	SYSTEM_SLEEP_PM_OPS(omap8250_suspend, omap8250_resume)
-	RUNTIME_PM_OPS(omap8250_runtime_suspend,
+	SET_SYSTEM_SLEEP_PM_OPS(omap8250_suspend, omap8250_resume)
+	SET_RUNTIME_PM_OPS(omap8250_runtime_suspend,
 			   omap8250_runtime_resume, NULL)
-	.prepare        = pm_sleep_ptr(omap8250_prepare),
-	.complete       = pm_sleep_ptr(omap8250_complete),
+	.prepare        = omap8250_prepare,
+	.complete       = omap8250_complete,
 };
 
 static struct platform_driver omap8250_platform_driver = {
 	.driver = {
 		.name		= "omap8250",
-		.pm		= pm_ptr(&omap8250_dev_pm_ops),
+		.pm		= &omap8250_dev_pm_ops,
 		.of_match_table = omap8250_dt_ids,
 	},
 	.probe			= omap8250_probe,

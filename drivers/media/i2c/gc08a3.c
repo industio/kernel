@@ -106,6 +106,7 @@ struct regval {
 };
 
 struct gc08a3_mode {
+	u32 bus_fmt;
 	u32 width;
 	u32 height;
 	struct v4l2_fract max_fps;
@@ -151,6 +152,8 @@ struct gc08a3 {
 	const char		*len_name;
 	struct rkmodule_inf	module_inf;
 	struct rkmodule_awb_cfg	awb_cfg;
+	struct v4l2_fract	cur_fps;
+	u32			cur_vts;
 };
 
 #define to_gc08a3(sd) container_of(sd, struct gc08a3, subdev)
@@ -1049,6 +1052,7 @@ static const struct regval gc08a3_1280x800_regs_4lane[] = {
 
 static const struct gc08a3_mode supported_modes_4lane[] = {
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SRGGB10_1X10,
 		.width = 3264,
 		.height = 2448,
 		.max_fps = {
@@ -1061,9 +1065,10 @@ static const struct gc08a3_mode supported_modes_4lane[] = {
 		.reg_list = gc08a3_3264x2448_regs_4lane,
 		.global_reg_list = gc08a3_global_regs_4lane,
 		.mipi_freq_idx = 1,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SRGGB10_1X10,
 		.width = 1280,
 		.height = 800,
 		.max_fps = {
@@ -1076,9 +1081,10 @@ static const struct gc08a3_mode supported_modes_4lane[] = {
 		.reg_list = gc08a3_1280x800_regs_4lane,
 		.global_reg_list = gc08a3_global_regs_4lane,
 		.mipi_freq_idx = 0,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
 	{
+		.bus_fmt = MEDIA_BUS_FMT_SRGGB10_1X10,
 		.width = 1280,
 		.height = 720,
 		.max_fps = {
@@ -1091,8 +1097,12 @@ static const struct gc08a3_mode supported_modes_4lane[] = {
 		.reg_list = gc08a3_1280x720_regs_4lane,
 		.global_reg_list = gc08a3_global_regs_4lane,
 		.mipi_freq_idx = 0,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	},
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SRGGB10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -1192,6 +1202,10 @@ gc08a3_find_best_fit(struct gc08a3 *gc08a3,
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == gc08a3->support_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -1199,7 +1213,7 @@ gc08a3_find_best_fit(struct gc08a3 *gc08a3,
 }
 
 static int gc08a3_set_fmt(struct v4l2_subdev *sd,
-	struct v4l2_subdev_state *sd_state,
+	struct v4l2_subdev_pad_config *cfg,
 	struct v4l2_subdev_format *fmt)
 {
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
@@ -1215,7 +1229,7 @@ static int gc08a3_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&gc08a3->mutex);
 		return -ENOTTY;
@@ -1231,6 +1245,7 @@ static int gc08a3_set_fmt(struct v4l2_subdev *sd,
 					 1, vblank_def);
 		__v4l2_ctrl_s_ctrl(gc08a3->link_freq,
 				   mode->mipi_freq_idx);
+		gc08a3->cur_fps = mode->max_fps;
 	}
 	dev_info(&gc08a3->client->dev, "%s: mode->mipi_freq_idx(%d)",
 		 __func__, mode->mipi_freq_idx);
@@ -1241,7 +1256,7 @@ static int gc08a3_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc08a3_get_fmt(struct v4l2_subdev *sd,
-	struct v4l2_subdev_state *sd_state,
+	struct v4l2_subdev_pad_config *cfg,
 	struct v4l2_subdev_format *fmt)
 {
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
@@ -1250,7 +1265,7 @@ static int gc08a3_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&gc08a3->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&gc08a3->mutex);
 		return -ENOTTY;
@@ -1267,18 +1282,18 @@ static int gc08a3_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int gc08a3_enum_mbus_code(struct v4l2_subdev *sd,
-	struct v4l2_subdev_state *sd_state,
+	struct v4l2_subdev_pad_config *cfg,
 	struct v4l2_subdev_mbus_code_enum *code)
 {
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = GC08A3_MEDIA_BUS_FMT;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int gc08a3_enum_frame_sizes(struct v4l2_subdev *sd,
-	struct v4l2_subdev_state *sd_state,
+	struct v4l2_subdev_pad_config *cfg,
 	struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
@@ -1303,7 +1318,72 @@ static int gc08a3_g_frame_interval(struct v4l2_subdev *sd,
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
 	const struct gc08a3_mode *mode = gc08a3->cur_mode;
 
-	fi->interval = mode->max_fps;
+	if (gc08a3->streaming)
+		fi->interval = gc08a3->cur_fps;
+	else
+		fi->interval = mode->max_fps;
+
+	return 0;
+}
+
+static const struct gc08a3_mode *gc08a3_find_mode(struct gc08a3 *gc08a3, int fps)
+{
+	const struct gc08a3_mode *mode = NULL;
+	const struct gc08a3_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < gc08a3->cfg_num; i++) {
+		mode = &gc08a3->support_modes[i];
+		if (mode->width == gc08a3->cur_mode->width &&
+		    mode->height == gc08a3->cur_mode->height &&
+		    mode->bus_fmt == gc08a3->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int gc08a3_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct gc08a3 *gc08a3 = to_gc08a3(sd);
+	const struct gc08a3_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (gc08a3->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = gc08a3_find_mode(gc08a3, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	gc08a3->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(gc08a3->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(gc08a3->vblank, vblank_def,
+				 GC08A3_VTS_MAX - mode->height,
+				 1, vblank_def);
+	gc08a3->cur_fps = mode->max_fps;
 
 	return 0;
 }
@@ -1672,7 +1752,7 @@ static int gc08a3_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-			v4l2_subdev_get_try_format(sd, fh->state, 0);
+			v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct gc08a3_mode *def_mode = &gc08a3->support_modes[0];
 
 	mutex_lock(&gc08a3->mutex);
@@ -1690,7 +1770,7 @@ static int gc08a3_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int gc08a3_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
@@ -1713,9 +1793,16 @@ static int gc08a3_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 
 	dev_info(dev, "%s(%d) enter!\n", __func__, __LINE__);
 
-	if (2 == sensor->lane_num || 4 == sensor->lane_num) {
+	if (2 == sensor->lane_num) {
 		config->type = V4L2_MBUS_CSI2_DPHY;
-		config->bus.mipi_csi2.num_data_lanes = sensor->lane_num;
+		config->flags = V4L2_MBUS_CSI2_2_LANE |
+				V4L2_MBUS_CSI2_CHANNEL_0 |
+				V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+	} else if (4 == sensor->lane_num) {
+		config->type = V4L2_MBUS_CSI2_DPHY;
+		config->flags = V4L2_MBUS_CSI2_4_LANE |
+				V4L2_MBUS_CSI2_CHANNEL_0 |
+				V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
 	} else {
 		dev_err(&sensor->client->dev,
 			"unsupported lane_num(%d)\n", sensor->lane_num);
@@ -1745,6 +1832,7 @@ static const struct v4l2_subdev_core_ops gc08a3_core_ops = {
 static const struct v4l2_subdev_video_ops gc08a3_video_ops = {
 	.s_stream = gc08a3_s_stream,
 	.g_frame_interval = gc08a3_g_frame_interval,
+	.s_frame_interval = gc08a3_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops gc08a3_pad_ops = {
@@ -1802,6 +1890,14 @@ static int gc08a3_set_gain_reg(struct gc08a3 *gc08a3, u32 a_gain)
 	return ret;
 }
 
+static void gc08a3_modify_fps_info(struct gc08a3 *gc08a3)
+{
+	const struct gc08a3_mode *mode = gc08a3->cur_mode;
+
+	gc08a3->cur_fps.denominator = mode->max_fps.denominator * mode->vts_def /
+				      gc08a3->cur_vts;
+}
+
 static int gc08a3_set_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct gc08a3 *gc08a3 = container_of(ctrl->handler,
@@ -1845,6 +1941,8 @@ static int gc08a3_set_ctrl(struct v4l2_ctrl *ctrl)
 					GC08A3_REG_VTS_L,
 					(ctrl->val + gc08a3->cur_mode->height)
 					& 0xff);
+		gc08a3->cur_vts = ctrl->val + gc08a3->cur_mode->height;
+		gc08a3_modify_fps_info(gc08a3);
 		break;
 	default:
 		dev_warn(&client->dev, "%s Unhandled id:0x%x, val:0x%x\n",
@@ -2113,7 +2211,7 @@ static int gc08a3_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 gc08a3->module_index, facing,
 		 GC08A3_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -2139,7 +2237,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void gc08a3_remove(struct i2c_client *client)
+static int gc08a3_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct gc08a3 *gc08a3 = to_gc08a3(sd);
@@ -2155,6 +2253,8 @@ static void gc08a3_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__gc08a3_power_off(gc08a3);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

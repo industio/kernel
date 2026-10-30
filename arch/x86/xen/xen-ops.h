@@ -21,7 +21,7 @@ extern void *xen_initial_gdt;
 struct trap_info;
 void xen_copy_trap_info(struct trap_info *traps);
 
-DECLARE_PER_CPU_ALIGNED(struct vcpu_info, xen_vcpu_info);
+DECLARE_PER_CPU(struct vcpu_info, xen_vcpu_info);
 DECLARE_PER_CPU(unsigned long, xen_cr3);
 DECLARE_PER_CPU(unsigned long, xen_current_cr3);
 
@@ -51,7 +51,6 @@ void __init xen_remap_memory(void);
 phys_addr_t __init xen_find_free_area(phys_addr_t size);
 char * __init xen_memory_setup(void);
 void __init xen_arch_setup(void);
-void xen_banner(void);
 void xen_enable_sysenter(void);
 void xen_enable_syscall(void);
 void xen_vcpu_restore(void);
@@ -76,7 +75,9 @@ irqreturn_t xen_debug_interrupt(int irq, void *dev_id);
 
 bool xen_vcpu_stolen(int vcpu);
 
-void xen_vcpu_setup(int cpu);
+extern int xen_have_vcpu_info_placement;
+
+int xen_vcpu_setup(int cpu);
 void xen_vcpu_info_reset(int cpu);
 void xen_setup_vcpu_info_placement(void);
 
@@ -109,16 +110,13 @@ static inline void xen_uninit_lock_cpu(int cpu)
 struct dom0_vga_console_info;
 
 #ifdef CONFIG_XEN_DOM0
-void __init xen_init_vga(const struct dom0_vga_console_info *, size_t size,
-			 struct screen_info *);
+void __init xen_init_vga(const struct dom0_vga_console_info *, size_t size);
 #else
 static inline void __init xen_init_vga(const struct dom0_vga_console_info *info,
-				       size_t size, struct screen_info *si)
+				       size_t size)
 {
 }
 #endif
-
-void xen_add_preferred_consoles(void);
 
 void __init xen_init_apic(void);
 
@@ -133,6 +131,7 @@ static inline void __init xen_efi_init(struct boot_params *boot_params)
 __visible void xen_irq_enable_direct(void);
 __visible void xen_irq_disable_direct(void);
 __visible unsigned long xen_save_fl_direct(void);
+__visible void xen_restore_fl_direct(unsigned long);
 
 __visible unsigned long xen_read_cr2(void);
 __visible unsigned long xen_read_cr2_direct(void);

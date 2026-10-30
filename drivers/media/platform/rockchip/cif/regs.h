@@ -597,7 +597,6 @@ enum cif_reg_index {
 #define DVP_SW_DMA_EN(ID)		(0x100000 << ID)
 #define DVP_SW_DMA_EN_RK3676(ID)	(0x100 << ID)
 #define DVP_START_INTSTAT(ID)		(0x3 << ((ID) * 2))
-#define DVP_START_INTSTAT_RK3576(id)	(0x1 << id)
 
 #define DVP_DMA_END_INTEN(id)	\
 	({ \
@@ -1139,9 +1138,6 @@ enum cif_reg_index {
 #define RV1106_CIF_PCLK_EDGE_FALLING_M1		(0x00010000)
 #define RV1106_CIF_GRF_SEL_M0			(0x00010000)
 #define RV1106_CIF_GRF_SEL_M1			(0x00010001)
-#define CIF_GRF_IOC_MISC_CON1_RK3576		(0x6404)
-#define RK3576_CIF_PCLK_SAMPLING_EDGE_RISING	(0x01000100)
-#define RK3576_CIF_PCLK_SAMPLING_EDGE_FALLING	(0x01000000)
 
 /*toisp*/
 #define TOISP_FS_CH0(index)		(0x1 << (14 + index * 3))

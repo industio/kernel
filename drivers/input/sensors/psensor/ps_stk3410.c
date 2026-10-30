@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Copyright (C) Fuzhou Rockchip Electronics Co.Ltd
  *
  * Authors: Bin Yang <yangbin@rock-chips.com>
  *
@@ -347,9 +347,9 @@ static int proximity_stk3410_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &psensor_stk3410_ops);
 }
 
-static void proximity_stk3410_remove(struct i2c_client *client)
+static int proximity_stk3410_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &psensor_stk3410_ops);
+	return sensor_unregister_device(client, NULL, &psensor_stk3410_ops);
 }
 
 static const struct i2c_device_id proximity_stk3410_id[] = {

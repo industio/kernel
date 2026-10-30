@@ -16,7 +16,6 @@
 #include <linux/cpumask.h>
 #include <linux/tick.h>
 #include <linux/cpu.h>
-#include <linux/math64.h>
 
 #include "cpuidle.h"
 
@@ -182,13 +181,9 @@ static void __cpuidle_driver_init(struct cpuidle_driver *drv)
 		 */
 		if (s->target_residency > 0)
 			s->target_residency_ns = s->target_residency * NSEC_PER_USEC;
-		else if (s->target_residency_ns < 0)
-			s->target_residency_ns = 0;
 
 		if (s->exit_latency > 0)
-			s->exit_latency_ns = mul_u32_u32(s->exit_latency, NSEC_PER_USEC);
-		else if (s->exit_latency_ns < 0)
-			s->exit_latency_ns =  0;
+			s->exit_latency_ns = s->exit_latency * NSEC_PER_USEC;
 	}
 }
 
@@ -386,3 +381,4 @@ unlock:
 
 	mutex_unlock(&cpuidle_lock);
 }
+EXPORT_SYMBOL_GPL(cpuidle_driver_state_disabled);

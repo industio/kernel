@@ -4,7 +4,7 @@
  *
  * Copyright (C) 2011 Google, Inc.
  * Copyright (C) 2019 Linaro Ltd.
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Rockchip Electronics Co. Ltd.
  * Author: Simon Xue <xxm@rock-chips.com>
  */
 
@@ -613,7 +613,7 @@ static int rk_dma_heap_debug_show(struct seq_file *s, void *unused)
 	mutex_lock(&rk_heap_list_lock);
 	list_for_each_entry(heap, &rk_heap_list, list) {
 		heap->s = s;
-		dma_buf_get_each(rk_dma_heap_dump_dmabuf, heap);
+		get_each_dmabuf(rk_dma_heap_dump_dmabuf, heap);
 		rk_dma_heap_dump_contig(heap);
 		total += heap->total_size;
 	}
@@ -662,7 +662,7 @@ static int rk_dma_heap_proc_show(struct seq_file *s, void *unused)
 	mutex_lock(&rk_heap_list_lock);
 	list_for_each_entry(heap, &rk_heap_list, list) {
 		heap->s = s;
-		dma_buf_get_each(rk_dma_heap_dump_dmabuf, heap);
+		get_each_dmabuf(rk_dma_heap_dump_dmabuf, heap);
 		rk_dma_heap_dump_contig(heap);
 		total += heap->total_size;
 	}

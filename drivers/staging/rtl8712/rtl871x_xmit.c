@@ -18,6 +18,7 @@
 
 #include "osdep_service.h"
 #include "drv_types.h"
+#include "wifi.h"
 #include "osdep_intf.h"
 #include "usb_ops.h"
 
@@ -318,7 +319,7 @@ int r8712_update_attrib(struct _adapter *padapter, _pkt *pkt,
 		r8712_set_qos(&pktfile, pattrib);
 	} else {
 		pattrib->hdrlen = WLAN_HDR_A3_LEN;
-		pattrib->subtype = IEEE80211_FTYPE_DATA;
+		pattrib->subtype = WIFI_DATA_TYPE;
 		pattrib->priority = 0;
 	}
 	if (psta->ieee8021x_blocked) {
@@ -504,7 +505,7 @@ static int make_wlanhdr(struct _adapter *padapter, u8 *hdr,
 
 	memset(hdr, 0, WLANHDR_OFFSET);
 	SetFrameSubType(fctrl, pattrib->subtype);
-	if (!(pattrib->subtype & IEEE80211_FTYPE_DATA))
+	if (!(pattrib->subtype & WIFI_DATA_TYPE))
 		return 0;
 
 	bssid = get_bssid(pmlmepriv);
@@ -871,6 +872,7 @@ static inline struct tx_servq *get_sta_pending(struct _adapter *padapter,
 					       struct  __queue **ppstapending,
 					       struct sta_info *psta, sint up)
 {
+
 	struct tx_servq *ptxservq;
 	struct hw_xmit *phwxmits =  padapter->xmitpriv.hwxmits;
 

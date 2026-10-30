@@ -27,6 +27,7 @@
 #include <linux/smp.h>
 #include <linux/security.h>
 #include <linux/stddef.h>
+#include <linux/tracehook.h>
 #include <linux/audit.h>
 #include <linux/seccomp.h>
 #include <linux/ftrace.h>
@@ -1314,7 +1315,7 @@ asmlinkage long syscall_trace_enter(struct pt_regs *regs)
 	user_exit();
 
 	if (test_thread_flag(TIF_SYSCALL_TRACE)) {
-		if (ptrace_report_syscall_entry(regs))
+		if (tracehook_report_syscall_entry(regs))
 			return -1;
 	}
 
@@ -1372,7 +1373,7 @@ asmlinkage void syscall_trace_leave(struct pt_regs *regs)
 		trace_sys_exit(regs, regs_return_value(regs));
 
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
-		ptrace_report_syscall_exit(regs, 0);
+		tracehook_report_syscall_exit(regs, 0);
 
 	user_enter();
 }

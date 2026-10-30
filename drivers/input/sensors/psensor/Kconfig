@@ -28,10 +28,6 @@ config PS_STK3410
 	tristate "proximity sensor stk3410"
 	default n
 
-config PS_STK33562
-	tristate "proximity sensor stk33562"
-	default n
-
 config PS_EM3071X
 	tristate "proximity sensor em3071x"
 

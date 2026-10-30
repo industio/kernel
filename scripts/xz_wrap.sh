@@ -9,6 +9,8 @@
 # You can do whatever you want with this file.
 #
 
+. include/config/auto.conf
+
 BCJ=
 LZMA2OPTS=
 
@@ -20,7 +22,7 @@ case $SRCARCH in
 	sparc)          BCJ=--sparc ;;
 esac
 
-if grep -q "^CONFIG_THUMB2_KERNEL=y" include/config/auto.conf; then
+if [ -n "${CONFIG_THUMB2_KERNEL}" ]; then
 	BCJ=--armthumb
 fi
 

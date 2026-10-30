@@ -291,8 +291,12 @@ static const struct sc430cs_mode supported_modes[] = {
 		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
 		.reg_list = sc430cs_linear_10_2560x1440_regs,
 		.hdr_mode = NO_HDR,
-		.vc[PAD0] = 0,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
 	}
+};
+
+static const u32 bus_code[] = {
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 static const s64 link_freq_menu_items[] = {
@@ -525,6 +529,10 @@ sc430cs_find_best_fit(struct v4l2_subdev_format *fmt)
 		if (cur_best_fit_dist == -1 || dist < cur_best_fit_dist) {
 			cur_best_fit_dist = dist;
 			cur_best_fit = i;
+		} else if (dist == cur_best_fit_dist &&
+			   framefmt->code == supported_modes[i].bus_fmt) {
+			cur_best_fit = i;
+			break;
 		}
 	}
 
@@ -532,7 +540,7 @@ sc430cs_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int sc430cs_set_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc430cs *sc430cs = to_sc430cs(sd);
@@ -548,7 +556,7 @@ static int sc430cs_set_fmt(struct v4l2_subdev *sd,
 	fmt->format.field = V4L2_FIELD_NONE;
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		*v4l2_subdev_get_try_format(sd, sd_state, fmt->pad) = fmt->format;
+		*v4l2_subdev_get_try_format(sd, cfg, fmt->pad) = fmt->format;
 #else
 		mutex_unlock(&sc430cs->mutex);
 		return -ENOTTY;
@@ -572,7 +580,7 @@ static int sc430cs_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc430cs_get_fmt(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *sd_state,
+			   struct v4l2_subdev_pad_config *cfg,
 			   struct v4l2_subdev_format *fmt)
 {
 	struct sc430cs *sc430cs = to_sc430cs(sd);
@@ -581,7 +589,7 @@ static int sc430cs_get_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sc430cs->mutex);
 	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
 #ifdef CONFIG_VIDEO_V4L2_SUBDEV_API
-		fmt->format = *v4l2_subdev_get_try_format(sd, sd_state, fmt->pad);
+		fmt->format = *v4l2_subdev_get_try_format(sd, cfg, fmt->pad);
 #else
 		mutex_unlock(&sc430cs->mutex);
 		return -ENOTTY;
@@ -603,20 +611,18 @@ static int sc430cs_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int sc430cs_enum_mbus_code(struct v4l2_subdev *sd,
-				  struct v4l2_subdev_state *sd_state,
+				  struct v4l2_subdev_pad_config *cfg,
 				  struct v4l2_subdev_mbus_code_enum *code)
 {
-	struct sc430cs *sc430cs = to_sc430cs(sd);
-
-	if (code->index != 0)
+	if (code->index >= ARRAY_SIZE(bus_code))
 		return -EINVAL;
-	code->code = sc430cs->cur_mode->bus_fmt;
+	code->code = bus_code[code->index];
 
 	return 0;
 }
 
 static int sc430cs_enum_frame_sizes(struct v4l2_subdev *sd,
-				    struct v4l2_subdev_state *sd_state,
+				    struct v4l2_subdev_pad_config *cfg,
 				    struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -664,11 +670,86 @@ static int sc430cs_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static const struct sc430cs_mode *sc430cs_find_mode(struct sc430cs *sc430cs, int fps)
+{
+	const struct sc430cs_mode *mode = NULL;
+	const struct sc430cs_mode *match = NULL;
+	int cur_fps = 0;
+	int i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
+		mode = &supported_modes[i];
+		if (mode->width == sc430cs->cur_mode->width &&
+		    mode->height == sc430cs->cur_mode->height &&
+		    mode->hdr_mode == sc430cs->cur_mode->hdr_mode &&
+		    mode->bus_fmt == sc430cs->cur_mode->bus_fmt) {
+			cur_fps = DIV_ROUND_CLOSEST(mode->max_fps.denominator, mode->max_fps.numerator);
+			if (cur_fps == fps) {
+				match = mode;
+				break;
+			}
+		}
+	}
+	return match;
+}
+
+static int sc430cs_s_frame_interval(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_frame_interval *fi)
+{
+	struct sc430cs *sc430cs = to_sc430cs(sd);
+	const struct sc430cs_mode *mode = NULL;
+	struct v4l2_fract *fract = &fi->interval;
+	s64 h_blank, vblank_def;
+	int fps;
+
+	if (sc430cs->streaming)
+		return -EBUSY;
+
+	if (fi->pad != 0)
+		return -EINVAL;
+
+	if (fract->numerator == 0) {
+		v4l2_err(sd, "error param, check interval param\n");
+		return -EINVAL;
+	}
+	fps = DIV_ROUND_CLOSEST(fract->denominator, fract->numerator);
+	mode = sc430cs_find_mode(sc430cs, fps);
+	if (mode == NULL) {
+		v4l2_err(sd, "couldn't match fi\n");
+		return -EINVAL;
+	}
+
+	sc430cs->cur_mode = mode;
+
+	h_blank = mode->hts_def - mode->width;
+	__v4l2_ctrl_modify_range(sc430cs->hblank, h_blank,
+				 h_blank, 1, h_blank);
+	vblank_def = mode->vts_def - mode->height;
+	__v4l2_ctrl_modify_range(sc430cs->vblank, vblank_def,
+				 SC430CS_VTS_MAX - mode->height,
+				 1, vblank_def);
+	sc430cs->cur_fps = mode->max_fps;
+	sc430cs->cur_vts = (u32)mode->vts_def;
+
+	return 0;
+}
+
 static int sc430cs_g_mbus_config(struct v4l2_subdev *sd, unsigned int pad_id,
 				 struct v4l2_mbus_config *config)
 {
+	struct sc430cs *sc430cs = to_sc430cs(sd);
+	const struct sc430cs_mode *mode = sc430cs->cur_mode;
+	u32 val = 1 << (SC430CS_LANES - 1) |
+		V4L2_MBUS_CSI2_CHANNEL_0 |
+		V4L2_MBUS_CSI2_CONTINUOUS_CLOCK;
+
+	if (mode->hdr_mode != NO_HDR)
+		val |= V4L2_MBUS_CSI2_CHANNEL_1;
+	if (mode->hdr_mode == HDR_X3)
+		val |= V4L2_MBUS_CSI2_CHANNEL_2;
+
 	config->type = V4L2_MBUS_CSI2_DPHY;
-	config->bus.mipi_csi2.num_data_lanes = SC430CS_LANES;
+	config->flags = val;
 
 	return 0;
 }
@@ -677,10 +758,10 @@ static void sc430cs_get_module_inf(struct sc430cs *sc430cs,
 				   struct rkmodule_inf *inf)
 {
 	memset(inf, 0, sizeof(*inf));
-	strscpy(inf->base.sensor, SC430CS_NAME, sizeof(inf->base.sensor));
-	strscpy(inf->base.module, sc430cs->module_name,
+	strlcpy(inf->base.sensor, SC430CS_NAME, sizeof(inf->base.sensor));
+	strlcpy(inf->base.module, sc430cs->module_name,
 		sizeof(inf->base.module));
-	strscpy(inf->base.lens, sc430cs->len_name, sizeof(inf->base.lens));
+	strlcpy(inf->base.lens, sc430cs->len_name, sizeof(inf->base.lens));
 }
 
 static long sc430cs_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -690,6 +771,9 @@ static long sc430cs_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 	u32 i, h, w;
 	long ret = 0;
 	u32 stream = 0;
+	int cur_best_fit = -1;
+	int cur_best_fit_dist = -1;
+	int cur_dist, cur_fps, dst_fps;
 
 	switch (cmd) {
 	case RKMODULE_GET_MODULE_INFO:
@@ -702,22 +786,36 @@ static long sc430cs_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 		break;
 	case RKMODULE_SET_HDR_CFG:
 		hdr = (struct rkmodule_hdr_cfg *)arg;
+		if (hdr->hdr_mode == sc430cs->cur_mode->hdr_mode)
+			return 0;
 		w = sc430cs->cur_mode->width;
 		h = sc430cs->cur_mode->height;
+		dst_fps = DIV_ROUND_CLOSEST(sc430cs->cur_mode->max_fps.denominator,
+			sc430cs->cur_mode->max_fps.numerator);
 		for (i = 0; i < ARRAY_SIZE(supported_modes); i++) {
 			if (w == supported_modes[i].width &&
 			    h == supported_modes[i].height &&
-			    supported_modes[i].hdr_mode == hdr->hdr_mode) {
-				sc430cs->cur_mode = &supported_modes[i];
-				break;
+			    supported_modes[i].hdr_mode == hdr->hdr_mode &&
+			    supported_modes[i].bus_fmt == sc430cs->cur_mode->bus_fmt) {
+				cur_fps = DIV_ROUND_CLOSEST(supported_modes[i].max_fps.denominator,
+					supported_modes[i].max_fps.numerator);
+				cur_dist = abs(cur_fps - dst_fps);
+				if (cur_best_fit_dist == -1 || cur_dist < cur_best_fit_dist) {
+					cur_best_fit_dist = cur_dist;
+					cur_best_fit = i;
+				} else if (cur_dist == cur_best_fit_dist) {
+					cur_best_fit = i;
+					break;
+				}
 			}
 		}
-		if (i == ARRAY_SIZE(supported_modes)) {
+		if (cur_best_fit == -1) {
 			dev_err(&sc430cs->client->dev,
 				"not find hdr mode:%d %dx%d config\n",
 				hdr->hdr_mode, w, h);
 			ret = -EINVAL;
 		} else {
+			sc430cs->cur_mode = &supported_modes[cur_best_fit];
 			w = sc430cs->cur_mode->hts_def - sc430cs->cur_mode->width;
 			h = sc430cs->cur_mode->vts_def - sc430cs->cur_mode->height;
 			__v4l2_ctrl_modify_range(sc430cs->hblank, w, w, 1, w);
@@ -1052,7 +1150,7 @@ static int sc430cs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct sc430cs *sc430cs = to_sc430cs(sd);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct sc430cs_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&sc430cs->mutex);
@@ -1070,7 +1168,7 @@ static int sc430cs_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 #endif
 
 static int sc430cs_enum_frame_interval(struct v4l2_subdev *sd,
-				       struct v4l2_subdev_state *sd_state,
+				       struct v4l2_subdev_pad_config *cfg,
 				       struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -1106,6 +1204,7 @@ static const struct v4l2_subdev_core_ops sc430cs_core_ops = {
 static const struct v4l2_subdev_video_ops sc430cs_video_ops = {
 	.s_stream = sc430cs_s_stream,
 	.g_frame_interval = sc430cs_g_frame_interval,
+	.s_frame_interval = sc430cs_s_frame_interval,
 };
 
 static const struct v4l2_subdev_pad_ops sc430cs_pad_ops = {
@@ -1446,7 +1545,7 @@ static int sc430cs_probe(struct i2c_client *client,
 	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
 		 sc430cs->module_index, facing,
 		 SC430CS_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor(sd);
+	ret = v4l2_async_register_subdev_sensor_common(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -1472,7 +1571,7 @@ err_destroy_mutex:
 	return ret;
 }
 
-static void sc430cs_remove(struct i2c_client *client)
+static int sc430cs_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct sc430cs *sc430cs = to_sc430cs(sd);
@@ -1488,6 +1587,8 @@ static void sc430cs_remove(struct i2c_client *client)
 	if (!pm_runtime_status_suspended(&client->dev))
 		__sc430cs_power_off(sc430cs);
 	pm_runtime_set_suspended(&client->dev);
+
+	return 0;
 }
 
 #if IS_ENABLED(CONFIG_OF)

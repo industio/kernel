@@ -1,7 +1,7 @@
 /*
  * Fuel gauge driver for CellWise 2013 / 2015
  *
- * Copyright (C) 2012, Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2012, RockChip
  *
  * Authors: xuhuicong <xhc@rock-chips.com>
  *

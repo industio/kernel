@@ -319,10 +319,6 @@
 	};
 };
 
-&av1d {
-	status = "okay";
-};
-
 &av1d_mmu {
 	status = "okay";
 };
@@ -815,7 +811,7 @@
 
 &i2s0_8ch {
 	status = "okay";
-	rockchip,trcm-sync-tx-only;
+	rockchip,clk-trcm = <1>;
 	pinctrl-0 = <&i2s0_lrck
 		     &i2s0_sclk
 		     &i2s0_sdi0
@@ -1378,7 +1374,6 @@
 
 &vop {
 	status = "okay";
-	vop-supply = <&vdd_log_s0>;
 };
 
 &vop_mmu {

@@ -350,10 +350,11 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 						   unsigned long *flags)
 {
 
+	unsigned int max_range = dma_get_max_seg_size(ref->dev);
 	struct dma_debug_entry *entry, index = *ref;
-	int limit = min(HASH_SIZE, (index.dev_addr >> HASH_FN_SHIFT) + 1);
+	unsigned int range = 0;
 
-	for (int i = 0; i < limit; i++) {
+	while (range <= max_range) {
 		entry = __hash_bucket_find(*bucket, ref, containing_match);
 
 		if (entry)
@@ -363,6 +364,7 @@ static struct dma_debug_entry *bucket_find_contain(struct hash_bucket **bucket,
 		 * Nothing found, go back a hash bucket
 		 */
 		put_hash_bucket(*bucket, *flags);
+		range          += (1 << HASH_FN_SHIFT);
 		index.dev_addr -= (1 << HASH_FN_SHIFT);
 		*bucket = get_hash_bucket(&index, flags);
 	}
@@ -553,7 +555,7 @@ static void active_cacheline_remove(struct dma_debug_entry *entry)
  * Wrapper function for adding an entry to the hash.
  * This function takes care of locking itself.
  */
-static void add_dma_entry(struct dma_debug_entry *entry, unsigned long attrs)
+static void add_dma_entry(struct dma_debug_entry *entry)
 {
 	struct hash_bucket *bucket;
 	unsigned long flags;
@@ -567,10 +569,11 @@ static void add_dma_entry(struct dma_debug_entry *entry, unsigned long attrs)
 	if (rc == -ENOMEM) {
 		pr_err_once("cacheline tracking ENOMEM, dma-debug disabled\n");
 		global_disable = true;
-	} else if (rc == -EEXIST && !(attrs & DMA_ATTR_SKIP_CPU_SYNC)) {
-		err_printk(entry->dev, entry,
-			"cacheline tracking EEXIST, overlapping mappings aren't supported\n");
 	}
+
+	/* TODO: report -EEXIST errors here as overlapping mappings are
+	 * not supported by the DMA API
+	 */
 }
 
 static int dma_debug_create_entries(gfp_t gfp)
@@ -1077,10 +1080,20 @@ static void check_for_stack(struct device *dev,
 	}
 }
 
+static inline bool overlap(void *addr, unsigned long len, void *start, void *end)
+{
+	unsigned long a1 = (unsigned long)addr;
+	unsigned long b1 = a1 + len;
+	unsigned long a2 = (unsigned long)start;
+	unsigned long b2 = (unsigned long)end;
+
+	return !(b1 <= a2 || a1 >= b2);
+}
+
 static void check_for_illegal_area(struct device *dev, void *addr, unsigned long len)
 {
-	if (memory_intersects(_stext, _etext, addr, len) ||
-	    memory_intersects(__start_rodata, __end_rodata, addr, len))
+	if (overlap(addr, len, _stext, _etext) ||
+	    overlap(addr, len, __start_rodata, __end_rodata))
 		err_printk(dev, NULL, "device driver maps memory from kernel text or rodata [addr=%p] [len=%lu]\n", addr, len);
 }
 
@@ -1147,10 +1160,11 @@ static void check_sync(struct device *dev,
 				dir2name[entry->direction],
 				dir2name[ref->direction]);
 
+	/* sg list count can be less than map count when partial cache sync */
 	if (ref->sg_call_ents && ref->type == dma_debug_sg &&
-	    ref->sg_call_ents != entry->sg_call_ents) {
+	    ref->sg_call_ents > entry->sg_call_ents) {
 		err_printk(ref->dev, entry, "device driver syncs "
-			   "DMA sg list with different entry count "
+			   "DMA sg list count larger than map count "
 			   "[map count=%d] [sync count=%d]\n",
 			   entry->sg_call_ents, ref->sg_call_ents);
 	}
@@ -1202,8 +1216,7 @@ void debug_dma_map_single(struct device *dev, const void *addr,
 EXPORT_SYMBOL(debug_dma_map_single);
 
 void debug_dma_map_page(struct device *dev, struct page *page, size_t offset,
-			size_t size, int direction, dma_addr_t dma_addr,
-			unsigned long attrs)
+			size_t size, int direction, dma_addr_t dma_addr)
 {
 	struct dma_debug_entry *entry;
 
@@ -1234,7 +1247,7 @@ void debug_dma_map_page(struct device *dev, struct page *page, size_t offset,
 		check_for_illegal_area(dev, addr, size);
 	}
 
-	add_dma_entry(entry, attrs);
+	add_dma_entry(entry);
 }
 
 void debug_dma_mapping_error(struct device *dev, dma_addr_t dma_addr)
@@ -1292,8 +1305,7 @@ void debug_dma_unmap_page(struct device *dev, dma_addr_t addr,
 }
 
 void debug_dma_map_sg(struct device *dev, struct scatterlist *sg,
-		      int nents, int mapped_ents, int direction,
-		      unsigned long attrs)
+		      int nents, int mapped_ents, int direction)
 {
 	struct dma_debug_entry *entry;
 	struct scatterlist *s;
@@ -1325,7 +1337,7 @@ void debug_dma_map_sg(struct device *dev, struct scatterlist *sg,
 
 		check_sg_segment(dev, s);
 
-		add_dma_entry(entry, attrs);
+		add_dma_entry(entry);
 	}
 }
 
@@ -1381,8 +1393,7 @@ void debug_dma_unmap_sg(struct device *dev, struct scatterlist *sglist,
 }
 
 void debug_dma_alloc_coherent(struct device *dev, size_t size,
-			      dma_addr_t dma_addr, void *virt,
-			      unsigned long attrs)
+			      dma_addr_t dma_addr, void *virt)
 {
 	struct dma_debug_entry *entry;
 
@@ -1412,7 +1423,7 @@ void debug_dma_alloc_coherent(struct device *dev, size_t size,
 	else
 		entry->pfn = page_to_pfn(virt_to_page(virt));
 
-	add_dma_entry(entry, attrs);
+	add_dma_entry(entry);
 }
 
 void debug_dma_free_coherent(struct device *dev, size_t size,
@@ -1443,8 +1454,7 @@ void debug_dma_free_coherent(struct device *dev, size_t size,
 }
 
 void debug_dma_map_resource(struct device *dev, phys_addr_t addr, size_t size,
-			    int direction, dma_addr_t dma_addr,
-			    unsigned long attrs)
+			    int direction, dma_addr_t dma_addr)
 {
 	struct dma_debug_entry *entry;
 
@@ -1464,7 +1474,7 @@ void debug_dma_map_resource(struct device *dev, phys_addr_t addr, size_t size,
 	entry->direction	= direction;
 	entry->map_err_type	= MAP_ERR_NOT_CHECKED;
 
-	add_dma_entry(entry, attrs);
+	add_dma_entry(entry);
 }
 
 void debug_dma_unmap_resource(struct device *dev, dma_addr_t dma_addr,

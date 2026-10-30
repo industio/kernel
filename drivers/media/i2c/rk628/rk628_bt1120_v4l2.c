@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2021 Rockchip Electronics Co. Ltd.
  *
  * Author: Shunqing Chen <csq@rock-chips.com>
  */
@@ -253,8 +253,6 @@ static bool tx_5v_power_present(struct v4l2_subdev *sd)
 
 	ret = rk628_hdmirx_tx_5v_power_detect(bt1120->plugin_det_gpio);
 	v4l2_dbg(2, debug, sd, "%s: %d\n", __func__, ret);
-	if (bt1120->rk628->is_suspend)
-		ret = false;
 
 	return ret;
 }
@@ -1034,24 +1032,6 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 		return -EINVAL;
 	}
 
-	if (bt1120->rk628->version < RK628F_VERSION) {
-		if (rk628_audio_ctsnints_enabled(audio_info)) {
-			rk628_i2c_read(bt1120->rk628, HDMI_RX_PDEC_ISTS, &pdec_ints);
-			if (pdec_ints & (ACR_N_CHG_ICLR | ACR_CTS_CHG_ICLR)) {
-				rk628_csi_isr_ctsn(audio_info, pdec_ints);
-				pdec_ints &= ~(ACR_CTS_CHG_ICLR | ACR_CTS_CHG_ICLR);
-				*handled = true;
-			}
-		}
-		if (rk628_audio_fifoints_enabled(audio_info)) {
-			rk628_i2c_read(bt1120->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
-			if (fifo_ints & 0x18) {
-				rk628_csi_isr_fifoints(audio_info, fifo_ints);
-				*handled = true;
-			}
-		}
-	}
-
 	if (!bt1120->vid_ints_en)
 		return 0;
 
@@ -1066,7 +1046,7 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 
 	/* clear interrupts */
 	rk628_i2c_write(bt1120->rk628, HDMI_RX_MD_ICLR, 0xffffffff);
-	rk628_i2c_write(bt1120->rk628, HDMI_RX_PDEC_ICLR, 0xff3fffff);
+	rk628_i2c_write(bt1120->rk628, HDMI_RX_PDEC_ICLR, 0xffffffff);
 
 	if (!rk628_is_general_isr(bt1120, md_ints, pdec_ints))
 		return 0;
@@ -1081,6 +1061,22 @@ static int rk628_hdmirx_general_isr(struct v4l2_subdev *sd, u32 status, bool *ha
 		return 0;
 	}
 
+	if (bt1120->rk628->version < RK628F_VERSION) {
+		if (rk628_audio_ctsnints_enabled(audio_info)) {
+			if (pdec_ints & (ACR_N_CHG_ICLR | ACR_CTS_CHG_ICLR)) {
+				rk628_csi_isr_ctsn(audio_info, pdec_ints);
+				pdec_ints &= ~(ACR_CTS_CHG_ICLR | ACR_CTS_CHG_ICLR);
+				*handled = true;
+			}
+		}
+		if (rk628_audio_fifoints_enabled(audio_info)) {
+			rk628_i2c_read(bt1120->rk628, HDMI_RX_AUD_FIFO_ISTS, &fifo_ints);
+			if (fifo_ints & 0x18) {
+				rk628_csi_isr_fifoints(audio_info, fifo_ints);
+				*handled = true;
+			}
+		}
+	}
 	v4l2_dbg(1, debug, sd, "%s: md_ints: %#x, pdec_ints:%#x, plugin: %d\n",
 		 __func__, md_ints, pdec_ints, plugin);
 
@@ -1321,7 +1317,7 @@ static int rk628_bt1120_s_stream(struct v4l2_subdev *sd, int enable)
 }
 
 static int rk628_bt1120_enum_mbus_code(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_mbus_code_enum *code)
 {
 	switch (code->index) {
@@ -1337,7 +1333,7 @@ static int rk628_bt1120_enum_mbus_code(struct v4l2_subdev *sd,
 }
 
 static int rk628_bt1120_enum_frame_sizes(struct v4l2_subdev *sd,
-				   struct v4l2_subdev_state *sd_state,
+				   struct v4l2_subdev_pad_config *cfg,
 				   struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index >= ARRAY_SIZE(supported_modes))
@@ -1355,7 +1351,7 @@ static int rk628_bt1120_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int rk628_bt1120_enum_frame_interval(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_frame_interval_enum *fie)
 {
 	if (fie->index >= ARRAY_SIZE(supported_modes))
@@ -1370,7 +1366,7 @@ static int rk628_bt1120_enum_frame_interval(struct v4l2_subdev *sd,
 }
 
 static int rk628_bt1120_get_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct rk628_bt1120 *bt1120 = to_bt1120(sd);
@@ -1418,14 +1414,14 @@ rk628_bt1120_find_best_fit(struct v4l2_subdev_format *fmt)
 }
 
 static int rk628_bt1120_set_fmt(struct v4l2_subdev *sd,
-		struct v4l2_subdev_state *sd_state,
+		struct v4l2_subdev_pad_config *cfg,
 		struct v4l2_subdev_format *format)
 {
 	struct rk628_bt1120 *bt1120 = to_bt1120(sd);
 	const struct rk628_bt1120_mode *mode;
 
 	u32 code = format->format.code; /* is overwritten by get_fmt */
-	int ret = rk628_bt1120_get_fmt(sd, sd_state, format);
+	int ret = rk628_bt1120_get_fmt(sd, cfg, format);
 
 	format->format.code = code;
 
@@ -1677,7 +1673,7 @@ static int bt1120_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 	struct rk628_bt1120 *bt1120 = to_bt1120(sd);
 	struct v4l2_bt_timings *bt = &(bt1120->timings.bt);
 	struct v4l2_mbus_framefmt *try_fmt =
-				v4l2_subdev_get_try_format(sd, fh->state, 0);
+				v4l2_subdev_get_try_format(sd, fh->pad, 0);
 	const struct rk628_bt1120_mode *def_mode = &supported_modes[0];
 
 	mutex_lock(&bt1120->confctl_mutex);
@@ -1828,11 +1824,9 @@ static int rk628_bt1120_resume(struct device *dev)
 	rk628_cru_initialize(bt1120->rk628);
 	rk628_bt1120_initial(sd);
 	rk628_hdmirx_plugout(sd);
-	enable_irq(bt1120->plugin_irq);
 	enable_irq(bt1120->hdmirx_irq);
 	schedule_delayed_work(&bt1120->delayed_work_enable_hotplug,
 			     msecs_to_jiffies(500));
-	bt1120->rk628->is_suspend = false;
 
 	return 0;
 }
@@ -1845,9 +1839,6 @@ static int rk628_bt1120_suspend(struct device *dev)
 
 	v4l2_info(sd, "%s: suspend!\n", __func__);
 
-	bt1120->rk628->is_suspend = true;
-	rk628_hdmirx_plugout(sd);
-	disable_irq(bt1120->plugin_irq);
 	disable_irq(bt1120->hdmirx_irq);
 	cancel_delayed_work_sync(&bt1120->delayed_work_res_change);
 	cancel_delayed_work_sync(&bt1120->delayed_work_enable_hotplug);
@@ -2179,7 +2170,7 @@ power_off:
 	return err;
 }
 
-static void rk628_bt1120_remove(struct i2c_client *client)
+static int rk628_bt1120_remove(struct i2c_client *client)
 {
 	struct rk628_bt1120 *bt1120 = i2c_get_clientdata(client);
 
@@ -2209,6 +2200,8 @@ static void rk628_bt1120_remove(struct i2c_client *client)
 	rk628_control_assert(bt1120->rk628, RGU_VOP);
 	rk628_control_assert(bt1120->rk628, RGU_BT1120DEC);
 	rk628_bt1120_power_off(bt1120);
+
+	return 0;
 }
 
 static const struct i2c_device_id rk628_bt1120_i2c_id[] = {

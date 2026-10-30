@@ -2,7 +2,7 @@
 /*
  * General device driver for awinic aw36518, FLASH LED Driver
  *
- * Copyright (C) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (C) 2022 Fuzhou Rockchip Electronics Co., Ltd.
  *
  * V0.0X01.0X00 init version.
  * V0.0X01.0X01 fix power off torch not off issue.
@@ -912,7 +912,7 @@ err_power_off:
 	return ret;
 }
 
-static void aw36518_remove(struct i2c_client *client)
+static int aw36518_remove(struct i2c_client *client)
 {
 	struct aw36518_flash *flash = i2c_get_clientdata(client);
 	unsigned int i;
@@ -924,6 +924,7 @@ static void aw36518_remove(struct i2c_client *client)
 		media_entity_cleanup(&flash->leds[i].sd.entity);
 	}
 	mutex_destroy(&flash->lock);
+	return 0;
 }
 
 static int __maybe_unused aw36518_runtime_suspend(struct device *dev)

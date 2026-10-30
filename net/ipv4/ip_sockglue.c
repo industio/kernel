@@ -509,7 +509,7 @@ static bool ipv4_datagram_support_cmsg(const struct sock *sk,
 	 * or without payload (SOF_TIMESTAMPING_OPT_TSONLY).
 	 */
 	info = PKTINFO_SKB_CB(skb);
-	if (!(READ_ONCE(sk->sk_tsflags) & SOF_TIMESTAMPING_OPT_CMSG) ||
+	if (!(sk->sk_tsflags & SOF_TIMESTAMPING_OPT_CMSG) ||
 	    !info->ipi_ifindex)
 		return false;
 
@@ -583,7 +583,7 @@ out:
 	return err;
 }
 
-void __ip_sock_set_tos(struct sock *sk, int val)
+static void __ip_sock_set_tos(struct sock *sk, int val)
 {
 	if (sk->sk_type == SOCK_STREAM) {
 		val &= ~INET_ECN_MASK;
@@ -591,7 +591,7 @@ void __ip_sock_set_tos(struct sock *sk, int val)
 	}
 	if (inet_sk(sk)->tos != val) {
 		inet_sk(sk)->tos = val;
-		WRITE_ONCE(sk->sk_priority, rt_tos2priority(val));
+		sk->sk_priority = rt_tos2priority(val);
 		sk_dst_reset(sk);
 	}
 }
@@ -893,10 +893,8 @@ static int compat_ip_mcast_join_leave(struct sock *sk, int optname,
 	return ip_mc_leave_group(sk, &mreq);
 }
 
-DEFINE_STATIC_KEY_FALSE(ip4_min_ttl);
-
-int do_ip_setsockopt(struct sock *sk, int level, int optname,
-		     sockptr_t optval, unsigned int optlen)
+static int do_ip_setsockopt(struct sock *sk, int level, int optname,
+		sockptr_t optval, unsigned int optlen)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct net *net = sock_net(sk);
@@ -929,7 +927,6 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 	case IP_CHECKSUM:
 	case IP_RECVFRAGSIZE:
 	case IP_RECVERR_RFC4884:
-	case IP_LOCAL_PORT_RANGE:
 		if (optlen >= sizeof(int)) {
 			if (copy_from_sockptr(&val, optval, sizeof(val)))
 				return -EFAULT;
@@ -952,7 +949,7 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 	err = 0;
 	if (needs_rtnl)
 		rtnl_lock();
-	sockopt_lock_sock(sk);
+	lock_sock(sk);
 
 	switch (optname) {
 	case IP_OPTIONS:
@@ -1341,14 +1338,14 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 	case IP_IPSEC_POLICY:
 	case IP_XFRM_POLICY:
 		err = -EPERM;
-		if (!sockopt_ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))
+		if (!ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))
 			break;
 		err = xfrm_user_policy(sk, optname, optval, optlen);
 		break;
 
 	case IP_TRANSPARENT:
-		if (!!val && !sockopt_ns_capable(sock_net(sk)->user_ns, CAP_NET_RAW) &&
-		    !sockopt_ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN)) {
+		if (!!val && !ns_capable(sock_net(sk)->user_ns, CAP_NET_RAW) &&
+		    !ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN)) {
 			err = -EPERM;
 			break;
 		}
@@ -1362,41 +1359,20 @@ int do_ip_setsockopt(struct sock *sk, int level, int optname,
 			goto e_inval;
 		if (val < 0 || val > 255)
 			goto e_inval;
-
-		if (val)
-			static_branch_enable(&ip4_min_ttl);
-
-		/* tcp_v4_err() and tcp_v4_rcv() might read min_ttl
-		 * while we are changint it.
-		 */
-		WRITE_ONCE(inet->min_ttl, val);
+		inet->min_ttl = val;
 		break;
 
-	case IP_LOCAL_PORT_RANGE:
-	{
-		const __u16 lo = val;
-		const __u16 hi = val >> 16;
-
-		if (optlen != sizeof(__u32))
-			goto e_inval;
-		if (lo != 0 && hi != 0 && lo > hi)
-			goto e_inval;
-
-		inet->local_port_range.lo = lo;
-		inet->local_port_range.hi = hi;
-		break;
-	}
 	default:
 		err = -ENOPROTOOPT;
 		break;
 	}
-	sockopt_release_sock(sk);
+	release_sock(sk);
 	if (needs_rtnl)
 		rtnl_unlock();
 	return err;
 
 e_inval:
-	sockopt_release_sock(sk);
+	release_sock(sk);
 	if (needs_rtnl)
 		rtnl_unlock();
 	return -EINVAL;
@@ -1406,13 +1382,12 @@ e_inval:
  * ipv4_pktinfo_prepare - transfer some info from rtable to skb
  * @sk: socket
  * @skb: buffer
- * @drop_dst: if true, drops skb dst
  *
  * To support IP_CMSG_PKTINFO option, we store rt_iif and specific
  * destination in skb->cb[] before dst drop.
  * This way, receiver doesn't make cache line misses to read rtable.
  */
-void ipv4_pktinfo_prepare(const struct sock *sk, struct sk_buff *skb, bool drop_dst)
+void ipv4_pktinfo_prepare(const struct sock *sk, struct sk_buff *skb)
 {
 	struct in_pktinfo *pktinfo = PKTINFO_SKB_CB(skb);
 	bool prepare = (inet_sk(sk)->cmsg_flags & IP_CMSG_PKTINFO) ||
@@ -1441,8 +1416,7 @@ void ipv4_pktinfo_prepare(const struct sock *sk, struct sk_buff *skb, bool drop_
 		pktinfo->ipi_ifindex = 0;
 		pktinfo->ipi_spec_dst.s_addr = 0;
 	}
-	if (drop_dst)
-		skb_dst_drop(skb);
+	skb_dst_drop(skb);
 }
 
 int ip_setsockopt(struct sock *sk, int level, int optname, sockptr_t optval,
@@ -1548,8 +1522,8 @@ static int compat_ip_get_mcast_msfilter(struct sock *sk, sockptr_t optval,
 	return 0;
 }
 
-int do_ip_getsockopt(struct sock *sk, int level, int optname,
-		     sockptr_t optval, sockptr_t optlen)
+static int do_ip_getsockopt(struct sock *sk, int level, int optname,
+			    sockptr_t optval, sockptr_t optlen)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	bool needs_rtnl = getsockopt_needs_rtnl(optname);
@@ -1569,7 +1543,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 
 	if (needs_rtnl)
 		rtnl_lock();
-	sockopt_lock_sock(sk);
+	lock_sock(sk);
 
 	switch (optname) {
 	case IP_OPTIONS:
@@ -1585,7 +1559,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 			memcpy(optbuf, &inet_opt->opt,
 			       sizeof(struct ip_options) +
 			       inet_opt->opt.optlen);
-		sockopt_release_sock(sk);
+		release_sock(sk);
 
 		if (opt->optlen == 0) {
 			len = 0;
@@ -1635,7 +1609,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	{
 		struct net *net = sock_net(sk);
 		val = (inet->uc_ttl == -1 ?
-		       READ_ONCE(net->ipv4.sysctl_ip_default_ttl) :
+		       net->ipv4.sysctl_ip_default_ttl :
 		       inet->uc_ttl);
 		break;
 	}
@@ -1661,7 +1635,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 			dst_release(dst);
 		}
 		if (!val) {
-			sockopt_release_sock(sk);
+			release_sock(sk);
 			return -ENOTCONN;
 		}
 		break;
@@ -1686,7 +1660,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		struct in_addr addr;
 		len = min_t(unsigned int, len, sizeof(struct in_addr));
 		addr.s_addr = inet->mc_addr;
-		sockopt_release_sock(sk);
+		release_sock(sk);
 
 		if (copy_to_sockptr(optlen, &len, sizeof(int)))
 			return -EFAULT;
@@ -1723,7 +1697,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	{
 		struct msghdr msg;
 
-		sockopt_release_sock(sk);
+		release_sock(sk);
 
 		if (sk->sk_type != SOCK_STREAM)
 			return -ENOPROTOOPT;
@@ -1766,17 +1740,14 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	case IP_MINTTL:
 		val = inet->min_ttl;
 		break;
-	case IP_LOCAL_PORT_RANGE:
-		val = inet->local_port_range.hi << 16 | inet->local_port_range.lo;
-		break;
 	case IP_PROTOCOL:
 		val = inet_sk(sk)->inet_num;
 		break;
 	default:
-		sockopt_release_sock(sk);
+		release_sock(sk);
 		return -ENOPROTOOPT;
 	}
-	sockopt_release_sock(sk);
+	release_sock(sk);
 
 	if (len < sizeof(int) && len > 0 && val >= 0 && val <= 255) {
 		unsigned char ucval = (unsigned char)val;
@@ -1795,7 +1766,7 @@ int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	return 0;
 
 out:
-	sockopt_release_sock(sk);
+	release_sock(sk);
 	if (needs_rtnl)
 		rtnl_unlock();
 	return err;

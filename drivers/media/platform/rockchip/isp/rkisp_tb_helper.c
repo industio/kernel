@@ -14,7 +14,6 @@
 #include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
 #include <linux/pinctrl/consumer.h>
-#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/dma-buf.h>
 #include <linux/highmem.h>
@@ -72,25 +71,18 @@ static void shm_release(struct dma_buf *dma_buf)
 	kfree(data);
 }
 
-static int shm_vmap(struct dma_buf *dma_buf, struct iosys_map *map)
+static void *shm_vmap(struct dma_buf *dma_buf)
 {
 	struct shm_data *data = dma_buf->priv;
-	void *vaddr;
 
-	vaddr = vm_map_ram(data->pages, data->npages, 0);
-	if (!vaddr)
-		return -ENOMEM;
-	iosys_map_set_vaddr(map, vaddr);
-
-	return 0;
+	return vm_map_ram(data->pages, data->npages, 0);
 }
 
-static void shm_vunmap(struct dma_buf *dma_buf, struct iosys_map *map)
+static void shm_vunmap(struct dma_buf *dma_buf, void *vaddr)
 {
 	struct shm_data *data = dma_buf->priv;
 
-	vm_unmap_ram(map->vaddr, data->npages);
-	iosys_map_clear(map);
+	vm_unmap_ram(vaddr, data->npages);
 }
 
 static int shm_mmap(struct dma_buf *dma_buf, struct vm_area_struct *vma)

@@ -33,7 +33,7 @@ enum rapl_domain_reg_id {
 	RAPL_DOMAIN_REG_MAX,
 };
 
-struct rapl_domain;
+struct rapl_package;
 
 enum rapl_primitives {
 	ENERGY_COUNTER,
@@ -58,12 +58,6 @@ enum rapl_primitives {
 	THROTTLED_TIME,
 	PRIORITY_LEVEL,
 
-	PSYS_POWER_LIMIT1,
-	PSYS_POWER_LIMIT2,
-	PSYS_PL1_ENABLE,
-	PSYS_PL2_ENABLE,
-	PSYS_TIME_WINDOW1,
-	PSYS_TIME_WINDOW2,
 	/* below are not raw primitive data */
 	AVERAGE_POWER,
 	NR_RAPL_PRIMITIVES,

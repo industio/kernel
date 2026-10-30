@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2022 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2022 Rockchip Electronics Co. Ltd.
  *
  * Author: Kay Guo <kay.guo@rock-chips.com>
  */
@@ -332,9 +332,9 @@ static int light_ucs14620_probe(struct i2c_client *client,
 	return sensor_register_device(client, NULL, devid, &light_ucs14620_ops);
 }
 
-static void light_ucs14620_remove(struct i2c_client *client)
+static int light_ucs14620_remove(struct i2c_client *client)
 {
-	sensor_unregister_device(client, NULL, &light_ucs14620_ops);
+	return sensor_unregister_device(client, NULL, &light_ucs14620_ops);
 }
 
 static const struct i2c_device_id light_ucs14620_id[] = {

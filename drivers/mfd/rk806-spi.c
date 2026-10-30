@@ -104,11 +104,11 @@ static int rk806_spi_probe(struct spi_device *spi)
 	return rk806_device_init(rk806);
 }
 
-static void rk806_spi_remove(struct spi_device *spi)
+static int rk806_spi_remove(struct spi_device *spi)
 {
 	struct rk806 *rk806 = spi_get_drvdata(spi);
 
-	rk806_device_exit(rk806);
+	return rk806_device_exit(rk806);
 }
 
 static const struct spi_device_id rk806_spi_id_table[] = {

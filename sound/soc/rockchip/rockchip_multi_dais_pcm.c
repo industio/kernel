@@ -2,7 +2,7 @@
 /*
  * ALSA SoC Audio Layer - Rockchip Multi-DAIS-PCM driver
  *
- * Copyright (c) 2018 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2018 Rockchip Electronics Co. Ltd.
  * Author: Sugar Zhang <sugar.zhang@rock-chips.com>
  *
  */
@@ -133,6 +133,8 @@ static void snd_dmaengine_mpcm_set_config_from_dai_data(
 		if (dma_data->addr_width != DMA_SLAVE_BUSWIDTH_UNDEFINED)
 			slave_config->src_addr_width = dma_data->addr_width;
 	}
+
+	slave_config->slave_id = dma_data->slave_id;
 }
 
 static void dmaengine_mpcm_dma_complete(void *arg)
