@@ -259,7 +259,7 @@
 		pwms = <&pwm0_4ch_0 0 5000 1>;
 		regulator-name = "vdd_arm";
 		regulator-min-microvolt = <754000>;
-		regulator-max-microvolt = <1100000>;
+		regulator-max-microvolt = <1099000>;
 		regulator-init-microvolt = <954000>;
 		regulator-always-on;
 		regulator-boot-on;
