@@ -9,8 +9,8 @@
 #include "rk3562.dtsi"
 #include "rk3562-linux.dtsi"
 #include "rk3562-rk809.dtsi"
-// #include "ido-evb6208-v1a-lt8912_MipiToHdmi.dtsi"
-#include "ido-evb6208-mipi-1920x1200.dtsi"
+#include "ido-evb6208-v1a-lt8912_MipiToHdmi.dtsi"
+// #include "ido-evb6208-mipi-1920x1200.dtsi"
 #include "ido-evb6208-csi-camera-new.dtsi" 
 //#include "ido-evb6208-csi-camera.dtsi" 
 #include <dt-bindings/gpio/gpio.h>

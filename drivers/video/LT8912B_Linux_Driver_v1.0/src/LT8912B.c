@@ -713,7 +713,7 @@ void LT8912B_Config(void)
 	   if(Tx_HPD)
 	   {
           LT8912B_Suspend(1);
-//          printk("%s LT8912 Suspend!\n",LOG_FLAG);
+          printk("%s LT8912 Suspend!\n",LOG_FLAG);
 	  	  HdmiOutput(0);
           Tx_HPD = 0;
 //          printk("%s LT8912_Get_HPD: low\n",LOG_FLAG);
