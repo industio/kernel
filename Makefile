@@ -2037,7 +2037,7 @@ checkstack:
 	$(PERL) $(srctree)/scripts/checkstack.pl $(CHECKSTACK_ARCH)
 
 kernelrelease:
-	@echo "$(KERNELVERSION)$$($(CONFIG_SHELL) $(srctree)/scripts/setlocalversion \
+	@echo "$(KERNELVERSION)$$($(CONFIG_SHELL) \
 		$(srctree) $(BRANCH) $(KMI_GENERATION))"
 
 kernelversion:
